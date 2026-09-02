@@ -1,0 +1,1294 @@
+{
+  "_note": "ARTIFACT 1 of 5 — the Claim Taxonomy. Data, not code, so a PM can tune weights without a deploy. Every family's claim weights sum to 100. `fact_keys` is the controlled vocabulary the consistency engine tracks: only these keys are compared across answers, which is what keeps contradiction detection deterministic instead of a second LLM opinion.",
+  "dimension_weights": {
+    "_note": "Global defaults. A family may override any subset; the merge is per-key and renormalised to 1.0.",
+    "SPECIFICITY": 0.2,
+    "PROCESS": 0.2,
+    "AUTHENTICITY": 0.2,
+    "CAUSAL_REASONING": 0.15,
+    "METRIC_OWNERSHIP": 0.15,
+    "TOOL_FAMILIARITY": 0.1
+  },
+  "global_fact_keys": {
+    "team_size": {
+      "label": "Team size",
+      "kind": "count",
+      "stability": "stable"
+    },
+    "direct_reports": {
+      "label": "Direct reports",
+      "kind": "count",
+      "stability": "stable"
+    },
+    "tenure_months": {
+      "label": "Tenure in the role",
+      "kind": "duration_months",
+      "stability": "stable"
+    },
+    "headcount_managed": {
+      "label": "Headcount managed",
+      "kind": "count",
+      "stability": "stable"
+    },
+    "shift_count": {
+      "label": "Shifts managed",
+      "kind": "count",
+      "stability": "stable"
+    }
+  },
+  "families": {
+    "bpo_operations": {
+      "label": "BPO / Contact Centre Operations",
+      "keywords": [
+        "bpo",
+        "call centre",
+        "call center",
+        "voice process",
+        "inbound",
+        "outbound",
+        "aht",
+        "shrinkage",
+        "roster",
+        "nesting",
+        "calibration",
+        "occupancy",
+        "abandon rate",
+        "international voice",
+        "night shift",
+        "cx"
+      ],
+      "dimension_weights": {
+        "PROCESS": 0.25,
+        "METRIC_OWNERSHIP": 0.2,
+        "TOOL_FAMILIARITY": 0.05
+      },
+      "fact_keys": {
+        "aht_seconds": {
+          "label": "Average handle time",
+          "kind": "duration_seconds",
+          "stability": "variable"
+        },
+        "csat_pct": {
+          "label": "CSAT",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "sla_pct": {
+          "label": "SLA attainment",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "shrinkage_pct": {
+          "label": "Shrinkage",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "attrition_pct": {
+          "label": "Attrition",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "occupancy_pct": {
+          "label": "Occupancy",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "calls_per_day": {
+          "label": "Calls handled per day",
+          "kind": "count",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "team_handling": {
+          "label": "Team handling",
+          "weight": 25,
+          "keywords": [
+            "team",
+            "agents",
+            "advisors",
+            "supervis",
+            "led",
+            "managed",
+            "pod",
+            "span of control"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "csat_improvement": {
+          "label": "CSAT improvement",
+          "weight": 20,
+          "keywords": [
+            "csat",
+            "customer satisfaction",
+            "nps",
+            "quality score",
+            "feedback"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "aht_control": {
+          "label": "AHT / productivity control",
+          "weight": 15,
+          "keywords": [
+            "aht",
+            "handle time",
+            "talk time",
+            "productivity",
+            "acw",
+            "hold time"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "PROCESS"
+          ]
+        },
+        "sla_adherence": {
+          "label": "SLA adherence",
+          "weight": 15,
+          "keywords": [
+            "sla",
+            "service level",
+            "tat",
+            "turnaround",
+            "abandon",
+            "queue"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "attrition_control": {
+          "label": "Attrition control",
+          "weight": 10,
+          "keywords": [
+            "attrition",
+            "retention",
+            "shrinkage",
+            "absenteeism",
+            "engagement"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "AUTHENTICITY"
+          ]
+        },
+        "coaching_quality": {
+          "label": "Coaching and quality",
+          "weight": 10,
+          "keywords": [
+            "coach",
+            "calibration",
+            "audit",
+            "quality",
+            "training",
+            "nesting",
+            "feedback session"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "AUTHENTICITY"
+          ]
+        },
+        "workforce_planning": {
+          "label": "Workforce planning",
+          "weight": 5,
+          "keywords": [
+            "roster",
+            "manpower",
+            "staffing",
+            "forecast",
+            "capacity",
+            "scheduling"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "SPECIFICITY"
+          ]
+        }
+      }
+    },
+    "customer_support": {
+      "label": "Customer Support",
+      "keywords": [
+        "support",
+        "helpdesk",
+        "ticket",
+        "zendesk",
+        "freshdesk",
+        "escalation",
+        "resolution time",
+        "first response",
+        "chat support",
+        "email support",
+        "customer success"
+      ],
+      "dimension_weights": {
+        "PROCESS": 0.25,
+        "AUTHENTICITY": 0.2
+      },
+      "fact_keys": {
+        "tickets_per_day": {
+          "label": "Tickets per day",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "csat_pct": {
+          "label": "CSAT",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "frt_minutes": {
+          "label": "First response time",
+          "kind": "duration_minutes",
+          "stability": "variable"
+        },
+        "resolution_hours": {
+          "label": "Resolution time",
+          "kind": "duration_hours",
+          "stability": "variable"
+        },
+        "reopen_pct": {
+          "label": "Reopen rate",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "escalation_pct": {
+          "label": "Escalation rate",
+          "kind": "percent",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "ticket_ownership": {
+          "label": "Ticket volume and ownership",
+          "weight": 20,
+          "keywords": [
+            "ticket",
+            "queue",
+            "volume",
+            "chats",
+            "emails",
+            "cases"
+          ],
+          "probe_focus": [
+            "SPECIFICITY",
+            "AUTHENTICITY"
+          ]
+        },
+        "resolution_performance": {
+          "label": "Resolution performance",
+          "weight": 20,
+          "keywords": [
+            "resolution",
+            "first response",
+            "frt",
+            "tat",
+            "backlog",
+            "reopen"
+          ],
+          "probe_focus": [
+            "METRIC_OWNERSHIP",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "escalation_handling": {
+          "label": "Escalation handling",
+          "weight": 20,
+          "keywords": [
+            "escalation",
+            "irate",
+            "angry",
+            "de-escalat",
+            "supervisor",
+            "complaint"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "csat_improvement": {
+          "label": "CSAT improvement",
+          "weight": 15,
+          "keywords": [
+            "csat",
+            "satisfaction",
+            "nps",
+            "survey",
+            "feedback"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "process_improvement": {
+          "label": "Process and playbook design",
+          "weight": 15,
+          "keywords": [
+            "playbook",
+            "process",
+            "macro",
+            "workflow",
+            "automation",
+            "knowledge base",
+            "sop"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "tooling": {
+          "label": "Support tooling",
+          "weight": 10,
+          "keywords": [
+            "zendesk",
+            "freshdesk",
+            "salesforce",
+            "intercom",
+            "jira",
+            "genesys",
+            "crm",
+            "ozonetel"
+          ],
+          "probe_focus": [
+            "TOOL_FAMILIARITY",
+            "SPECIFICITY"
+          ]
+        }
+      }
+    },
+    "sales": {
+      "label": "Sales / Business Development",
+      "keywords": [
+        "sales",
+        "quota",
+        "target",
+        "pipeline",
+        "leads",
+        "conversion",
+        "revenue",
+        "arr",
+        "deal",
+        "prospect",
+        "funnel",
+        "closing",
+        "b2b",
+        "inside sales",
+        "field sales"
+      ],
+      "dimension_weights": {
+        "METRIC_OWNERSHIP": 0.25,
+        "PROCESS": 0.2,
+        "TOOL_FAMILIARITY": 0.05
+      },
+      "fact_keys": {
+        "monthly_target": {
+          "label": "Monthly target",
+          "kind": "amount",
+          "stability": "variable"
+        },
+        "quota_attainment_pct": {
+          "label": "Quota attainment",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "leads_per_month": {
+          "label": "Leads handled per month",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "conversion_pct": {
+          "label": "Conversion rate",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "deal_size": {
+          "label": "Average deal size",
+          "kind": "amount",
+          "stability": "variable"
+        },
+        "sales_cycle_days": {
+          "label": "Sales cycle length",
+          "kind": "duration_days",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "quota_performance": {
+          "label": "Quota and revenue performance",
+          "weight": 30,
+          "keywords": [
+            "quota",
+            "target",
+            "revenue",
+            "exceeded",
+            "achieved",
+            "arr",
+            "gmv",
+            "billing"
+          ],
+          "probe_focus": [
+            "METRIC_OWNERSHIP",
+            "SPECIFICITY"
+          ]
+        },
+        "pipeline_management": {
+          "label": "Pipeline management",
+          "weight": 20,
+          "keywords": [
+            "pipeline",
+            "funnel",
+            "prospect",
+            "lead",
+            "qualification",
+            "mql",
+            "sql"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "deal_closing": {
+          "label": "Deal closing and negotiation",
+          "weight": 20,
+          "keywords": [
+            "closed",
+            "negotiat",
+            "objection",
+            "contract",
+            "won",
+            "procurement"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "account_management": {
+          "label": "Account management and retention",
+          "weight": 15,
+          "keywords": [
+            "account",
+            "renewal",
+            "retention",
+            "upsell",
+            "cross-sell",
+            "churn",
+            "relationship"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "team_handling": {
+          "label": "Sales team handling",
+          "weight": 10,
+          "keywords": [
+            "team",
+            "reps",
+            "reportees",
+            "mentored",
+            "sales team",
+            "region"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "crm_discipline": {
+          "label": "CRM and reporting discipline",
+          "weight": 5,
+          "keywords": [
+            "crm",
+            "salesforce",
+            "hubspot",
+            "zoho",
+            "leadsquared",
+            "forecast",
+            "dashboard"
+          ],
+          "probe_focus": [
+            "TOOL_FAMILIARITY",
+            "PROCESS"
+          ]
+        }
+      }
+    },
+    "banking_operations": {
+      "label": "Banking / Financial Operations",
+      "keywords": [
+        "loan",
+        "kyc",
+        "underwriting",
+        "disbursement",
+        "branch",
+        "banking",
+        "credit",
+        "reconciliation",
+        "audit",
+        "compliance",
+        "npa",
+        "insurance",
+        "claims",
+        "mutual fund",
+        "casa"
+      ],
+      "dimension_weights": {
+        "PROCESS": 0.25,
+        "SPECIFICITY": 0.2,
+        "AUTHENTICITY": 0.15
+      },
+      "fact_keys": {
+        "files_per_day": {
+          "label": "Files processed per day",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "tat_hours": {
+          "label": "Turnaround time",
+          "kind": "duration_hours",
+          "stability": "variable"
+        },
+        "rejection_pct": {
+          "label": "Rejection rate",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "portfolio_amount": {
+          "label": "Portfolio size",
+          "kind": "amount",
+          "stability": "variable"
+        },
+        "npa_pct": {
+          "label": "NPA / delinquency",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "audit_findings": {
+          "label": "Audit findings",
+          "kind": "count",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "process_ownership": {
+          "label": "Process ownership",
+          "weight": 25,
+          "keywords": [
+            "loan processing",
+            "disbursement",
+            "underwriting",
+            "onboarding",
+            "account opening",
+            "claims"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "SPECIFICITY"
+          ]
+        },
+        "compliance_kyc": {
+          "label": "Compliance and KYC",
+          "weight": 25,
+          "keywords": [
+            "kyc",
+            "aml",
+            "compliance",
+            "regulat",
+            "rbi",
+            "audit",
+            "documentation"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "tat_performance": {
+          "label": "TAT and throughput",
+          "weight": 20,
+          "keywords": [
+            "tat",
+            "turnaround",
+            "throughput",
+            "backlog",
+            "sla",
+            "files"
+          ],
+          "probe_focus": [
+            "METRIC_OWNERSHIP",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "risk_quality": {
+          "label": "Risk and portfolio quality",
+          "weight": 15,
+          "keywords": [
+            "npa",
+            "delinquen",
+            "risk",
+            "fraud",
+            "recovery",
+            "collection",
+            "provisioning"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "AUTHENTICITY"
+          ]
+        },
+        "team_handling": {
+          "label": "Team handling",
+          "weight": 10,
+          "keywords": [
+            "team",
+            "branch",
+            "reportees",
+            "supervis",
+            "trained"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "systems": {
+          "label": "Core systems familiarity",
+          "weight": 5,
+          "keywords": [
+            "finacle",
+            "flexcube",
+            "temenos",
+            "los",
+            "lms",
+            "core banking",
+            "sap",
+            "oracle"
+          ],
+          "probe_focus": [
+            "TOOL_FAMILIARITY",
+            "SPECIFICITY"
+          ]
+        }
+      }
+    },
+    "software_engineering": {
+      "label": "Software Engineering",
+      "keywords": [
+        "api",
+        "backend",
+        "frontend",
+        "microservice",
+        "latency",
+        "deploy",
+        "kubernetes",
+        "python",
+        "java",
+        "react",
+        "database",
+        "postgres",
+        "kafka",
+        "redis",
+        "aws",
+        "engineer",
+        "developer",
+        "p95",
+        "throughput"
+      ],
+      "dimension_weights": {
+        "CAUSAL_REASONING": 0.2,
+        "PROCESS": 0.2,
+        "TOOL_FAMILIARITY": 0.15,
+        "AUTHENTICITY": 0.15
+      },
+      "fact_keys": {
+        "p95_latency_ms": {
+          "label": "p95 latency",
+          "kind": "duration_ms",
+          "stability": "variable"
+        },
+        "requests_per_second": {
+          "label": "Requests per second",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "uptime_pct": {
+          "label": "Uptime / availability",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "service_count": {
+          "label": "Services owned",
+          "kind": "count",
+          "stability": "stable"
+        },
+        "deploy_frequency_per_week": {
+          "label": "Deploys per week",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "incident_count": {
+          "label": "Incidents handled",
+          "kind": "count",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "system_ownership": {
+          "label": "System and service ownership",
+          "weight": 25,
+          "keywords": [
+            "owned",
+            "built",
+            "designed",
+            "architect",
+            "service",
+            "platform",
+            "module"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "performance_work": {
+          "label": "Performance and scale work",
+          "weight": 20,
+          "keywords": [
+            "latency",
+            "p95",
+            "p99",
+            "throughput",
+            "scale",
+            "optimis",
+            "optimiz",
+            "cache",
+            "query"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "reliability": {
+          "label": "Reliability and on-call",
+          "weight": 20,
+          "keywords": [
+            "on-call",
+            "oncall",
+            "incident",
+            "outage",
+            "uptime",
+            "monitoring",
+            "alert",
+            "postmortem",
+            "sre"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "delivery": {
+          "label": "Delivery and migration",
+          "weight": 15,
+          "keywords": [
+            "migrat",
+            "rollout",
+            "shipped",
+            "released",
+            "zero downtime",
+            "rewrite",
+            "cutover"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "tech_depth": {
+          "label": "Technology depth",
+          "weight": 15,
+          "keywords": [
+            "kubernetes",
+            "kafka",
+            "redis",
+            "postgres",
+            "terraform",
+            "spark",
+            "grpc",
+            "docker",
+            "aws",
+            "gcp"
+          ],
+          "probe_focus": [
+            "TOOL_FAMILIARITY",
+            "SPECIFICITY"
+          ]
+        },
+        "mentoring": {
+          "label": "Mentoring and review",
+          "weight": 5,
+          "keywords": [
+            "mentor",
+            "code review",
+            "onboarded",
+            "tech lead",
+            "interviewed",
+            "hiring"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        }
+      }
+    },
+    "data_analytics": {
+      "label": "Data / Analytics",
+      "keywords": [
+        "data",
+        "analytics",
+        "sql",
+        "dashboard",
+        "tableau",
+        "power bi",
+        "looker",
+        "etl",
+        "pipeline",
+        "model",
+        "machine learning",
+        "forecast",
+        "reporting",
+        "warehouse",
+        "dbt",
+        "airflow"
+      ],
+      "dimension_weights": {
+        "METRIC_OWNERSHIP": 0.25,
+        "CAUSAL_REASONING": 0.2,
+        "PROCESS": 0.15
+      },
+      "fact_keys": {
+        "dashboard_count": {
+          "label": "Dashboards delivered",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "model_accuracy_pct": {
+          "label": "Model accuracy",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "rows_processed": {
+          "label": "Data volume",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "pipeline_count": {
+          "label": "Pipelines owned",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "stakeholder_count": {
+          "label": "Stakeholders served",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "uplift_pct": {
+          "label": "Business uplift claimed",
+          "kind": "percent",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "business_impact": {
+          "label": "Business impact from analysis",
+          "weight": 25,
+          "keywords": [
+            "increase",
+            "uplift",
+            "drove",
+            "improved",
+            "conversion",
+            "revenue",
+            "saved",
+            "reduced"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "modelling": {
+          "label": "Modelling and method",
+          "weight": 20,
+          "keywords": [
+            "model",
+            "regression",
+            "forecast",
+            "predictive",
+            "classification",
+            "ml",
+            "feature",
+            "accuracy",
+            "training"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "pipeline_ownership": {
+          "label": "Pipeline and data quality ownership",
+          "weight": 20,
+          "keywords": [
+            "etl",
+            "pipeline",
+            "airflow",
+            "dbt",
+            "warehouse",
+            "ingestion",
+            "data quality",
+            "schema"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "AUTHENTICITY"
+          ]
+        },
+        "reporting": {
+          "label": "Reporting and stakeholder work",
+          "weight": 20,
+          "keywords": [
+            "dashboard",
+            "report",
+            "tableau",
+            "power bi",
+            "looker",
+            "stakeholder",
+            "leadership",
+            "review"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "SPECIFICITY"
+          ]
+        },
+        "governance": {
+          "label": "Data governance",
+          "weight": 10,
+          "keywords": [
+            "governance",
+            "catalog",
+            "lineage",
+            "pii",
+            "access control",
+            "definition",
+            "single source"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "tooling": {
+          "label": "Tooling depth",
+          "weight": 5,
+          "keywords": [
+            "sql",
+            "python",
+            "spark",
+            "snowflake",
+            "bigquery",
+            "redshift",
+            "pandas"
+          ],
+          "probe_focus": [
+            "TOOL_FAMILIARITY",
+            "SPECIFICITY"
+          ]
+        }
+      }
+    },
+    "hr_recruitment": {
+      "label": "HR / Recruitment",
+      "keywords": [
+        "hiring",
+        "recruit",
+        "sourcing",
+        "onboarding",
+        "hr",
+        "payroll",
+        "attrition",
+        "engagement",
+        "talent",
+        "interview",
+        "offer",
+        "joinee",
+        "hrbp",
+        "naukri",
+        "shine"
+      ],
+      "dimension_weights": {
+        "AUTHENTICITY": 0.25,
+        "PROCESS": 0.2,
+        "TOOL_FAMILIARITY": 0.05
+      },
+      "fact_keys": {
+        "positions_closed": {
+          "label": "Positions closed",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "time_to_fill_days": {
+          "label": "Time to fill",
+          "kind": "duration_days",
+          "stability": "variable"
+        },
+        "offer_acceptance_pct": {
+          "label": "Offer acceptance rate",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "attrition_pct": {
+          "label": "Attrition",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "employee_count": {
+          "label": "Employees supported",
+          "kind": "count",
+          "stability": "stable"
+        },
+        "cost_per_hire": {
+          "label": "Cost per hire",
+          "kind": "amount",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "hiring_delivery": {
+          "label": "Hiring delivery",
+          "weight": 30,
+          "keywords": [
+            "closed",
+            "positions",
+            "hired",
+            "offers",
+            "requisition",
+            "roles",
+            "joinees"
+          ],
+          "probe_focus": [
+            "METRIC_OWNERSHIP",
+            "SPECIFICITY"
+          ]
+        },
+        "sourcing_strategy": {
+          "label": "Sourcing strategy",
+          "weight": 20,
+          "keywords": [
+            "sourcing",
+            "channel",
+            "referral",
+            "job board",
+            "linkedin",
+            "naukri",
+            "pipeline",
+            "outreach"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "stakeholder_management": {
+          "label": "Stakeholder and hiring manager management",
+          "weight": 20,
+          "keywords": [
+            "hiring manager",
+            "stakeholder",
+            "business",
+            "intake",
+            "calibration",
+            "hrbp"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "retention_engagement": {
+          "label": "Retention and engagement",
+          "weight": 15,
+          "keywords": [
+            "attrition",
+            "retention",
+            "engagement",
+            "survey",
+            "exit",
+            "skip level"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "AUTHENTICITY"
+          ]
+        },
+        "operations_compliance": {
+          "label": "HR operations and compliance",
+          "weight": 10,
+          "keywords": [
+            "payroll",
+            "compliance",
+            "pf",
+            "esi",
+            "policy",
+            "documentation",
+            "audit",
+            "background verification"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "SPECIFICITY"
+          ]
+        },
+        "hr_systems": {
+          "label": "HR systems",
+          "weight": 5,
+          "keywords": [
+            "ats",
+            "darwinbox",
+            "workday",
+            "successfactors",
+            "greenhouse",
+            "keka",
+            "zoho people"
+          ],
+          "probe_focus": [
+            "TOOL_FAMILIARITY",
+            "SPECIFICITY"
+          ]
+        }
+      }
+    },
+    "general": {
+      "label": "General / Unclassified",
+      "keywords": [],
+      "dimension_weights": {},
+      "fact_keys": {
+        "budget_amount": {
+          "label": "Budget owned",
+          "kind": "amount",
+          "stability": "variable"
+        },
+        "project_count": {
+          "label": "Projects delivered",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "improvement_pct": {
+          "label": "Improvement claimed",
+          "kind": "percent",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "delivery": {
+          "label": "Delivery and ownership",
+          "weight": 30,
+          "keywords": [
+            "delivered",
+            "built",
+            "led",
+            "owned",
+            "launched",
+            "implemented"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "measurable_outcome": {
+          "label": "Measurable outcome",
+          "weight": 25,
+          "keywords": [
+            "improved",
+            "reduced",
+            "increased",
+            "saved",
+            "grew",
+            "percent"
+          ],
+          "probe_focus": [
+            "METRIC_OWNERSHIP",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "process_work": {
+          "label": "Process and method",
+          "weight": 20,
+          "keywords": [
+            "process",
+            "workflow",
+            "sop",
+            "framework",
+            "standardis",
+            "standardiz",
+            "automat"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "SPECIFICITY"
+          ]
+        },
+        "team_handling": {
+          "label": "Team handling",
+          "weight": 15,
+          "keywords": [
+            "team",
+            "reportees",
+            "managed",
+            "mentored",
+            "supervis"
+          ],
+          "probe_focus": [
+            "AUTHENTICITY",
+            "PROCESS"
+          ]
+        },
+        "tooling": {
+          "label": "Tools and systems",
+          "weight": 10,
+          "keywords": [
+            "tool",
+            "software",
+            "platform",
+            "system",
+            "excel",
+            "erp"
+          ],
+          "probe_focus": [
+            "TOOL_FAMILIARITY",
+            "SPECIFICITY"
+          ]
+        }
+      }
+    }
+  },
+  "_stability_note": "stable = the value should not change between answers, so a divergence is a contradiction (team size, tenure). variable = the value moves over time by design, so 'CSAT was 78, then 92' is a before/after, NOT a lie. Only stable keys can raise a contradiction. This single distinction is what stops the consistency engine from punishing every improvement a candidate describes."
+}

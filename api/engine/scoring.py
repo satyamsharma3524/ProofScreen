@@ -1,129 +1,204 @@
 """
-Deterministic scoring. NO LLM IN THIS FILE. Pure functions, fully unit-tested.
+ARTIFACT 4c — the scoring engine.  NO LLM IN THIS FILE.
 
-This is the file you open on stage when a judge asks "isn't the score just the
-LLM's opinion?". The answer: verdicts are enums produced by the model, weights
-are constants in this file, and the score is arithmetic. Every term in it
-points at a verbatim quote from the candidate's own answer.
+This is the file you open on the projector.
 
-    claim_confidence  = clamp( SUM over dimensions of weight_d * points_d, 0, 1 )
-    competence_score  = mean( claim_confidence for all claims )
-    badge             = verified   if competence >= 0.70
-                        partial    if competence >= 0.40
-                        unverified otherwise
+    dimension score   (engine/signals.py — counts -> 0-100, published rubrics)
+        |
+        v
+    claim score       = SUM over 6 dimensions of  dimension_weight x dimension_score
+        |
+        v
+    weighted evidence = SUM over claims of  claim_weight x claim_score
+        |                (claim_weight comes from the role, not from us)
+        v
+    competence score  = weighted evidence  x  consistency multiplier
+        |
+        v
+    badge             verified >= 70,  partial >= 40,  else unverified
+
+Every arrow is arithmetic. Every dimension score points at verbatim quotes
+from the candidate's own answers. Nothing in this file calls a model.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
 
-from api.schemas import Badge, Dimension, Verdict
+from api.engine.signals import PROBE_LEVEL_DIMENSIONS
+from api.schemas import (
+    Badge,
+    Dimension,
+    DimensionScore,
+    ProbeLevel,
+)
+from api.taxonomy import dimension_weights
 
-# ---------------------------------------------------------------------------
-# the constants that make the score defensible
-# ---------------------------------------------------------------------------
+BADGE_VERIFIED_AT = 70
+BADGE_PARTIAL_AT = 40
 
-VERDICT_POINTS: dict[Verdict, float] = {
-    Verdict.SUPPORTED: 1.0,
-    Verdict.PARTIAL: 0.5,
-    Verdict.UNSUPPORTED: 0.0,
-    Verdict.CONTRADICTED: -0.5,
-}
+# A claim at or above this is "well evidenced" — the question policy stops
+# deepening it and spends the remaining budget elsewhere.
+SATURATION_AT = 80
 
-DIMENSION_WEIGHT: dict[Dimension, float] = {
-    Dimension.OWNERSHIP: 0.30,
-    Dimension.DEPTH: 0.30,
-    Dimension.SPECIFICITY: 0.20,
-    Dimension.OPERATIONAL: 0.20,
-}
+# Voice contributes this share of a claim's score, and ONLY for claims the
+# candidate answered by voice. Text-only claims are scored on content alone
+# (weight renormalised to 1.0) so nobody is penalised for typing.
+#
+# Kept small on purpose. The voice signal is duration and word count — how
+# much they actually said — and nothing else. Accent, fluency, pause pattern
+# and "speech confidence" are not measured, because in India they are proxies
+# for region and class, not competence.
+DEFAULT_VOICE_WEIGHT = 0.10
 
-# Deterministic tie-break order, used by the question policy.
 DIMENSION_ORDER: tuple[Dimension, ...] = (
-    Dimension.OWNERSHIP,
-    Dimension.DEPTH,
     Dimension.SPECIFICITY,
-    Dimension.OPERATIONAL,
+    Dimension.PROCESS,
+    Dimension.METRIC_OWNERSHIP,
+    Dimension.CAUSAL_REASONING,
+    Dimension.AUTHENTICITY,
+    Dimension.TOOL_FAMILIARITY,
 )
 
-BADGE_VERIFIED_AT = 0.70
-BADGE_PARTIAL_AT = 0.40
 
-# A claim is "well covered" once it passes this, which is what lets the
-# question policy move on to the next claim instead of over-probing one.
-WELL_COVERED_AT = 0.70
+def clamp100(value: float) -> int:
+    return int(round(max(0.0, min(100.0, value))))
 
 
-def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
-    return max(low, min(high, value))
+def dimension_weights_for(job_family: str = "general") -> dict[str, float]:
+    """Per-family dimension weights, summing to exactly 1.0."""
+    return dimension_weights(job_family)
 
 
 # ---------------------------------------------------------------------------
-# node normalisation
-#
-# Accepts Pydantic EvidenceNode / RawEvidenceNode, ORM Evidence rows, or plain
-# dicts. Anything with .dimension and .verdict works, so B's code and A's code
-# and seed.py can all call straight into here.
+# merging several answers about one claim
 # ---------------------------------------------------------------------------
 
 
-def _field(node: Any, name: str) -> Any:
-    if isinstance(node, dict):
-        return node.get(name)
-    return getattr(node, name, None)
+def merge_dimension_scores(
+    per_answer: Sequence[tuple[ProbeLevel, Mapping[Dimension, DimensionScore]]],
+) -> dict[Dimension, DimensionScore]:
+    """DEPRECATED — kept only so nothing silently breaks.
 
-
-def _as_pair(node: Any) -> tuple[Dimension, Verdict] | None:
-    try:
-        return Dimension(_field(node, "dimension")), Verdict(_field(node, "verdict"))
-    except (ValueError, TypeError):
-        return None
-
-
-def points_by_dimension(nodes: Iterable[Any]) -> dict[Dimension, float]:
-    """Best points achieved per dimension across all nodes.
-
-    Multiple answers can touch the same dimension. We take the BEST verdict
-    per dimension rather than the mean: once a candidate has demonstrably
-    evidenced ownership, a later vague answer does not un-evidence it. The one
-    exception is CONTRADICTED, which is negative and therefore can only ever
-    be the best score if nothing else touched that dimension.
+    Superseded by engine.signals.score_claim(), which runs the rubric over the
+    UNION of a claim's signals instead of taking the best per-answer score.
+    Taking the best meant two complete causal chains in two different answers
+    scored the same as one, which under-credited exactly the candidates the
+    protocol is designed to find.
     """
-    out: dict[Dimension, float] = {}
-    for node in nodes:
-        pair = _as_pair(node)
-        if pair is None:
-            continue
-        dimension, verdict = pair
-        points = VERDICT_POINTS[verdict]
-        if dimension not in out or points > out[dimension]:
-            out[dimension] = points
-    return out
+    probed: set[Dimension] = set()
+    for level, _ in per_answer:
+        probed.update(PROBE_LEVEL_DIMENSIONS.get(level, ()))
+
+    merged: dict[Dimension, DimensionScore] = {}
+    for dimension in DIMENSION_ORDER:
+        best: DimensionScore | None = None
+        for _, scores in per_answer:
+            current = scores.get(dimension)
+            if current and (best is None or current.score > best.score):
+                best = current
+        merged[dimension] = best or DimensionScore(
+            dimension=dimension, score=0, basis="not probed",
+            probed=dimension in probed,
+        )
+    return merged
 
 
-def claim_confidence(nodes: Iterable[Any]) -> float:
-    """Weighted sum of per-dimension points, clamped to [0, 1]."""
-    points = points_by_dimension(nodes)
-    if not points:
-        return 0.0
-    total = sum(DIMENSION_WEIGHT[d] * p for d, p in points.items())
-    return round(clamp(total), 4)
+# ---------------------------------------------------------------------------
+# claim score
+# ---------------------------------------------------------------------------
 
 
-def competence_score(confidences: Sequence[float]) -> float:
-    """Mean claim confidence.
+def claim_score(
+    dimensions: Mapping[Dimension, DimensionScore] | Mapping[Dimension, int],
+    job_family: str = "general",
+    weights: Mapping[str, float] | None = None,
+    voice_effort: int | None = None,
+    voice_weight: float = DEFAULT_VOICE_WEIGHT,
+) -> int:
+    """Weighted sum over all six dimensions, 0-100.
 
-    Callers must pass one entry per CLAIM, not per scored claim: an unprobed
-    claim contributes 0.0. A candidate does not get a high score by answering
-    one question well and ignoring the rest.
+    An un-probed dimension contributes 0. That is deliberate: this is a
+    CONFIDENCE score, and one great answer about one dimension is not
+    confidence that the whole claim is real. `probed_dimensions` is reported
+    alongside so a low score from thin questioning is visible as such.
     """
-    if not confidences:
-        return 0.0
-    return round(sum(confidences) / len(confidences), 4)
+    active = dict(weights) if weights else dimension_weights(job_family)
+    total_weight = sum(active.get(d.value, 0.0) for d in DIMENSION_ORDER) or 1.0
+
+    content = 0.0
+    for dimension in DIMENSION_ORDER:
+        entry = dimensions.get(dimension)
+        value = entry if isinstance(entry, (int, float)) else (entry.score if entry else 0)
+        content += active.get(dimension.value, 0.0) * float(value)
+    content = content / total_weight
+
+    if voice_effort is None:
+        return clamp100(content)
+    blended = content * (1.0 - voice_weight) + float(voice_effort) * voice_weight
+    return clamp100(blended)
 
 
-def badge_for(score: float) -> Badge:
+def probed_count(dimensions: Mapping[Dimension, DimensionScore]) -> int:
+    return sum(1 for d in DIMENSION_ORDER if dimensions.get(d) and dimensions[d].probed)
+
+
+def is_saturated(score: int) -> bool:
+    return score >= SATURATION_AT
+
+
+# ---------------------------------------------------------------------------
+# candidate score
+# ---------------------------------------------------------------------------
+
+
+def weighted_evidence_score(
+    claims: Sequence[tuple[str, int]],
+    claim_weights: Mapping[str, float],
+) -> tuple[int, int]:
+    """Role-weighted mean of claim scores. Returns (score, role_coverage).
+
+    `claims` is [(claim_type, claim_score)]. Weights come from the ROLE, so the
+    same evidence ranks differently for two recruiters — that is Artifact 5.
+
+    Weights are renormalised over the claim types the candidate actually made,
+    and `role_coverage` reports how much of the role's weight their resume
+    speaks to at all. Keeping those two numbers separate matters: "evidenced it
+    badly" and "never claimed it" are different facts, and folding them into
+    one score would hide which is which from the recruiter.
+    """
+    if not claims:
+        return 0, 0
+
+    present = 0.0
+    accumulated = 0.0
+    seen_types: set[str] = set()
+
+    for claim_type, score in claims:
+        weight = float(claim_weights.get(claim_type, 0.0))
+        if weight <= 0:
+            weight = 1.0                        # unknown type still counts a little
+        accumulated += weight * float(score)
+        present += weight
+        seen_types.add(claim_type)
+
+    score = clamp100(accumulated / present) if present else 0
+
+    total_role_weight = sum(
+        float(w) for t, w in claim_weights.items() if t in seen_types
+    )
+    denominator = sum(float(w) for w in claim_weights.values()) or 100.0
+    coverage = clamp100(total_role_weight / denominator * 100)
+    return score, coverage
+
+
+def competence_score(weighted_evidence: int, consistency_multiplier: float) -> int:
+    """The headline number. One multiplication, and both inputs are shown."""
+    return clamp100(float(weighted_evidence) * float(consistency_multiplier))
+
+
+def badge_for(score: int) -> Badge:
     if score >= BADGE_VERIFIED_AT:
         return Badge.verified
     if score >= BADGE_PARTIAL_AT:
@@ -131,62 +206,63 @@ def badge_for(score: float) -> Badge:
     return Badge.unverified
 
 
-def is_well_covered(nodes: Iterable[Any]) -> bool:
-    return claim_confidence(nodes) >= WELL_COVERED_AT
+def candidate_dimension_profile(
+    per_claim: Sequence[tuple[float, Mapping[Dimension, DimensionScore]]],
+) -> list[DimensionScore]:
+    """Candidate-level reading per dimension, weighted by claim importance.
 
-
-# ---------------------------------------------------------------------------
-# coverage — what the adaptive question policy reads
-# ---------------------------------------------------------------------------
-
-
-def coverage(nodes: Iterable[Any]) -> dict[Dimension, float]:
-    """Points per dimension, with every dimension present (0.0 if untouched)."""
-    scored = points_by_dimension(nodes)
-    return {d: scored.get(d, 0.0) for d in DIMENSION_ORDER}
-
-
-def weakest_dimension(nodes: Iterable[Any]) -> Dimension:
-    """The dimension with the least weighted evidence.
-
-    Weighted, so an untouched OWNERSHIP (worth 0.30) is probed before an
-    untouched SPECIFICITY (worth 0.20). Ties break in DIMENSION_ORDER, which
-    makes the policy fully reproducible — the same session always asks the
-    same questions.
+    This is the radar chart on the dashboard: where is this person strong, and
+    where did they fold — across every claim at once.
     """
-    cov = coverage(nodes)
-    return min(
-        DIMENSION_ORDER,
-        key=lambda d: (round(cov[d] * DIMENSION_WEIGHT[d], 6), DIMENSION_ORDER.index(d)),
-    )
+    if not per_claim:
+        return [
+            DimensionScore(dimension=d, score=0, basis="no claims scored")
+            for d in DIMENSION_ORDER
+        ]
 
-
-def weakest_dimension_across(node_groups: Iterable[Iterable[Any]]) -> Dimension:
-    """Least-covered dimension across every claim in the session (Q5's policy)."""
-    totals = {d: 0.0 for d in DIMENSION_ORDER}
-    for group in node_groups:
-        cov = coverage(group)
-        for d in DIMENSION_ORDER:
-            totals[d] += cov[d] * DIMENSION_WEIGHT[d]
-    return min(
-        DIMENSION_ORDER,
-        key=lambda d: (round(totals[d], 6), DIMENSION_ORDER.index(d)),
-    )
+    out: list[DimensionScore] = []
+    for dimension in DIMENSION_ORDER:
+        weight_total = 0.0
+        accumulated = 0.0
+        signal_total = 0
+        probed_any = False
+        quotes: list[str] = []
+        for weight, dimensions in per_claim:
+            entry = dimensions.get(dimension)
+            if entry is None:
+                continue
+            w = max(weight, 1.0)
+            accumulated += w * entry.score
+            weight_total += w
+            signal_total += entry.signal_count
+            probed_any = probed_any or entry.probed
+            quotes.extend(entry.quotes)
+        score = clamp100(accumulated / weight_total) if weight_total else 0
+        out.append(
+            DimensionScore(
+                dimension=dimension,
+                score=score,
+                signal_count=signal_total,
+                basis=f"across {len(per_claim)} claim(s)",
+                quotes=quotes[:3],
+                probed=probed_any,
+            )
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
-# resume_score — the deliberately shallow number
+# resume_score — the deliberately shallow contrast metric
 #
-# Its only job is to sit next to the competence score on the dashboard and be
-# visibly different. It is keyword overlap against the job description, which
-# is exactly what a GenAI-optimised resume is built to maximise. That is the
-# point: a 0.94 resume_score next to a 0.31 competence_score IS the pitch.
+# Keyword overlap against the job description: exactly what a GenAI-optimised
+# resume is built to maximise. Its only job is to sit beside the competence
+# score and be visibly, embarrassingly different.
 # ---------------------------------------------------------------------------
 
 _STOPWORDS = frozenset(
     """a an and are as at be by for from has have in into is it its of on or that the
     to was were will with you your our their they we able using use used work working
-    role responsible including etc across within strong good excellent""".split()
+    role responsible including etc across within strong good excellent ability""".split()
 )
 _TOKEN = re.compile(r"[a-z][a-z+#.\-]{2,}")
 
@@ -195,10 +271,45 @@ def _terms(text: str) -> set[str]:
     return {t for t in _TOKEN.findall((text or "").lower()) if t not in _STOPWORDS}
 
 
-def resume_score(resume_text: str, job_description: str) -> float:
-    """Fraction of the job description's significant terms present in the resume."""
+def resume_score(resume_text: str, job_description: str) -> int:
+    """Percentage of the job description's significant terms present in the resume."""
     jd = _terms(job_description)
     if not jd:
-        return 0.0
-    hits = len(jd & _terms(resume_text))
-    return round(clamp(hits / len(jd)), 4)
+        return 0
+    return clamp100(len(jd & _terms(resume_text)) / len(jd) * 100)
+
+
+def normalise_weights(weights: Mapping[str, float], total: float = 100.0) -> dict[str, float]:
+    """Rescale a recruiter's weights so they sum to `total`.
+
+    Recruiters type 40/30/20/20. Rather than rejecting that, rescale it — the
+    ranking only depends on the ratios, and a rejected form is a recruiter who
+    stops using the product.
+    """
+    values = {k: float(v) for k, v in weights.items() if float(v) > 0}
+    current = sum(values.values())
+    if not values or current <= 0:
+        return {}
+    factor = total / current
+    keys = list(values)
+    out = {k: round(values[k] * factor, 4) for k in keys[:-1]}
+    # Last key absorbs the rounding remainder, so the weights sum to exactly
+    # `total`. Otherwise a recruiter typing 40/30/20/20 sees 99.9999 in the
+    # weight editor and reasonably assumes the product is broken.
+    out[keys[-1]] = round(total - sum(out.values()), 4)
+    return out
+
+
+def all_dimensions() -> tuple[Dimension, ...]:
+    return DIMENSION_ORDER
+
+
+def dimension_labels() -> dict[Dimension, str]:
+    return {
+        Dimension.SPECIFICITY: "Specificity",
+        Dimension.PROCESS: "Process understanding",
+        Dimension.METRIC_OWNERSHIP: "Metric ownership",
+        Dimension.CAUSAL_REASONING: "Causal reasoning",
+        Dimension.AUTHENTICITY: "Experience authenticity",
+        Dimension.TOOL_FAMILIARITY: "Tool familiarity",
+    }

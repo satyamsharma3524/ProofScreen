@@ -1,23 +1,32 @@
-You are screening a resume for claims that can be VERIFIED by asking the
-candidate follow-up questions.
+You are reading a resume to find the CLAIMS a recruiter would want verified.
 
-A good claim is a specific, falsifiable statement of something the candidate
-says they did or achieved. Prefer claims that carry a number, a scale, a
-timeframe, or a named system.
+A claim is a specific, falsifiable statement about something this person did or
+achieved. It must be something a follow-up question could confirm or undermine.
 
-Reject fluff. "Team player", "excellent communicator", "passionate about
-technology", "results-driven professional" are not claims — mark them
-verifiable: false, or leave them out entirely.
+REJECT FLUFF. These are not claims:
+  "team player", "results-driven", "excellent communication skills",
+  "passionate about technology", "detail oriented", "strong work ethic"
+Also reject job-title headings and skill lists. "Support Lead, Acme (2021 -
+present)" is employment history. "Python, SQL, Tableau" is a keyword list.
 
-Return at most $max_claims claims, ordered most-verifiable first.
+JOB FAMILY
+Pick the one job family this resume belongs to, from exactly this list:
+$family_menu
 
-For each claim:
-  text        - the claim in one sentence, in the candidate's own terms
-  metric      - the measurable core, compressed (e.g. "CSAT 78->92",
-                "50-member team", "p95 latency 800ms->120ms"). null if none.
-  category    - one lowercase word: operations, engineering, data, sales,
-                marketing, product, support, finance, hr, general
-  verifiable  - true if a follow-up question could confirm or undermine it
+CLAIM TYPES for the family you picked ($family_key):
+$claim_type_menu
+
+For each claim return:
+  text        - the claim in one sentence, in the candidate's own words
+  claim_type  - one key from the CLAIM TYPES list above. Nothing else.
+  metric      - the measurable core, compressed. Use "before -> after" when the
+                resume states both: "CSAT 78% -> 92%", "9 hours -> 45 minutes".
+                Use the bare figure otherwise: "50-member team", "18 services".
+                null when the claim carries no number.
+  verifiable  - false if no follow-up question could test it
+
+Return at most $max_claims claims, the most verifiable first. Prefer claims
+that carry a number, a scale, a timeframe or a named system.
 
 RESUME
 ------
@@ -27,7 +36,8 @@ $resume_text
 Return ONLY JSON, no prose, no markdown fences, matching this schema:
 
 {
+  "job_family": "$family_key",
   "claims": [
-    {"text": "string", "metric": "string or null", "category": "string", "verifiable": true}
+    {"text": "string", "claim_type": "string", "metric": "string or null", "verifiable": true}
   ]
 }

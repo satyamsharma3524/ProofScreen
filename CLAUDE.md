@@ -1,99 +1,157 @@
-# ProofScreen API — working notes
+# ProofScreen API — working notes (v2)
 
 FastAPI backend for the Shine 2026 hackathon (build day 10 Sep, demo 11 Sep).
-Backend only; the recruiter dashboard and candidate UI are a separate Next.js
-app that consumes `/openapi.json`.
+Backend only; the recruiter dashboard is a separate Next.js app consuming
+`/openapi.json`. WhatsApp Business Cloud API (Meta, direct) is the only
+candidate channel.
 
 ## Non-negotiable rules
 
-1. **`api/schemas.py` is frozen.** It is the contract between the two devs and
+1. **The model never produces a score.** It returns countable signals and
+   quotes them; Python turns counts into numbers. If you find yourself parsing
+   a rating, confidence or percentage out of a model response, stop. Two tests
+   enforce this structurally (`test_scoring_modules_never_import_the_llm`,
+   `test_answer_signals_carries_no_score_field`).
+2. **`api/schemas.py` is frozen.** It is the contract between the two devs and
    between this service and the Next.js app. Adding an optional field is a
-   conversation with the other dev; changing or removing anything is not a
-   solo decision.
-2. **One owner per file.** See the ownership table in README.md. Never edit a
-   file the other dev owns — that is what keeps `main` conflict-free with both
-   devs pushing several commits an hour.
-3. **The LLM never produces a number.** Verdicts are enums; every float is
-   computed in `api/engine/scoring.py`. If you find yourself parsing a score
-   out of a model response, stop.
-4. **Every LLM call has a fallback.** `complete_json(..., fallback=...)` must
-   always be given one. A stack trace on the projector is the failure mode this
-   entire architecture exists to prevent.
-5. **Quotes are verified in Python, not requested in a prompt.**
-   `evidence.py` drops any node whose quote is not verbatim in the answer.
-6. **No Alembic.** `Base.metadata.create_all()` at startup. Schema change =
+   conversation; changing or removing anything is not a solo decision.
+3. **One owner per file** (table in README.md). Never edit the other dev's
+   files — that is what keeps `main` conflict-free with both pushing hourly.
+4. **Quotes are verified in Python, not requested in a prompt.**
+   `evidence.enforce_verbatim()` drops any signal whose quote is not literally
+   in the answer. A paraphrase is exactly the hallucination this product exists
+   to kill.
+5. **Every LLM call has a fallback.** `complete_json(..., fallback=...)` must
+   always be given one. A stack trace on the projector is the failure mode the
+   whole architecture exists to prevent.
+6. **Never score presentation.** No accent, fluency, grammar, speaking
+   confidence or personality — anywhere, ever. Those are bias vectors, and
+   removing them is a stated product decision, not an oversight.
+7. **No Alembic.** `create_all()` at startup. Schema change =
    `docker compose down -v` and re-seed.
 
 ## Commands
 
 ```bash
 docker compose up --build                    # api + postgres 16
-docker compose exec api python seed.py       # 3 demo candidates, 3 badges
-pytest -q                                    # 60 tests, sqlite + fixture mode, ~1s
+docker compose exec api python seed.py       # 3 candidates + 2 role profiles
+pytest -q                                    # 102 tests, sqlite + fixture mode, ~2s
 
 # no-Docker loop
 export DATABASE_URL="sqlite+aiosqlite:///./proofscreen.sqlite3"
-uvicorn api.main:app --reload
+python seed.py && uvicorn api.main:app --reload
+
+# after changing any rubric or weight
+python seed.py --reset && python scripts/dump_fixture.py && pytest -q
 ```
 
 ## Architecture in one paragraph
 
 `routers/candidates.py` parses a resume (`ingest/parse.py`) and calls
-`engine/orchestrator.create_session`, which runs `engine/extract.py` (LLM #1)
-to get up to 3 verifiable claims. `orchestrator.ask_next` applies the question
-policy — pure function `plan_next(index, claims, evidence, asked_pairs)` — and
-calls `engine/question.py` (LLM #2) for wording only. Answers arrive through
-`routers/channel.py` from either the web channel or the Twilio webhook, land in
-the `responses` table (**the seam**), and `orchestrator._persist_evidence`
-hands each one to `engine/evidence.py` (LLM #3), which returns enum verdicts
-plus verbatim quotes. `engine/scoring.py` turns those into numbers.
-`engine/graph.py` assembles the claim → Q&A → evidence tree that
-`routers/recruiter.py` serves.
+`orchestrator.create_session`, which runs `engine/extract.py` (LLM #1) for a
+job family plus up to 3 claims **typed against the taxonomy**. The session waits
+in `AWAITING_OPT_IN` because Meta will not let us message first. The candidate
+sends their opt-in code; `routers/whatsapp.py` binds the phone and
+`orchestrator.ask_next` applies the policy — pure function
+`plan_next(states, index)` — then calls `engine/question.py` (LLM #2) for
+wording only. Answers land in `responses` (**the seam**), and
+`orchestrator._persist_evidence` hands each to `engine/evidence.py` (LLM #3),
+which returns *countable signals* plus *facts*, drops any non-verbatim quote,
+and runs `engine/consistency.py` over the fact memory. `engine/signals.py`
+turns counts into six dimension scores; `engine/scoring.py` applies dimension
+and role weights and the consistency multiplier; `engine/graph.py` assembles
+the tree and re-ranks live for any role profile.
 
 ## Conventions
 
-- Async throughout — every request blocks on an LLM call. Async SQLAlchemy 2.0,
-  no lazy relationships (explicit `select()` everywhere) so there is no
+- Async throughout — every request blocks on a model call. Async SQLAlchemy
+  2.0, **no lazy relationships** (explicit `select()` everywhere) so there is no
   `MissingGreenlet` surprise at 2am.
-- Prompts are `.txt` files rendered with `string.Template` (`$var`), never
+- Prompts are `.txt` rendered with `string.Template` (`$var`), never
   `str.format` — every prompt contains a literal JSON schema full of braces.
-- IDs are short and prefixed (`c_`, `s_`, `cl_`, `q_`, `r_`, `e_`, `p_`), not
-  UUIDs, because on demo day you read them off a screen out loud.
-- Enum DB columns are `String`; Pydantic enforces the values.
+- Short prefixed IDs (`c_`, `s_`, `cl_`, `q_`, `r_`, `e_`, `f_`, `x_`, `jr_`),
+  not UUIDs, because on demo day you read them off a screen out loud.
+- Enum DB columns are `String`; Pydantic enforces values. A native Postgres
+  enum would need a migration to add a value and `create_all()` cannot.
 - Heuristic fallbacks (`extract.heuristic_claims`,
-  `question.FALLBACK_QUESTIONS`, `evidence.heuristic_extraction`) are
-  production code, not stubs. They are what runs when the model is down.
+  `question.FALLBACK_QUESTIONS`, `evidence.heuristic_signals`) are production
+  code, not stubs — they are what runs when the model is down. They are
+  deliberately more conservative than real extraction; if a fallback ever looks
+  *better*, the fallback has become the product.
+- `settings.openai_api_key = None` at the top of `seed.py` and
+  `scripts/dump_fixture.py`: seeding must be free, instant and offline.
 
 ## Env flags that change behaviour
 
 | Var | Effect |
 |---|---|
 | `OPENAI_API_KEY` empty | fixture mode: no network, deterministic heuristics |
-| `ADAPTIVE_FOLLOWUPS=false` | fixed question order (cut-list item #2) |
-| `SCORE_INLINE=false` | evidence extraction moves to a background task |
-| `MAX_QUESTIONS`, `MAX_CLAIMS` | interview length |
+| `WHATSAPP_ACCESS_TOKEN` empty | outbound dry-run; inbound webhooks still parse |
+| `ADAPTIVE_PROBING=false` | strict VALIDATION→OUTCOME sweep |
+| `SCORE_INLINE=false` | signal extraction moves to a background task |
+| `VOICE_WEIGHT=0` | removes the text/voice asymmetry |
+| `MAX_QUESTIONS`, `MAX_CLAIMS` | interview size |
+| `WHATSAPP_VALIDATE_SIGNATURE=true` | requires a correct `WHATSAPP_APP_SECRET` |
 | `ENABLE_DEV_ENDPOINTS=false` | hides `/api/dev/*` |
-| `TWILIO_VALIDATE_SIGNATURE=true` | requires `PUBLIC_BASE_URL` to be correct |
 
 ## Gotchas already paid for
 
-- Twilio media URLs need HTTP basic auth (SID + token) or they 401. Handled in
-  `stt.py`.
-- The Twilio webhook replies with TwiML, so the Q&A loop needs **no** outbound
-  credentials.
-- CORS: wildcard origins and `allow_credentials=True` are mutually exclusive;
-  `main.py` handles the combination.
-- `pymupdf` renamed its module — `import pymupdf`, falling back to `fitz`.
-- A resume line like `Support Lead, Northwind (2021 - present)` is a heading,
-  not a claim; `extract.py` rejects parenthesised years and comma-heavy skill
-  lists explicitly.
-- Unit regexes must order alternatives longest-first or `120ms` compresses to
-  `120m`.
+- **Meta media needs the bearer token on BOTH calls** (id → URL, then URL →
+  bytes). Missing it on the second is a 401 that looks like your own bug.
+- **Meta retries webhooks.** Answers are de-duplicated on
+  `provider_message_id`; without it one retry becomes a second answer and the
+  interview desyncs mid-demo.
+- **One webhook can carry several messages**, and most carry only delivery
+  statuses. `parse_inbound` returns a *list* for that reason.
+- **The webhook must 200 fast** — real work happens in a `BackgroundTask`.
+- **X-Hub-Signature-256 is over the RAW body.** Re-serialising parsed JSON
+  changes whitespace and key order and the digest never matches.
+- **The 24-hour window**: free-form text only within 24h of the candidate's
+  last message. The opt-in flow exists to open it.
+- **CORS**: wildcard origins and `allow_credentials=True` are mutually
+  exclusive; `main.py` handles the combination.
+- **`pymupdf` renamed its module** — `import pymupdf`, falling back to `fitz`.
+- **Resume heuristics**: a parenthesised year is a job-title heading, a
+  comma-heavy line with no verb is a skills list, and bare `lead`/`design` are
+  nouns on a resume as often as verbs. All three are excluded explicitly.
+- **Unit regexes must order alternatives longest-first** or `120ms` compresses
+  to `120m`.
+- **Weight renormalisation must absorb the rounding remainder** in its last
+  key, or a recruiter typing 40/30/20/20 sees 99.9999 and assumes the product
+  is broken.
+- **Family detection is load-bearing in tests.** A resume saying
+  "support / escalation / Zendesk" classifies as `customer_support`, which has
+  no `team_handling` or `aht_control` claim type — and every weight assertion
+  silently collapses. `tests/conftest.py` pins the family with BPO vocabulary
+  and says so.
+
+## Design decisions worth defending out loud
+
+- **Evidence accumulates across a claim's answers** (union of signals, rubric
+  run once) rather than taking the best per-answer score. Best-of
+  under-credited candidates who spread evidence across probe levels — which is
+  precisely what the 5-level protocol asks them to do.
+- **Un-probed dimensions contribute 0**, with `probed_dimensions` reported.
+  This is a confidence score; thin questioning should show as low confidence,
+  and the dashboard can say "4 of 6 probed".
+- **`role_coverage` is separate from the score** — "evidenced badly" and "never
+  claimed it" are different facts.
+- **Consistency is session-level, applied once.** It is a property of the whole
+  interview, not of any claim, and counting it inside a claim *and* as a
+  multiplier would penalise the same fact twice.
+- **`stable` vs `variable` fact keys.** Without that split the engine flags
+  every improvement a candidate describes as a contradiction.
 
 ## Where things stand
 
-Done: full pipeline end to end, both channels, voice, scoring + 60 tests,
-recruiter endpoints, `/api/dev/simulate`, seed data, Docker.
+Done: taxonomy (8 families), typed claim extraction, 5-level adaptive policy
+capped at 12, signal extraction with verbatim enforcement, six rubrics with
+gates, deterministic consistency, role weight profiles with live re-ranking,
+Meta Cloud API webhook (verify, HMAC, batching, retry de-dup, two-step media),
+Whisper voice with duration, `/api/dev/*` tooling, engine-generated fixture,
+seed showing the resume/competence inversion and the ranking flip, 102 tests,
+Docker.
 
 Not done: Next.js dashboard (Dev B), Render/Railway deploy, auth (deliberately
-none), the separate "Shine Verified" code-sandbox product from the strategy doc.
+none), approved WhatsApp template for first contact (needs Meta approval), the
+separate "Shine Verified" code-sandbox product from the strategy doc.

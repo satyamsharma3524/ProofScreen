@@ -1,12 +1,23 @@
 """
-ProofScreen API — FastAPI application.
+ProofScreen API — evidence-graph competence verification.
 
-Backend only. The recruiter dashboard and candidate UI are a separate Next.js
-app, so this process serves JSON and nothing else: no StaticFiles mount, CORS
-open per the build decision.
+Backend only. The recruiter dashboard is a separate Next.js app, so this
+process serves JSON and nothing else.
 
-Read the OpenAPI schema at /docs (Swagger) or /openapi.json — that schema IS
-the contract between this service and the Next.js app.
+THE ONE-PARAGRAPH PITCH, FOR ANYONE READING THIS FILE FIRST
+-----------------------------------------------------------
+A resume is a list of claims. ProofScreen extracts them, probes each one over
+WhatsApp through five levels (validate, operational, incident, decision,
+outcome), and extracts COUNTABLE SIGNALS from the answers — quantities,
+process steps, complete cause-action-outcome chains, tools with described
+usage, specific remembered incidents — each quoted verbatim. Published rubrics
+in engine/signals.py turn those counts into six dimension scores. Role weights
+turn dimension scores into a ranking. A deterministic fact-memory catches
+contradictions between answers and multiplies the whole thing down.
+
+The model never produces a score. Not once. Every number a recruiter sees is
+arithmetic over counted, quoted evidence — which is the only honest answer to
+"how do we know this isn't the AI's opinion?"
 """
 
 from __future__ import annotations
@@ -22,8 +33,9 @@ from sqlalchemy import text as sql_text
 from api.config import settings
 from api.db import engine, init_models
 from api.llm import LLMContractError
-from api.routers import candidates, channel, dev, recruiter, sessions
+from api.routers import candidates, dev, recruiter, sessions, whatsapp
 from api.schemas import HealthOut
+from api.taxonomy import family_keys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,20 +46,21 @@ log = logging.getLogger("proofscreen")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # No Alembic by design: create_all is the whole migration story.
-    await init_models()
+    await init_models()          # no Alembic by design
     log.info(
-        "ProofScreen up — llm=%s model=%s adaptive=%s max_questions=%d twilio=%s",
-        settings.llm_mode,
-        settings.openai_model,
-        settings.adaptive_followups,
-        settings.max_questions,
-        "live" if settings.twilio_enabled else "dry-run",
+        "ProofScreen up — llm=%s model=%s whatsapp=%s max_questions=%d families=%d",
+        settings.llm_mode, settings.openai_model, settings.whatsapp_mode,
+        settings.max_questions, len(family_keys()),
     )
     if not settings.llm_enabled:
         log.warning(
-            "OPENAI_API_KEY is not set — running in FIXTURE MODE. "
-            "Claims, questions and evidence come from deterministic heuristics."
+            "OPENAI_API_KEY not set — FIXTURE MODE. Claims, questions and signal "
+            "extraction come from deterministic heuristics; scoring is unchanged."
+        )
+    if not settings.whatsapp_enabled:
+        log.warning(
+            "WhatsApp Cloud API not configured — outbound messages are dry-run. "
+            "Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID to go live."
         )
     yield
     await engine.dispose()
@@ -55,14 +68,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ProofScreen API",
-    version="0.1.0",
-    summary="Evidence-graph competence verification for resumes.",
+    version="2.0.0",
+    summary="Turns resume claims into a scored, quotable evidence graph.",
     description=(
         "Resume in, evidence graph out.\n\n"
-        "The LLM produces evidence nodes with enum verdicts. It never produces "
-        "a number — `claim_confidence` and `competence_score` are arithmetic "
-        "over those verdicts (see `api/engine/scoring.py`), and every term in "
-        "the score points at a verbatim quote from the candidate's own answer."
+        "**The model never produces a score.** It extracts countable signals and "
+        "quotes them verbatim; `api/engine/signals.py` turns counts into six "
+        "dimension scores via published rubrics, `api/engine/scoring.py` applies "
+        "role weights, and `api/engine/consistency.py` catches contradictions "
+        "between answers deterministically.\n\n"
+        "Pass `role_id` to any recruiter endpoint to re-rank identical evidence "
+        "under a different recruiter's priorities."
     ),
     lifespan=lifespan,
 )
@@ -78,7 +94,7 @@ app.add_middleware(
 
 app.include_router(candidates.router)
 app.include_router(sessions.router)
-app.include_router(channel.router)
+app.include_router(whatsapp.router)
 app.include_router(recruiter.router)
 app.include_router(dev.router)
 
@@ -100,6 +116,7 @@ async def llm_contract_error_handler(request: Request, exc: LLMContractError):
 async def root() -> dict:
     return {
         "service": "proofscreen-api",
+        "version": "2.0.0",
         "docs": "/docs",
         "openapi": "/openapi.json",
         "health": "/api/health",
@@ -120,6 +137,7 @@ async def health() -> HealthOut:
         database=database,
         llm_mode=settings.llm_mode,
         model=settings.openai_model if settings.llm_enabled else None,
-        adaptive_followups=settings.adaptive_followups,
+        whatsapp=settings.whatsapp_mode,
         max_questions=settings.max_questions,
+        job_families=len(family_keys()),
     )

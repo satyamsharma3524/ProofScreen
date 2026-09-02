@@ -11,15 +11,16 @@ asyncpg>=0.29
 aiosqlite>=0.20          # tests only: lets the suite run without Postgres
 
 # --- llm / stt ---
-openai>=1.40
-httpx>=0.27
+openai>=1.40             # chat completions + Whisper (verbose_json for duration)
+httpx>=0.27              # WhatsApp Cloud API calls and media download
 
 # --- resume ingest ---
-pymupdf>=1.24            # PDF  -> import fitz
+pymupdf>=1.24            # PDF  -> import pymupdf (falls back to fitz)
 python-docx>=1.1         # DOCX
-
-# --- channels ---
-twilio>=9.2              # only used for inbound webhook signature validation
 
 # --- tests ---
 pytest>=8.3
+
+# NOTE: no twilio. v1 used the Twilio WhatsApp sandbox; v2 talks to the Meta
+# WhatsApp Business Cloud API directly over httpx, and the webhook signature is
+# a plain HMAC-SHA256 from the standard library.

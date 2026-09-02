@@ -47,6 +47,18 @@ def evidence_id() -> str:
     return f"e_{_short()}"
 
 
+def fact_id() -> str:
+    return f"f_{_short()}"
+
+
+def contradiction_id() -> str:
+    return f"x_{_short()}"
+
+
+def role_id() -> str:
+    return f"jr_{_short()}"
+
+
 def score_id() -> str:
     return f"sc_{_short()}"
 

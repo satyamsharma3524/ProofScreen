@@ -1,17 +1,23 @@
 """
-End-to-end tests through the HTTP API, in fixture mode (no LLM key, no Docker).
-
-These prove the wiring: resume in -> claims -> questions -> answers -> evidence
--> score -> evidence graph out, plus both channels and the edge cases from the
-7 September hardening list.
+End-to-end through HTTP, in fixture mode (no model key, no WhatsApp
+credentials, no Docker). Proves the wiring: resume -> claims -> adaptive probes
+-> signals -> dimension scores -> role-weighted ranking, plus the Meta webhook
+and the edge cases that eat demo days.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
+from pathlib import Path
 
-from tests.conftest import ANSWERS, RESUME
+from api.engine import scoring, signals
+from api.schemas import Dimension, DimensionScore
+from tests.conftest import EVASIVE_ANSWERS, RESUME, STRONG_ANSWERS, onboard, run_interview
 
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "sample_graph.json"
 WS = re.compile(r"\s+")
 
 
@@ -19,105 +25,86 @@ def canon(text: str) -> str:
     return WS.sub(" ", (text or "").lower()).strip()
 
 
-def onboard(client, name="Priya Raghavan", **extra) -> dict:
-    payload = {
-        "resume_text": RESUME,
-        "name": name,
-        "role": "Support Lead",
-        **extra,
-    }
-    resp = client.post("/api/candidates/text", json=payload)
-    assert resp.status_code == 201, resp.text
-    return resp.json()
-
-
-def run_interview(client, session_id: str, answers=None) -> list[tuple[str, str]]:
-    """Answer questions until the session says it is done."""
-    answers = answers or ANSWERS
-    transcript: list[tuple[str, str]] = []
-    for i in range(10):                      # hard stop, MAX_QUESTIONS is 5
-        state = client.get(f"/api/sessions/{session_id}").json()
-        question = state["next_question"]
-        if not question:
-            break
-        answer = answers[i % len(answers)]
-        resp = client.post(
-            "/api/web/message", json={"session_id": session_id, "text": answer}
-        )
-        assert resp.status_code == 200, resp.text
-        transcript.append((question, answer))
-        if resp.json()["done"]:
-            break
-    return transcript
-
-
 # ---------------------------------------------------------------------------
 # meta
 # ---------------------------------------------------------------------------
 
 
-def test_health_reports_fixture_mode(client):
+def test_health_reports_fixture_and_dry_run(client):
     body = client.get("/api/health").json()
     assert body["status"] == "ok"
     assert body["database"] == "ok"
-    assert body["llm_mode"] == "fixture"      # no key in the test env
-    assert body["max_questions"] == 5
+    assert body["llm_mode"] == "fixture"
+    assert body["whatsapp"] == "dry-run"
+    assert body["max_questions"] == 12
+    assert body["job_families"] >= 7
 
 
-def test_openapi_schema_is_the_contract(client):
-    """The Next.js app generates its client from this. It must not 500."""
-    schema = client.get("/openapi.json").json()
-    paths = schema["paths"]
+def test_openapi_is_the_contract(client):
+    """The Next.js app generates its client from this; it must not 500."""
+    paths = client.get("/openapi.json").json()["paths"]
     for required in (
         "/api/candidates",
         "/api/sessions/{session_id}",
-        "/api/web/message",
-        "/api/webhooks/twilio",
+        "/api/webhooks/whatsapp",
         "/api/recruiter/candidates",
         "/api/recruiter/candidates/{candidate_id}",
+        "/api/recruiter/roles",
+        "/api/recruiter/taxonomy",
         "/api/dev/simulate",
     ):
         assert required in paths, f"{required} missing from the OpenAPI schema"
 
 
 # ---------------------------------------------------------------------------
-# ingest
+# ingest and typing
 # ---------------------------------------------------------------------------
 
 
-def test_onboarding_extracts_claims_and_opens_a_session(client):
+def test_onboarding_types_claims_and_weights_them(client):
     body = onboard(client)
-    assert body["candidate_id"].startswith("c_")
-    assert body["session_id"].startswith("s_")
+    assert body["job_family"] == "bpo_operations"
+    assert body["state"] == "AWAITING_OPT_IN"          # WhatsApp needs opt-in
+    assert len(body["opt_in_code"]) == 6
     assert 1 <= len(body["claims"]) <= 3
-    assert body["first_question"]
-    assert len(body["join_code"]) == 6
 
+    types = {c["claim_type"] for c in body["claims"]}
+    assert len(types) == len(body["claims"]), "claim types must be distinct"
     for claim in body["claims"]:
-        assert claim["text"].strip()
-        assert claim["category"]
+        assert claim["weight"] > 0, "an unweighted claim cannot be ranked"
+        assert claim["claim_type_label"]
 
 
-def test_claims_are_verifiable_not_fluff(client):
-    """The fluff line in the resume must not become a claim."""
-    body = onboard(client, name="Fluff Check")
+def test_fluff_and_headings_never_become_claims(client):
+    body = onboard(client, name="Fluff Check", phone="+919810009999")
     texts = " ".join(c["text"].lower() for c in body["claims"])
     assert "team player" not in texts
     assert "passionate" not in texts
+    assert "skills" not in texts
 
 
-def test_short_resume_is_rejected_with_400(client):
+def test_phone_is_required_because_whatsapp_is_the_channel(client):
     resp = client.post(
-        "/api/candidates/text", json={"resume_text": "too short", "name": "X"}
+        "/api/candidates/text",
+        json={"resume_text": RESUME, "name": "No Phone", "phone": "   "},
+    )
+    assert resp.status_code == 400
+    assert "phone" in resp.json()["detail"].lower()
+
+
+def test_short_resume_is_rejected(client):
+    resp = client.post(
+        "/api/candidates/text",
+        json={"resume_text": "too short", "name": "X", "phone": "+919810001111"},
     )
     assert resp.status_code == 400
 
 
-def test_unsupported_file_type_is_rejected_with_400(client):
+def test_unsupported_file_type_is_rejected(client):
     resp = client.post(
         "/api/candidates",
-        files={"file": ("resume.exe", b"MZ" + b"\x00" * 200, "application/octet-stream")},
-        data={"name": "Bad Upload"},
+        files={"file": ("cv.exe", b"MZ" + b"\x00" * 200, "application/octet-stream")},
+        data={"name": "Bad Upload", "phone": "+919810002222"},
     )
     assert resp.status_code == 400
     assert "unsupported" in resp.json()["detail"].lower()
@@ -126,65 +113,77 @@ def test_unsupported_file_type_is_rejected_with_400(client):
 def test_txt_upload_goes_through_the_multipart_path(client):
     resp = client.post(
         "/api/candidates",
-        files={"file": ("resume.txt", RESUME.encode(), "text/plain")},
-        data={"name": "Multipart Priya", "role": "Support Lead"},
+        files={"file": ("cv.txt", RESUME.encode(), "text/plain")},
+        data={"name": "Multipart Priya", "phone": "+919810003333"},
     )
     assert resp.status_code == 201, resp.text
     assert resp.json()["claims"]
 
 
 # ---------------------------------------------------------------------------
-# the conversation
+# the interview
 # ---------------------------------------------------------------------------
 
 
-def test_session_state_machine_walks_to_complete(client):
-    body = onboard(client, name="State Machine")
+def test_interview_walks_the_probe_levels_and_completes(client):
+    body = onboard(client, name="Interview Walk", phone="+919810004444")
     session_id = body["session_id"]
 
-    state = client.get(f"/api/sessions/{session_id}").json()
-    assert state["state"] == "ASKING"
-    assert state["questions_asked"] == 1
-
-    transcript = run_interview(client, session_id)
-    assert 1 <= len(transcript) <= 5
+    # The dev endpoint bypasses opt-in, which is why it is dev-only.
+    turns = run_interview(client, session_id)
+    assert 3 <= len(turns) <= 12
 
     final = client.get(f"/api/sessions/{session_id}").json()
     assert final["state"] == "COMPLETE"
     assert final["next_question"] is None
 
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    levels = {qa["probe_level"] for claim in graph["claims"] for qa in claim["qa"]}
+    assert "VALIDATION" in levels
+    assert len(levels) >= 2, "the interview never went past the opening probe"
 
-def test_no_question_is_ever_asked_twice(client):
-    body = onboard(client, name="No Repeats")
-    transcript = run_interview(client, body["session_id"])
-    questions = [q for q, _ in transcript]
-    assert len(questions) == len(set(questions)), questions
+
+def test_no_question_is_asked_twice(client):
+    body = onboard(client, name="No Repeats", phone="+919810005555")
+    run_interview(client, body["session_id"])
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    asked = [qa["question"] for claim in graph["claims"] for qa in claim["qa"]]
+    assert len(asked) == len(set(asked))
+
+
+def test_evasive_candidate_gets_a_shorter_interview(client):
+    """The adaptive stop: no point asking a twelfth question of someone who has
+    said nothing for three."""
+    strong = onboard(client, name="Strong Answers", phone="+919810006666")
+    weak = onboard(client, name="Evasive Answers", phone="+919810007777")
+    strong_turns = run_interview(client, strong["session_id"], STRONG_ANSWERS)
+    weak_turns = run_interview(client, weak["session_id"], EVASIVE_ANSWERS)
+    assert len(weak_turns) < len(strong_turns)
+
+
+def test_evasive_candidate_scores_zero_not_an_error(client):
+    body = onboard(client, name="Evasive Scoring", phone="+919810008888")
+    run_interview(client, body["session_id"], EVASIVE_ANSWERS)
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    assert graph["competence_score"] == 0
+    assert graph["badge"] == "unverified"
 
 
 def test_answering_a_complete_session_is_a_409(client):
-    body = onboard(client, name="Closed Session")
+    body = onboard(client, name="Closed Session", phone="+919810009000")
     run_interview(client, body["session_id"])
     resp = client.post(
-        "/api/web/message",
-        json={"session_id": body["session_id"], "text": "one more thing I forgot"},
+        f"/api/dev/sessions/{body['session_id']}/answer",
+        json={"text": "one more thing I forgot to mention earlier"},
     )
     assert resp.status_code == 409
 
 
-def test_empty_answer_is_a_400(client):
-    body = onboard(client, name="Empty Answer")
-    resp = client.post(
-        "/api/web/message", json={"session_id": body["session_id"], "text": "   "}
-    )
-    assert resp.status_code == 400
-
-
 def test_unknown_session_is_a_404(client):
     assert client.get("/api/sessions/s_nope").status_code == 404
-    assert (
-        client.post("/api/web/message", json={"session_id": "s_nope", "text": "hello there"}).status_code
-        == 404
-    )
+    assert client.post(
+        "/api/dev/sessions/s_nope/answer", json={"text": "hello there friend"}
+    ).status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -192,183 +191,323 @@ def test_unknown_session_is_a_404(client):
 # ---------------------------------------------------------------------------
 
 
-def test_graph_has_claims_qa_and_evidence_nodes(client):
-    body = onboard(client, name="Graph Shape")
+def test_graph_carries_six_dimensions_with_a_stated_basis(client):
+    body = onboard(client, name="Graph Shape", phone="+919810010000")
     run_interview(client, body["session_id"])
-
     graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
-    assert graph["candidate"]["id"] == body["candidate_id"]
-    assert 0.0 <= graph["competence_score"] <= 1.0
-    assert 0.0 <= graph["resume_score"] <= 1.0
+
+    assert 0 <= graph["resume_score"] <= 100
+    assert 0 <= graph["weighted_evidence_score"] <= 100
+    assert 0 <= graph["competence_score"] <= 100
     assert graph["badge"] in {"verified", "partial", "unverified"}
+    assert len(graph["dimension_profile"]) == 6
 
     probed = [c for c in graph["claims"] if c["qa"]]
-    assert probed, "no claim was probed"
+    assert probed
     for claim in probed:
-        assert claim["nodes"], f"claim {claim['id']} has Q&A but no evidence"
-        assert claim["confidence"] is not None
-        assert claim["rationale"]
+        assert len(claim["dimensions"]) == 6
+        assert claim["claim_score"] is not None
+        for dimension in claim["dimensions"]:
+            assert 0 <= dimension["score"] <= 100
+            assert dimension["basis"], "every score must state what it came from"
+            if not dimension["probed"]:
+                assert dimension["basis"] == "not probed"
 
 
 def test_every_quote_is_verbatim_in_the_candidates_own_answer(client):
     """The guarantee the whole product rests on."""
-    body = onboard(client, name="Verbatim Guarantee")
+    body = onboard(client, name="Verbatim Guarantee", phone="+919810011000")
     run_interview(client, body["session_id"])
-
     graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+
     checked = 0
     for claim in graph["claims"]:
-        answers = canon(" ".join(qa["answer"] for qa in claim["qa"]))
-        for evidence_node in claim["nodes"]:
-            quote = canon(evidence_node["quote"])
-            if not quote:
-                continue
-            assert quote in answers, f"{quote!r} was never said by the candidate"
-            checked += 1
+        said = canon(" ".join(qa["answer"] for qa in claim["qa"]))
+        for dimension in claim["dimensions"]:
+            for quote in dimension["quotes"]:
+                assert canon(quote) in said, f"{quote!r} was never said"
+                checked += 1
     assert checked > 0, "no quotes were checked, the test proved nothing"
 
 
-def test_evidence_nodes_point_at_a_real_response(client):
-    body = onboard(client, name="Node Provenance")
+def test_claim_scores_are_reproducible_from_stored_dimension_scores(client):
+    """The arithmetic must be re-derivable from what the API returns, or
+    'the score is arithmetic' is unverifiable from outside."""
+    body = onboard(client, name="Reproducible", phone="+919810012000")
     run_interview(client, body["session_id"])
     graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
 
     for claim in graph["claims"]:
-        response_ids = {qa["response_id"] for qa in claim["qa"]}
-        for evidence_node in claim["nodes"]:
-            assert evidence_node["source_response_id"] in response_ids
+        if claim["claim_score"] is None:
+            continue
+        rebuilt = {
+            Dimension(d["dimension"]): DimensionScore.model_validate(d)
+            for d in claim["dimensions"]
+        }
+        expected = scoring.claim_score(rebuilt, graph["job_family"])
+        assert abs(expected - claim["claim_score"]) <= 1, claim["claim_type"]
 
 
-def test_unknown_candidate_graph_is_a_404(client):
+def test_unknown_candidate_is_a_404(client):
     assert client.get("/api/recruiter/candidates/c_nope").status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# ARTIFACT 5 — same evidence, different recruiter, different ranking
+# ---------------------------------------------------------------------------
+
+
+def test_role_weights_re_rank_identical_evidence(client):
+    """The strongest twenty seconds of the demo, as a test."""
+    people = client.post(
+        "/api/recruiter/roles",
+        json={
+            "title": "People First",
+            "job_family": "bpo_operations",
+            "claim_weights": {"team_handling": 70, "csat_improvement": 20, "aht_control": 10},
+        },
+    )
+    ops = client.post(
+        "/api/recruiter/roles",
+        json={
+            "title": "Ops Excellence",
+            "job_family": "bpo_operations",
+            "claim_weights": {"aht_control": 70, "csat_improvement": 20, "team_handling": 10},
+        },
+    )
+    assert people.status_code == 201 and ops.status_code == 201
+    people_id, ops_id = people.json()["id"], ops.json()["id"]
+
+    # Weights are rescaled to sum to 100, as typed.
+    assert sum(people.json()["claim_weights"].values()) == 100
+
+    default = client.get("/api/recruiter/candidates").json()
+    assert default["scored_for"] is None
+    assert default["candidates"]
+
+    under_people = client.get(f"/api/recruiter/candidates?role_id={people_id}").json()
+    under_ops = client.get(f"/api/recruiter/candidates?role_id={ops_id}").json()
+
+    assert under_people["scored_for"]["title"] == "People First"
+    assert under_ops["scored_for"]["title"] == "Ops Excellence"
+
+    by_people = {c["id"]: c["competence_score"] for c in under_people["candidates"]}
+    by_ops = {c["id"]: c["competence_score"] for c in under_ops["candidates"]}
+    assert by_people.keys() == by_ops.keys()
+    assert by_people != by_ops, "role weights did not change any score"
+
+
 def test_ranked_list_is_sorted_by_competence(client):
-    onboard(client, name="Ranking A")
-    rows = client.get("/api/recruiter/candidates").json()
-    assert rows
-    scored = [r["competence_score"] for r in rows if r["competence_score"] is not None]
-    assert scored == sorted(scored, reverse=True)
-    for row in rows:
-        assert row["name"]
-        assert row["claims_count"] >= 0
+    rows = client.get("/api/recruiter/candidates").json()["candidates"]
+    scores = [r["competence_score"] for r in rows]
+    assert scores == sorted(scores, reverse=True)
 
 
-# ---------------------------------------------------------------------------
-# edge cases from the 7 September hardening list
-# ---------------------------------------------------------------------------
-
-
-def test_i_dont_know_scores_zero_not_an_error(client):
-    body = onboard(client, name="Evasive Candidate")
-    run_interview(client, body["session_id"], answers=["I don't know."] * 5)
-
-    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
-    assert graph["competence_score"] == 0.0
-    assert graph["badge"] == "unverified"
-    for claim in graph["claims"]:
-        if claim["qa"]:
-            assert claim["confidence"] == 0.0
-            assert all(n["verdict"] == "UNSUPPORTED" for n in claim["nodes"])
-
-
-def test_single_claim_resume_ends_early_instead_of_repeating(client):
-    """4 dimensions cannot fill 5 questions — the interview must stop, not loop."""
-    resume = (
-        "Ananya Iyer - Operations Analyst, Chennai\n\n"
-        "EXPERIENCE\n"
-        "- Reduced monthly vendor reconciliation time from 12 days to 3 days "
-        "by automating the invoice match step\n\n"
-        "SKILLS\nExcel, SQL, process design, vendor management\n"
-    )
-    body = client.post(
-        "/api/candidates/text",
-        json={"resume_text": resume, "name": "Single Claim", "role": "Ops Analyst"},
+def test_role_coverage_is_reported_separately_from_the_score(client):
+    """'Evidenced badly' and 'never claimed it' must stay distinguishable."""
+    narrow = client.post(
+        "/api/recruiter/roles",
+        json={
+            "title": "Attrition Only",
+            "job_family": "bpo_operations",
+            "claim_weights": {"attrition_control": 100},
+        },
     ).json()
-
-    transcript = run_interview(client, body["session_id"])
-    assert len(transcript) <= 4
-    assert len({q for q, _ in transcript}) == len(transcript)
-    assert client.get(f"/api/sessions/{body['session_id']}").json()["state"] == "COMPLETE"
+    rows = client.get(f"/api/recruiter/candidates?role_id={narrow['id']}").json()["candidates"]
+    assert any(r["role_coverage"] < 100 for r in rows)
 
 
-def test_partial_interview_still_produces_a_low_score(client):
-    """An abandoned interview must not look like a good one."""
-    body = onboard(client, name="Walked Away")
-    client.post(
-        "/api/web/message",
-        json={"session_id": body["session_id"], "text": ANSWERS[0]},
-    )
-    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
-    assert graph["competence_score"] < 0.70
-    assert graph["badge"] != "verified"
+def test_taxonomy_endpoint_feeds_the_weight_editor(client):
+    body = client.get("/api/recruiter/taxonomy?job_family=bpo_operations").json()
+    assert body["job_family"] == "bpo_operations"
+    assert sum(body["default_claim_weights"].values()) == 100
+    assert abs(sum(body["dimension_weights"].values()) - 1.0) < 1e-6
+    assert client.get("/api/recruiter/taxonomy").json()["families"]
 
 
 # ---------------------------------------------------------------------------
-# whatsapp
+# the Meta WhatsApp Cloud API webhook
 # ---------------------------------------------------------------------------
 
 
-def test_whatsapp_join_code_then_answer(client):
-    body = onboard(client, name="WhatsApp Priya", phone="+919812340000")
-    phone = "whatsapp:+919812340000"
+def _delivery(phone: str, *, text: str | None = None, wamid: str = "wamid.TEST") -> dict:
+    message: dict = {"from": phone.lstrip("+"), "id": wamid, "timestamp": "1757000000"}
+    if text is not None:
+        message |= {"type": "text", "text": {"body": text}}
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{"id": "WABA", "changes": [{"field": "messages", "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {"display_phone_number": "911234567890", "phone_number_id": "PNID"},
+            "contacts": [{"profile": {"name": "Test Candidate"}, "wa_id": phone.lstrip("+")}],
+            "messages": [message],
+        }}]}],
+    }
 
-    joined = client.post(
-        "/api/webhooks/twilio", data={"From": phone, "Body": body["join_code"]}
-    )
-    assert joined.status_code == 200
-    assert "<Message>" in joined.text
 
-    answered = client.post(
-        "/api/webhooks/twilio", data={"From": phone, "Body": ANSWERS[0]}
+def test_webhook_verification_handshake(client):
+    resp = client.get(
+        "/api/webhooks/whatsapp",
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": "test-verify-token",
+            "hub.challenge": "CHALLENGE123",
+        },
     )
-    assert answered.status_code == 200
-    assert "<Message>" in answered.text
+    assert resp.status_code == 200
+    assert resp.text == "CHALLENGE123"     # plain text, not JSON
+
+
+def test_webhook_verification_rejects_a_wrong_token(client):
+    resp = client.get(
+        "/api/webhooks/whatsapp",
+        params={"hub.mode": "subscribe", "hub.verify_token": "nope", "hub.challenge": "X"},
+    )
+    assert resp.status_code == 403
+
+
+def test_status_only_delivery_is_acknowledged_not_an_error(client):
+    """Most webhook traffic is delivery receipts. They must be a quiet 200."""
+    resp = client.post(
+        "/api/webhooks/whatsapp",
+        json={"object": "whatsapp_business_account", "entry": [{"id": "W", "changes": [
+            {"field": "messages", "value": {
+                "messaging_product": "whatsapp",
+                "statuses": [{"id": "wamid.X", "status": "delivered"}]}}]}]},
+    )
+    assert resp.status_code == 200
+
+
+def test_opt_in_code_binds_the_phone_and_starts_the_interview(client):
+    phone = "+919810013000"
+    body = onboard(client, name="OptIn Flow", phone=phone)
+    assert body["state"] == "AWAITING_OPT_IN"
+
+    resp = client.post(
+        "/api/webhooks/whatsapp",
+        json=_delivery(phone, text=body["opt_in_code"], wamid="wamid.OPTIN"),
+    )
+    assert resp.status_code == 200
+
+    state = client.get(f"/api/sessions/{body['session_id']}").json()
+    assert state["state"] == "ASKING"
+    assert state["questions_asked"] == 1
+    assert state["next_question"]
+
+
+def test_an_answer_over_whatsapp_is_scored(client):
+    phone = "+919810014000"
+    body = onboard(client, name="WhatsApp Answer", phone=phone)
+    client.post("/api/webhooks/whatsapp",
+                json=_delivery(phone, text=body["opt_in_code"], wamid="wamid.OI2"))
+    client.post("/api/webhooks/whatsapp",
+                json=_delivery(phone, text=STRONG_ANSWERS[0], wamid="wamid.ANS1"))
 
     state = client.get(f"/api/sessions/{body['session_id']}").json()
     assert state["questions_asked"] >= 2
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    assert any(claim["qa"] for claim in graph["claims"])
 
 
-def test_whatsapp_unknown_number_gets_instructions_not_an_error(client):
+def test_a_webhook_retry_does_not_become_a_second_answer(client):
+    """Meta retries anything it thinks failed. Without de-duplication one retry
+    desyncs the whole interview."""
+    phone = "+919810015000"
+    body = onboard(client, name="Retry Safety", phone=phone)
+    client.post("/api/webhooks/whatsapp",
+                json=_delivery(phone, text=body["opt_in_code"], wamid="wamid.OI3"))
+
+    payload = _delivery(phone, text=STRONG_ANSWERS[1], wamid="wamid.DUPLICATE")
+    client.post("/api/webhooks/whatsapp", json=payload)
+    after_first = client.get(f"/api/sessions/{body['session_id']}").json()["questions_asked"]
+
+    client.post("/api/webhooks/whatsapp", json=payload)      # the retry
+    after_retry = client.get(f"/api/sessions/{body['session_id']}").json()["questions_asked"]
+
+    assert after_retry == after_first
+
+
+def test_unknown_number_is_handled_quietly(client):
     resp = client.post(
-        "/api/webhooks/twilio",
-        data={"From": "whatsapp:+919899999999", "Body": "hello?"},
+        "/api/webhooks/whatsapp",
+        json=_delivery("+919899999999", text="hello?", wamid="wamid.STRANGER"),
     )
     assert resp.status_code == 200
-    assert "could not find an active verification" in resp.text
 
 
-def test_whatsapp_bad_join_code_is_handled(client):
-    resp = client.post(
-        "/api/webhooks/twilio", data={"From": "whatsapp:+919899999998", "Body": "ZZZZZZ"}
-    )
-    assert resp.status_code == 200
-    assert "code" in resp.text.lower()
+def test_bad_signature_is_rejected_when_validation_is_on(client):
+    from api.config import settings
+
+    settings.whatsapp_validate_signature = True
+    settings.whatsapp_app_secret = "test-secret"
+    try:
+        body = json.dumps(_delivery("+919810016000", text="hi", wamid="wamid.SIG")).encode()
+        good = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
+
+        bad = client.post(
+            "/api/webhooks/whatsapp", content=body,
+            headers={"X-Hub-Signature-256": "sha256=deadbeef", "content-type": "application/json"},
+        )
+        assert bad.status_code == 403
+
+        ok = client.post(
+            "/api/webhooks/whatsapp", content=body,
+            headers={"X-Hub-Signature-256": good, "content-type": "application/json"},
+        )
+        assert ok.status_code == 200
+    finally:
+        settings.whatsapp_validate_signature = False
+        settings.whatsapp_app_secret = None
 
 
 # ---------------------------------------------------------------------------
-# /api/dev/simulate — the demo fallback
+# voice
+# ---------------------------------------------------------------------------
+
+
+def test_voice_answers_carry_measured_signals_only(client):
+    """Duration and word count. No accent, no fluency, no confidence."""
+    body = onboard(client, name="Voice Answer", phone="+919810017000")
+    resp = client.post(
+        f"/api/dev/sessions/{body['session_id']}/answer",
+        json={"text": STRONG_ANSWERS[0], "audio_seconds": 34.5},
+    )
+    assert resp.status_code == 200
+
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    voiced = [qa for claim in graph["claims"] for qa in claim["qa"] if qa["answered_by"] == "voice"]
+    assert voiced
+    voice = voiced[0]["voice"]
+    assert voice["duration_seconds"] == 34.5
+    assert voice["word_count"] > 0
+    assert 0 <= voice["effort_score"] <= 100
+    assert set(voice) == {"duration_seconds", "word_count", "words_per_minute", "effort_score"}
+
+
+# ---------------------------------------------------------------------------
+# /api/dev/simulate and the fixture
 # ---------------------------------------------------------------------------
 
 
 def test_simulate_runs_the_whole_pipeline_in_one_call(client):
     resp = client.post(
         "/api/dev/simulate",
-        json={"resume_text": RESUME, "name": "Simulated Priya", "role": "Support Lead",
-              "answers": ANSWERS},
+        json={
+            "resume_text": RESUME,
+            "name": "Simulated Priya",
+            "role": "Support Team Lead",
+            "answers": STRONG_ANSWERS,
+        },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-
-    assert body["questions_asked"] >= 1
-    assert body["transcript"]
+    assert body["questions_asked"] >= 3
     graph = body["graph"]
     assert graph["claims"]
-    assert 0.0 <= graph["competence_score"] <= 1.0
-    assert graph["badge"]
+    assert graph["job_family"] == "bpo_operations"
+    assert 0 <= graph["competence_score"] <= 100
 
-    # and it is persisted, so it shows up on the dashboard
-    listed = client.get("/api/recruiter/candidates").json()
+    listed = client.get("/api/recruiter/candidates").json()["candidates"]
     assert body["candidate_id"] in {row["id"] for row in listed}
 
 
@@ -380,14 +519,45 @@ def test_simulate_works_with_no_answers_supplied(client):
     assert resp.json()["graph"]["claims"]
 
 
-def test_fixture_endpoint_serves_the_sample_graph(client):
-    body = client.get("/api/dev/fixture").json()
-    assert body["candidate"]["name"] == "Priya R."
-    assert len(body["claims"]) == 3
+def test_fixture_matches_the_live_response_shape(client):
+    """Dev B builds the dashboard against the fixture; if its shape drifts from
+    the API the dashboard breaks on the day it is wired up."""
+    from api.schemas import CandidateGraph
+
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    fixture.pop("_note", None)
+    CandidateGraph.model_validate(fixture)     # raises if the shape drifted
 
 
-def test_llm_diagnostics_reports_fallback_usage(client):
+def test_fixture_numbers_are_what_scoring_recomputes():
+    """The fixture is generated from the engine; assert it stayed that way."""
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    for claim in fixture["claims"]:
+        if claim["claim_score"] is None:
+            continue
+        rebuilt = {
+            Dimension(d["dimension"]): DimensionScore.model_validate(d)
+            for d in claim["dimensions"]
+        }
+        expected = scoring.claim_score(rebuilt, fixture["job_family"])
+        assert abs(expected - claim["claim_score"]) <= 1, (
+            f"fixture claim {claim['claim_type']} says {claim['claim_score']} "
+            f"but scoring.py computes {expected} — regenerate with "
+            f"scripts/dump_fixture.py"
+        )
+
+
+def test_fixture_quotes_are_verbatim():
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    for claim in fixture["claims"]:
+        said = canon(" ".join(qa["answer"] for qa in claim["qa"]))
+        for dimension in claim["dimensions"]:
+            for quote in dimension["quotes"]:
+                assert canon(quote) in said
+
+
+def test_llm_diagnostics_prove_no_network_calls_were_made(client):
     body = client.get("/api/dev/llm").json()
     assert body["mode"] == "fixture"
-    assert body["fallbacks"] > 0        # fixture mode served every call
-    assert body["calls"] == 0           # and never touched the network
+    assert body["calls"] == 0
+    assert body["fallbacks"] > 0

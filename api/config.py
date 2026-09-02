@@ -25,18 +25,26 @@ class Settings(BaseSettings):
     llm_temperature_extract: float = 0.0
     llm_temperature_question: float = 0.4
 
-    # --- conversation policy ---
-    max_questions: int = 5
+    # --- interview policy ---
+    max_questions: int = 12          # 5 probe levels x 3 claims, adaptively stopped
     max_claims: int = 3
-    adaptive_followups: bool = True
+    adaptive_probing: bool = True    # false => strict VALIDATION..OUTCOME order
     score_inline: bool = True
 
-    # --- twilio ---
-    twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
-    twilio_whatsapp_from: str = "whatsapp:+14155238886"
-    twilio_validate_signature: bool = False
-    public_base_url: str | None = None
+    # Voice's share of a claim's score, applied only to voice-answered claims.
+    # Set to 0 to remove the text/voice asymmetry entirely.
+    voice_weight: float = 0.10
+
+    # --- WhatsApp Business Cloud API (Meta, direct) ---
+    whatsapp_phone_number_id: str | None = None
+    whatsapp_business_account_id: str | None = None
+    whatsapp_access_token: str | None = None
+    whatsapp_verify_token: str = "proofscreen-verify"
+    whatsapp_app_secret: str | None = None       # for X-Hub-Signature-256
+    whatsapp_api_version: str = "v21.0"
+    whatsapp_template_name: str | None = None    # to open a conversation
+    whatsapp_template_language: str = "en"
+    whatsapp_validate_signature: bool = False
 
     # --- api ---
     cors_origins: str = "*"
@@ -44,9 +52,9 @@ class Settings(BaseSettings):
 
     # --- resume_score contrast metric ---
     default_job_description: str = (
-        "Support operations lead responsible for a large customer support team, "
-        "CSAT improvement, escalation workflow design, SLA management, queue and "
-        "staffing planning, stakeholder reporting, and process automation."
+        "Experienced professional responsible for owning a measurable operational "
+        "outcome, running the process day to day, handling escalations, reporting "
+        "on metrics to stakeholders, and improving results over time."
     )
 
     @property
@@ -58,8 +66,16 @@ class Settings(BaseSettings):
         return "live" if self.llm_enabled else "fixture"
 
     @property
-    def twilio_enabled(self) -> bool:
-        return bool(self.twilio_account_sid and self.twilio_auth_token)
+    def whatsapp_enabled(self) -> bool:
+        return bool(self.whatsapp_access_token and self.whatsapp_phone_number_id)
+
+    @property
+    def whatsapp_mode(self) -> str:
+        return "live" if self.whatsapp_enabled else "dry-run"
+
+    @property
+    def graph_api_base(self) -> str:
+        return f"https://graph.facebook.com/{self.whatsapp_api_version}"
 
     @property
     def cors_origin_list(self) -> list[str]:

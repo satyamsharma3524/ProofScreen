@@ -1,249 +1,262 @@
 """
-The only tests that really matter: the maths behind the score.
-
-If a judge asks "isn't the score just the LLM's opinion?", this file is the
-answer. Nothing here touches a network, a database or a model.
+ARTIFACT 4 — the maths. If a judge asks "isn't the score just the LLM's
+opinion?", this file is the answer. Nothing here touches a model, a network or
+a database.
 """
 
 from __future__ import annotations
 
-import json
-import math
-from pathlib import Path
+import inspect
 
 import pytest
 
-from api.engine import scoring
-from api.schemas import Badge, Dimension as D, Verdict as V
-
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "sample_graph.json"
-
-
-def node(dimension: D, verdict: V) -> dict:
-    return {"dimension": dimension.value, "verdict": verdict.value}
-
-
-ALL_DIMENSIONS = list(scoring.DIMENSION_ORDER)
-
-
-# ---------------------------------------------------------------------------
-# the constants
-# ---------------------------------------------------------------------------
-
-
-def test_dimension_weights_sum_to_one():
-    assert math.isclose(sum(scoring.DIMENSION_WEIGHT.values()), 1.0)
-
-
-def test_every_dimension_and_verdict_has_a_value():
-    assert set(scoring.DIMENSION_WEIGHT) == set(D)
-    assert set(scoring.VERDICT_POINTS) == set(V)
+from api.engine import scoring, signals
+from api.schemas import (
+    AnswerSignals,
+    Badge,
+    CausalLink,
+    Dimension,
+    DimensionScore,
+    IncidentMarker,
+    MetricDefinition,
+    NamedEntity,
+    ProbeLevel,
+    ProcessStep,
+    Quantity,
+    ToolMention,
+)
 
 
 # ---------------------------------------------------------------------------
-# claim_confidence
+# the structural claim: no model anywhere near a score
 # ---------------------------------------------------------------------------
 
 
-def test_all_supported_is_exactly_one():
-    nodes = [node(d, V.SUPPORTED) for d in ALL_DIMENSIONS]
-    assert scoring.claim_confidence(nodes) == 1.0
+@pytest.mark.parametrize("module", [scoring, signals])
+def test_scoring_modules_never_import_the_llm(module):
+    """The central architectural claim, asserted rather than promised."""
+    source = inspect.getsource(module)
+    assert "from api.llm" not in source
+    assert "import llm" not in source
+    assert "openai" not in source.lower()
 
 
-def test_all_unsupported_is_zero():
-    nodes = [node(d, V.UNSUPPORTED) for d in ALL_DIMENSIONS]
-    assert scoring.claim_confidence(nodes) == 0.0
-
-
-def test_no_evidence_is_zero():
-    assert scoring.claim_confidence([]) == 0.0
-
-
-def test_all_partial_is_half():
-    nodes = [node(d, V.PARTIAL) for d in ALL_DIMENSIONS]
-    assert scoring.claim_confidence(nodes) == 0.5
-
-
-def test_contradiction_cannot_push_below_zero():
-    nodes = [node(d, V.CONTRADICTED) for d in ALL_DIMENSIONS]
-    assert scoring.claim_confidence(nodes) == 0.0
-
-
-def test_single_contradiction_drags_the_score_down():
-    strong = [node(d, V.SUPPORTED) for d in ALL_DIMENSIONS]
-    weakened = [node(D.OWNERSHIP, V.CONTRADICTED)] + [
-        node(d, V.SUPPORTED) for d in ALL_DIMENSIONS if d is not D.OWNERSHIP
-    ]
-    assert scoring.claim_confidence(weakened) < scoring.claim_confidence(strong)
-    # 0.30*(-0.5) + 0.30 + 0.20 + 0.20 = 0.55
-    assert scoring.claim_confidence(weakened) == pytest.approx(0.55)
-
-
-def test_ownership_is_worth_more_than_specificity():
-    ownership_only = [node(D.OWNERSHIP, V.SUPPORTED)]
-    specificity_only = [node(D.SPECIFICITY, V.SUPPORTED)]
-    assert scoring.claim_confidence(ownership_only) == pytest.approx(0.30)
-    assert scoring.claim_confidence(specificity_only) == pytest.approx(0.20)
-
-
-def test_best_verdict_per_dimension_wins():
-    """A later vague answer must not un-evidence an already proven dimension."""
-    nodes = [
-        node(D.OWNERSHIP, V.SUPPORTED),
-        node(D.OWNERSHIP, V.PARTIAL),
-        node(D.OWNERSHIP, V.UNSUPPORTED),
-    ]
-    assert scoring.claim_confidence(nodes) == pytest.approx(0.30)
-
-
-def test_unknown_enum_values_are_ignored_not_fatal():
-    nodes = [node(D.OWNERSHIP, V.SUPPORTED), {"dimension": "VIBES", "verdict": "GREAT"}]
-    assert scoring.claim_confidence(nodes) == pytest.approx(0.30)
-
-
-def test_accepts_objects_as_well_as_dicts():
-    class Row:
-        dimension = "OWNERSHIP"
-        verdict = "SUPPORTED"
-
-    assert scoring.claim_confidence([Row()]) == pytest.approx(0.30)
+def test_answer_signals_carries_no_score_field():
+    """The model's output schema has nowhere to put a grade even if it tried."""
+    forbidden = {"score", "rating", "confidence", "grade", "quality", "points"}
+    assert not (set(AnswerSignals.model_fields) & forbidden)
 
 
 # ---------------------------------------------------------------------------
-# competence_score and badges
+# the rubrics
 # ---------------------------------------------------------------------------
 
 
-def test_competence_is_the_mean():
-    assert scoring.competence_score([1.0, 0.5, 0.0]) == pytest.approx(0.5)
+def test_empty_answer_scores_zero_on_every_dimension():
+    scores = signals.score_answer(AnswerSignals())
+    assert all(s.score == 0 for s in scores.values())
 
 
-def test_unprobed_claims_drag_the_mean_down():
-    """One brilliant answer must not carry two ignored claims."""
-    assert scoring.competence_score([1.0, 0.0, 0.0]) == pytest.approx(0.3333, abs=1e-4)
+def test_specificity_gate_caps_name_dropping_without_numbers():
+    """Five named things and no number cannot beat the gate."""
+    sig = AnswerSignals(
+        entities=[NamedEntity(entity=f"thing {i}", quote="q") for i in range(6)]
+    )
+    result = signals.score_specificity(sig)
+    assert result.score <= signals.GATES[Dimension.SPECIFICITY][0]
+    assert "no quantity given" in result.basis
 
 
-def test_competence_of_nothing_is_zero():
-    assert scoring.competence_score([]) == 0.0
+def test_specificity_rewards_quantities():
+    sig = AnswerSignals(
+        quantities=[Quantity(value=f"{i}0%", refers_to="CSAT", quote="q") for i in range(5)]
+    )
+    assert signals.score_specificity(sig).score == 100
+
+
+def test_causal_gate_partial_chains_cannot_reach_full_marks():
+    partial = AnswerSignals(
+        causal_links=[CausalLink(cause="a", action="b", quote="q") for _ in range(5)]
+    )
+    complete = AnswerSignals(
+        causal_links=[
+            CausalLink(cause="a", action="b", outcome="c", quote="q") for _ in range(2)
+        ]
+    )
+    assert signals.score_causal_reasoning(partial).score <= 50
+    assert signals.score_causal_reasoning(complete).score == 100
+
+
+def test_metric_ownership_needs_a_definition_not_a_mention():
+    named = AnswerSignals(metric_definitions=[MetricDefinition(metric="CSAT", quote="q")])
+    defined = AnswerSignals(
+        metric_definitions=[
+            MetricDefinition(metric="CSAT", how_measured="percent of 4-5 survey ratings", quote="q"),
+            MetricDefinition(metric="AHT", how_measured="talk + hold + ACW", quote="q"),
+        ]
+    )
+    assert signals.score_metric_ownership(named).score <= 45
+    assert signals.score_metric_ownership(defined).score == 100
+
+
+def test_tool_familiarity_is_usage_not_name_dropping():
+    named = AnswerSignals(tools=[ToolMention(tool=f"tool{i}", quote="q") for i in range(5)])
+    used = AnswerSignals(
+        tools=[
+            ToolMention(tool="Genesys", usage="pulled the AHT report each morning", quote="q"),
+            ToolMention(tool="Zendesk", usage="tagged repeat callers", quote="q"),
+        ]
+    )
+    assert signals.score_tool_familiarity(named).score <= 40
+    assert signals.score_tool_familiarity(used).score == 100
+
+
+def test_authenticity_counts_remembered_incidents():
+    sig = AnswerSignals(
+        incident_markers=[IncidentMarker(detail=f"episode {i}", quote="q") for i in range(3)]
+    )
+    assert signals.score_authenticity(sig).score == 100
+    assert signals.score_authenticity(AnswerSignals()).score == 0
+
+
+def test_a_blunt_specific_answer_beats_a_polished_vague_one():
+    """The anti-bias property, as a test. Fluency is not scored; evidence is."""
+    blunt = AnswerSignals(
+        quantities=[Quantity(value="35", refers_to="team", quote="q"),
+                    Quantity(value="9 hours", refers_to="queue", quote="q")],
+        incident_markers=[IncidentMarker(detail="three resigned before month-end", quote="q")],
+        process_steps=[ProcessStep(step="moved email agents to voice", quote="q")],
+    )
+    polished = AnswerSignals(
+        entities=[NamedEntity(entity="stakeholder alignment", quote="q"),
+                  NamedEntity(entity="operational excellence", quote="q")],
+        summary="A thoughtful and articulate reflection on leadership philosophy.",
+    )
+    assert scoring.claim_score(signals.score_answer(blunt)) > scoring.claim_score(
+        signals.score_answer(polished)
+    )
+
+
+# ---------------------------------------------------------------------------
+# accumulation across a claim's answers
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_accumulates_across_answers():
+    """Two complete causal chains in two different answers must beat one."""
+    one = AnswerSignals(causal_links=[CausalLink(cause="a", action="b", outcome="c", quote="q1")])
+    two = AnswerSignals(causal_links=[CausalLink(cause="d", action="e", outcome="f", quote="q2")])
+    single = signals.score_claim([one], [ProbeLevel.DECISION])
+    both = signals.score_claim([one, two], [ProbeLevel.DECISION, ProbeLevel.OUTCOME])
+    assert both[Dimension.CAUSAL_REASONING].score > single[Dimension.CAUSAL_REASONING].score
+
+
+def test_repetition_is_not_evidence():
+    """Saying the same thing three times is one signal, not three."""
+    same = AnswerSignals(quantities=[Quantity(value="35", refers_to="team size", quote="35 agents")])
+    once = signals.score_claim([same], [ProbeLevel.VALIDATION])
+    thrice = signals.score_claim([same, same, same], [ProbeLevel.VALIDATION])
+    assert once[Dimension.SPECIFICITY].score == thrice[Dimension.SPECIFICITY].score
+
+
+def test_unprobed_dimensions_are_marked_not_silently_zero():
+    """A 0 nobody asked about must be distinguishable from a 0 they earned."""
+    scores = signals.score_claim([AnswerSignals()], [ProbeLevel.VALIDATION])
+    assert scores[Dimension.SPECIFICITY].probed is True        # VALIDATION targets it
+    assert scores[Dimension.AUTHENTICITY].probed is False      # INCIDENT does, and wasn't asked
+    assert scores[Dimension.AUTHENTICITY].basis == "not probed"
+
+
+# ---------------------------------------------------------------------------
+# claim, candidate and badge maths
+# ---------------------------------------------------------------------------
+
+
+def _perfect() -> dict[Dimension, DimensionScore]:
+    return {d: DimensionScore(dimension=d, score=100, probed=True) for d in scoring.DIMENSION_ORDER}
+
+
+def test_all_dimensions_perfect_is_100():
+    assert scoring.claim_score(_perfect(), "bpo_operations") == 100
+
+
+def test_claim_score_is_weighted_not_averaged():
+    """A perfect score on the heaviest dimension beats one on the lightest."""
+    weights = scoring.dimension_weights_for("general")
+    heavy = max(weights, key=lambda k: weights[k])
+    light = min(weights, key=lambda k: weights[k])
+    only_heavy = {Dimension(heavy): DimensionScore(dimension=Dimension(heavy), score=100, probed=True)}
+    only_light = {Dimension(light): DimensionScore(dimension=Dimension(light), score=100, probed=True)}
+    assert scoring.claim_score(only_heavy, "general") > scoring.claim_score(only_light, "general")
+
+
+def test_voice_contributes_only_its_configured_share():
+    content = _perfect()
+    text_only = scoring.claim_score(content, "general")
+    with_bad_voice = scoring.claim_score(content, "general", voice_effort=0, voice_weight=0.10)
+    assert text_only == 100
+    assert with_bad_voice == pytest.approx(90, abs=1)
+
+
+def test_voice_weight_zero_removes_the_text_voice_asymmetry():
+    content = _perfect()
+    assert scoring.claim_score(content, "general", voice_effort=0, voice_weight=0.0) == 100
+
+
+def test_role_weights_change_the_weighted_score():
+    """Artifact 5, at the arithmetic level."""
+    claims = [("team_handling", 90), ("aht_control", 20)]
+    people = {"team_handling": 80, "aht_control": 20}
+    ops = {"team_handling": 20, "aht_control": 80}
+    people_score, _ = scoring.weighted_evidence_score(claims, people)
+    ops_score, _ = scoring.weighted_evidence_score(claims, ops)
+    assert people_score > ops_score
+
+
+def test_role_coverage_reports_what_the_resume_never_claimed():
+    """'Evidenced badly' and 'never claimed' must stay separate facts."""
+    weights = {"a": 50, "b": 30, "c": 20}
+    _, coverage = scoring.weighted_evidence_score([("a", 80)], weights)
+    assert coverage == 50
+
+
+def test_consistency_multiplier_applies_once_globally():
+    assert scoring.competence_score(85, 0.6) == 51
+    assert scoring.competence_score(85, 1.0) == 85
 
 
 @pytest.mark.parametrize(
     "score,expected",
-    [
-        (1.0, Badge.verified),
-        (0.70, Badge.verified),
-        (0.6999, Badge.partial),
-        (0.40, Badge.partial),
-        (0.3999, Badge.unverified),
-        (0.0, Badge.unverified),
-    ],
+    [(100, Badge.verified), (70, Badge.verified), (69, Badge.partial),
+     (40, Badge.partial), (39, Badge.unverified), (0, Badge.unverified)],
 )
 def test_badge_thresholds_are_exact(score, expected):
     assert scoring.badge_for(score) is expected
 
 
-def test_well_covered_matches_the_verified_threshold():
-    nodes = [node(D.OWNERSHIP, V.SUPPORTED), node(D.DEPTH, V.SUPPORTED),
-             node(D.SPECIFICITY, V.SUPPORTED)]          # 0.30+0.30+0.20 = 0.80
-    assert scoring.is_well_covered(nodes) is True
-    assert scoring.is_well_covered([node(D.OWNERSHIP, V.SUPPORTED)]) is False
-
-
-# ---------------------------------------------------------------------------
-# coverage — what the question policy reads
-# ---------------------------------------------------------------------------
-
-
-def test_coverage_lists_every_dimension_even_untouched_ones():
-    cov = scoring.coverage([node(D.DEPTH, V.SUPPORTED)])
-    assert set(cov) == set(D)
-    assert cov[D.DEPTH] == 1.0
-    assert cov[D.OWNERSHIP] == 0.0
-
-
-def test_weakest_dimension_of_nothing_is_ownership():
-    """Highest-weighted dimension is probed first, so Q1 is always OWNERSHIP."""
-    assert scoring.weakest_dimension([]) is D.OWNERSHIP
-
-
-def test_weakest_dimension_skips_what_is_already_evidenced():
-    nodes = [node(D.OWNERSHIP, V.SUPPORTED), node(D.DEPTH, V.SUPPORTED)]
-    assert scoring.weakest_dimension(nodes) in {D.SPECIFICITY, D.OPERATIONAL}
-
-
-def test_weakest_dimension_is_weighted_not_just_counted():
-    """Untouched OWNERSHIP (0.30) is probed before untouched SPECIFICITY (0.20)."""
-    nodes = [node(D.DEPTH, V.SUPPORTED), node(D.OPERATIONAL, V.SUPPORTED)]
-    assert scoring.weakest_dimension(nodes) is D.OWNERSHIP
-
-
-def test_weakest_dimension_is_deterministic():
-    nodes = [node(D.OWNERSHIP, V.SUPPORTED)]
-    assert len({scoring.weakest_dimension(nodes) for _ in range(20)}) == 1
-
-
-def test_weakest_dimension_across_claims():
-    claim_a = [node(D.OWNERSHIP, V.SUPPORTED), node(D.DEPTH, V.SUPPORTED)]
-    claim_b = [node(D.OWNERSHIP, V.SUPPORTED), node(D.SPECIFICITY, V.SUPPORTED)]
-    # OPERATIONAL is untouched by both, so it must be the global gap.
-    assert scoring.weakest_dimension_across([claim_a, claim_b]) is D.OPERATIONAL
+def test_recruiter_weights_are_rescaled_not_rejected():
+    """A recruiter typing 40/30/20/20 gets what they meant."""
+    out = scoring.normalise_weights({"a": 40, "b": 30, "c": 20, "d": 20})
+    assert sum(out.values()) == pytest.approx(100.0)
+    assert out["a"] > out["b"] > out["c"]
 
 
 # ---------------------------------------------------------------------------
 # resume_score — the deliberately shallow contrast metric
 # ---------------------------------------------------------------------------
 
-
-JD = "Support lead responsible for CSAT improvement, escalation workflow design and SLA management"
+JD = "Team lead responsible for CSAT improvement, AHT reduction, escalation handling and SLA attainment"
 
 
 def test_resume_score_is_bounded():
-    assert 0.0 <= scoring.resume_score("nothing relevant here at all", JD) <= 1.0
-    assert scoring.resume_score(JD, JD) == 1.0
-
-
-def test_resume_score_with_no_job_description_is_zero():
-    assert scoring.resume_score("anything", "") == 0.0
+    assert scoring.resume_score(JD, JD) == 100
+    assert 0 <= scoring.resume_score("nothing relevant", JD) <= 100
+    assert scoring.resume_score("anything", "") == 0
 
 
 def test_keyword_stuffing_beats_substance():
-    """This is the whole point of resume_score existing."""
-    stuffed = (
-        "CSAT improvement escalation workflow design SLA management support lead "
-        "responsible csat escalation sla workflow"
-    )
-    honest = "I ran a support team for four years and the customers were happier by the end."
+    """The whole reason resume_score exists — and the pitch's money slide."""
+    stuffed = ("CSAT improvement AHT reduction escalation handling SLA attainment team "
+               "lead responsible csat aht sla escalation")
+    honest = "I ran a support team for four years and customers were happier by the end."
     assert scoring.resume_score(stuffed, JD) > scoring.resume_score(honest, JD)
-
-
-# ---------------------------------------------------------------------------
-# the fixture and the engine must never drift apart
-# ---------------------------------------------------------------------------
-
-
-def test_fixture_numbers_are_what_scoring_actually_computes():
-    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
-
-    confidences = []
-    for claim in data["claims"]:
-        computed = scoring.claim_confidence(claim["nodes"])
-        assert computed == pytest.approx(claim["confidence"], abs=1e-4), (
-            f"fixture claim {claim['id']} says {claim['confidence']} "
-            f"but scoring.py computes {computed}"
-        )
-        confidences.append(computed)
-
-    competence = scoring.competence_score(confidences)
-    assert competence == pytest.approx(data["competence_score"], abs=1e-4)
-    assert scoring.badge_for(competence).value == data["badge"]
-
-
-def test_fixture_quotes_are_verbatim_in_their_answers():
-    """The rule the engine enforces, enforced on the hand-written fixture too."""
-    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    for claim in data["claims"]:
-        answers = " ".join(qa["answer"].lower() for qa in claim["qa"])
-        for evidence_node in claim["nodes"]:
-            quote = evidence_node["quote"].strip().lower()
-            if quote:
-                assert quote in answers, f"{quote!r} is not verbatim in the answers"
