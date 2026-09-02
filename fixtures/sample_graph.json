@@ -1,0 +1,76 @@
+{
+  "_note": "Hand-written reference graph. Same shape as GET /api/recruiter/candidates/{id}. Every `confidence` here is arithmetically consistent with api/engine/scoring.py and tests/test_scoring.py asserts that, so the fixture and the engine can never drift apart. Served live at GET /api/dev/fixture.",
+  "candidate": {
+    "id": "c_01",
+    "name": "Priya R.",
+    "role": "Support Lead"
+  },
+  "resume_score": 0.91,
+  "competence_score": 0.7833,
+  "badge": "verified",
+  "claims": [
+    {
+      "id": "cl_01",
+      "text": "Managed a 50-member support team and improved CSAT from 78% to 92%",
+      "metric": "CSAT 78 -> 92",
+      "confidence": 0.9,
+      "rationale": "Names the root cause and the mechanism; owns the intervention. Slightly vague on the SLA numbers.",
+      "qa": [
+        {
+          "question": "What were the top reasons behind low CSAT, and what actions improved it?",
+          "answer": "Billing complaints were 40% of negative feedback. We redesigned escalation workflows and introduced callback SLAs.",
+          "question_id": "q_01",
+          "response_id": "r_01"
+        }
+      ],
+      "nodes": [
+        {"dimension": "OWNERSHIP",   "verdict": "SUPPORTED", "quote": "We redesigned escalation workflows", "source_response_id": "r_01"},
+        {"dimension": "DEPTH",       "verdict": "SUPPORTED", "quote": "Billing complaints were 40% of negative feedback", "source_response_id": "r_01"},
+        {"dimension": "SPECIFICITY", "verdict": "PARTIAL",   "quote": "introduced callback SLAs", "source_response_id": "r_01"},
+        {"dimension": "OPERATIONAL", "verdict": "SUPPORTED", "quote": "escalation workflows", "source_response_id": "r_01"}
+      ]
+    },
+    {
+      "id": "cl_02",
+      "text": "Cut average first-response time from 9 hours to 45 minutes across three queues",
+      "metric": "9h -> 45m",
+      "confidence": 0.75,
+      "rationale": "Owns the staffing change and gives concrete numbers; the causal explanation stays at a high level.",
+      "qa": [
+        {
+          "question": "How did you get first-response time down that far, and what did you personally decide?",
+          "answer": "I rebuilt the shift roster myself and moved four agents onto an early shift covering 6am to 10am, which was where the backlog formed. Response time fell to 45 minutes within six weeks.",
+          "question_id": "q_02",
+          "response_id": "r_02"
+        }
+      ],
+      "nodes": [
+        {"dimension": "OWNERSHIP",   "verdict": "SUPPORTED", "quote": "I rebuilt the shift roster myself", "source_response_id": "r_02"},
+        {"dimension": "DEPTH",       "verdict": "PARTIAL",   "quote": "which was where the backlog formed", "source_response_id": "r_02"},
+        {"dimension": "SPECIFICITY", "verdict": "SUPPORTED", "quote": "moved four agents onto an early shift covering 6am to 10am", "source_response_id": "r_02"},
+        {"dimension": "OPERATIONAL", "verdict": "PARTIAL",   "quote": "Response time fell to 45 minutes within six weeks", "source_response_id": "r_02"}
+      ]
+    },
+    {
+      "id": "cl_03",
+      "text": "Built the escalation playbook now used by 4 regional support centres",
+      "metric": "4 centres",
+      "confidence": 0.7,
+      "rationale": "Clear ownership and a real mechanism, but nothing on how it held up operationally after rollout.",
+      "qa": [
+        {
+          "question": "What was in the playbook, and why did other centres adopt it?",
+          "answer": "I wrote it after auditing 200 escalations and finding that 60% were reopened because nobody owned the handoff. The playbook assigns a named owner at every handoff, and the other centres picked it up after our reopen rate halved.",
+          "question_id": "q_03",
+          "response_id": "r_03"
+        }
+      ],
+      "nodes": [
+        {"dimension": "OWNERSHIP",   "verdict": "SUPPORTED",   "quote": "I wrote it after auditing 200 escalations", "source_response_id": "r_03"},
+        {"dimension": "DEPTH",       "verdict": "SUPPORTED",   "quote": "60% were reopened because nobody owned the handoff", "source_response_id": "r_03"},
+        {"dimension": "SPECIFICITY", "verdict": "PARTIAL",     "quote": "assigns a named owner at every handoff", "source_response_id": "r_03"},
+        {"dimension": "OPERATIONAL", "verdict": "UNSUPPORTED", "quote": "", "source_response_id": "r_03"}
+      ]
+    }
+  ]
+}

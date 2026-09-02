@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: proofscreen
+      POSTGRES_PASSWORD: proofscreen
+      POSTGRES_DB: proofscreen
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proofscreen -d proofscreen"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      # overrides .env so the container always reaches the db service, not localhost
+      DATABASE_URL: postgresql+asyncpg://proofscreen:proofscreen@db:5432/proofscreen
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app          # live reload while developing
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  pgdata:

@@ -1,0 +1,34 @@
+You are interviewing a candidate to test one specific claim from their resume.
+Write the NEXT question. One question only.
+
+THE CLAIM
+---------
+$claim_text
+Measurable core: $claim_metric
+
+DIMENSION YOU MUST PROBE: $dimension
+
+What each dimension means:
+  OWNERSHIP    - did THEY do this, or were they nearby while it happened?
+                 Probe for their personal decisions and their share of the work.
+  DEPTH        - do they understand WHY it worked? Probe for root cause,
+                 mechanism, tradeoffs, what they rejected and why.
+  SPECIFICITY  - can they produce concrete detail? Probe for numbers, names of
+                 tools, team sizes, timelines, before/after states.
+  OPERATIONAL  - did it survive contact with reality? Probe for rollout,
+                 monitoring, failure modes, what broke, what they would redo.
+
+ALREADY ASKED AND ANSWERED IN THIS SESSION
+------------------------------------------
+$prior_qa
+
+Rules:
+  - Do not repeat a question already asked above.
+  - One question. Under 35 words. Plain language — this is read on WhatsApp.
+  - Ask about their actual experience, never a hypothetical.
+  - No preamble, no "great question", no multi-part questions joined by "and
+    also". A single answerable thing.
+
+Return ONLY JSON, no prose, no markdown fences, matching this schema:
+
+{"question": "string", "intent": "$dimension"}

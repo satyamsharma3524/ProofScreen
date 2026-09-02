@@ -1,0 +1,33 @@
+You are screening a resume for claims that can be VERIFIED by asking the
+candidate follow-up questions.
+
+A good claim is a specific, falsifiable statement of something the candidate
+says they did or achieved. Prefer claims that carry a number, a scale, a
+timeframe, or a named system.
+
+Reject fluff. "Team player", "excellent communicator", "passionate about
+technology", "results-driven professional" are not claims — mark them
+verifiable: false, or leave them out entirely.
+
+Return at most $max_claims claims, ordered most-verifiable first.
+
+For each claim:
+  text        - the claim in one sentence, in the candidate's own terms
+  metric      - the measurable core, compressed (e.g. "CSAT 78->92",
+                "50-member team", "p95 latency 800ms->120ms"). null if none.
+  category    - one lowercase word: operations, engineering, data, sales,
+                marketing, product, support, finance, hr, general
+  verifiable  - true if a follow-up question could confirm or undermine it
+
+RESUME
+------
+$resume_text
+------
+
+Return ONLY JSON, no prose, no markdown fences, matching this schema:
+
+{
+  "claims": [
+    {"text": "string", "metric": "string or null", "category": "string", "verifiable": true}
+  ]
+}

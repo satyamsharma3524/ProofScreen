@@ -1,0 +1,25 @@
+# --- web ---
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.8,<3
+pydantic-settings>=2.4
+
+# --- db ---
+sqlalchemy[asyncio]>=2.0,<2.1
+asyncpg>=0.29
+aiosqlite>=0.20          # tests only: lets the suite run without Postgres
+
+# --- llm / stt ---
+openai>=1.40
+httpx>=0.27
+
+# --- resume ingest ---
+pymupdf>=1.24            # PDF  -> import fitz
+python-docx>=1.1         # DOCX
+
+# --- channels ---
+twilio>=9.2              # only used for inbound webhook signature validation
+
+# --- tests ---
+pytest>=8.3

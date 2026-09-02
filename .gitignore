@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+.DS_Store
+*.sqlite3
+uploads/
+_to_delete/
