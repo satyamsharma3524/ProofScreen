@@ -5,6 +5,48 @@ Backend only; the recruiter dashboard is a separate Next.js app consuming
 `/openapi.json`. WhatsApp Business Cloud API (Meta, direct) is the only
 candidate channel.
 
+## Read this before proposing code
+
+**All process, architecture and phase documents live in `docs/`. Start at
+[docs/README.md](docs/README.md)** — it carries the binding reading order and
+marks which documents are superseded history rather than instructions. The
+order is not advisory: `docs/EXECUTION_STANDARD.md` §1 requires the frozen
+documents to be read *before* proposing code, and forbids new architecture, new
+modules, new layers and new abstractions without explicit approval. Default
+assumption: **the architecture is correct; the implementation fits inside it.**
+
+`CLAUDE.md` and `README.md` are the only markdown at the repo root. This file
+must stay here — Claude Code loads it from the root of the working tree, and
+moving it drops these rules out of every session silently.
+
+Do not restate a frozen document's contents in a new file. Cite it. A drifted
+copy of a frozen decision is worse than a pointer to it
+(`docs/EXECUTION_STANDARD.md` C3).
+
+## Two developers, one `main`
+
+Both push to `main` hourly, which only stays conflict-free because ownership is
+strict. **Never edit the other developer's files** — that is rule 3 below, and
+it is the whole mechanism.
+
+- **Developer B's brief is `docs/DEVELOPER_B_CONTRACT.md`** — ownership, task
+  order, branch names, and a precondition to verify *before* branching. It is
+  subordinate to `EXECUTION_STANDARD.md`, `ARCHITECTURE_LOCK_v1.md` and
+  `PHASE_1_TASKS.md`; where they conflict, they win.
+- **Ownership has two sources and they disagree.** The table in `README.md`
+  assigns `engine/signals.py` to B; the do-not-edit list in
+  `DEVELOPER_B_CONTRACT.md` assigns it to A. **For Phase 1 the contract wins**,
+  and `PHASE_1_TASKS.md` P1-03 says why: *A edits, B reviews the hunk.* Settled
+  — do not re-litigate it per task.
+- **`api/schemas.py` is the tripwire.** Frozen, two owners, and Phase 1 needs
+  **zero** edits to it — P1-00 pre-landed every field both developers need. If
+  a task seems to require opening it, the task is wrong. Stop and raise it.
+- **`tests/conftest.py` is shared, append-only, by announcement.** Its BPO
+  vocabulary is load-bearing for family detection; restructuring it silently
+  collapses weight assertions across the suite.
+- Anything touching the other owner's file — including a test of theirs that
+  your change necessarily breaks — is **announced and reviewed, never silent.**
+
 ## Non-negotiable rules
 
 1. **The model never produces a score.** It returns countable signals and
@@ -144,14 +186,27 @@ the tree and re-ranks live for any role profile.
 
 ## Where things stand
 
-Done: taxonomy (8 families), typed claim extraction, 5-level adaptive policy
-capped at 12, signal extraction with verbatim enforcement, six rubrics with
-gates, deterministic consistency, role weight profiles with live re-ranking,
-Meta Cloud API webhook (verify, HMAC, batching, retry de-dup, two-step media),
-Whisper voice with duration, `/api/dev/*` tooling, engine-generated fixture,
-seed showing the resume/competence inversion and the ranking flip, 102 tests,
-Docker.
+**Verify this section rather than trusting it** — it is the first thing to go
+stale. `git log --oneline -5` and `pytest -q` are the source of truth.
 
-Not done: Next.js dashboard (Dev B), Render/Railway deploy, auth (deliberately
-none), approved WhatsApp template for first contact (needs Meta approval), the
+Baseline: taxonomy (8 families), typed claim extraction, adaptive policy capped
+at 12, signal extraction with verbatim enforcement, six rubrics with gates,
+deterministic consistency, role weight profiles with live re-ranking, Meta
+Cloud API webhook (verify, HMAC, batching, retry de-dup, two-step media),
+Whisper voice with duration, `/api/dev/*` tooling, engine-generated fixture,
+seed showing the resume/competence inversion and the ranking flip, Docker.
+
+Phase 1 (`docs/PHASE_1_TASKS.md`): **P1-00 … P1-04 complete — 126 tests
+passing.** D1, the TRANSFER probe, is built: one probe to a stalled claim,
+operator selected in pure Python with no `job_family` in the signature, both
+halves of the question taken from the candidate's own claims.
+`TRANSFER_PROBE=false` reproduces the pre-phase interview exactly.
+
+Next: A on P1-06 → P1-07 (deterministic family routing) and the `dev.py` half
+of P1-08; B on the order in `docs/DEVELOPER_B_CONTRACT.md`, starting at P1-09.
+**P1-05 goes last** — A's P1-06 and P1-07 both change what the fixture
+contains, so regenerating before they land means regenerating twice.
+
+Not done: Next.js dashboard, Render/Railway deploy, auth (deliberately none),
+approved WhatsApp template for first contact (needs Meta approval), the
 separate "Shine Verified" code-sandbox product from the strategy doc.
