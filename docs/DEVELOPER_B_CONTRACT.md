@@ -71,7 +71,7 @@ Do not refactor, improve, move or rename this code. Architecture is frozen.
 | 3 | **P1-13** `why_ranked` | `api/engine/graph.py` | — |
 | 4 | **P1-11** `scripts/validation_report.py` | `scripts/` | P1-09, P1-10 |
 | 5 | **P1-12** `GET /api/recruiter/validation` | `api/routers/recruiter.py` | P1-11 |
-| 6 | **P1-08b** populate `routing_confidence` | `api/engine/graph.py` | **A's P1-06** |
+| 6 | **P1-08b** populate `routing_confidence` | `api/engine/graph.py` | ~~A's P1-06~~ **landed** |
 | 7 | **P1-05** fixture regeneration | `seed.py`, `fixtures/`, `tests/test_pipeline.py` | A's P1-06, P1-07 |
 
 **P1-05 goes last on purpose.** Developer A's P1-06 (`detect_family` rewrite)
@@ -79,8 +79,22 @@ and P1-07 (requisition precedence) both change what the fixture contains.
 Regenerating before they land means regenerating twice.
 
 **P1-08 is split.** Developer A ships `GET /api/dev/detect` in `dev.py`; you
-ship the `routing_confidence` field on the graph. Yours waits on A's
-`FamilyMatch` landing in `taxonomy.py`.
+ship the `routing_confidence` field on the graph.
+
+**Your dependency is already satisfied.** `FamilyMatch` landed in P1-06:
+
+    from api.taxonomy import match_family
+    match_family(text).confidence      # margin, 0.0-1.0
+
+`build_candidate_graph()` already selects the candidate's `Resume` — see the
+`raw_text` it loads around `graph.py:368` — so populating the field needs no new
+query, no schema change and no further call into A's modules. `confidence` is a
+**margin** `(top1 − top2) / top1`, not a probability: it says how close the call
+was, not how likely it is to be right. Present it that way, and note that a
+`GENERAL` route always reports `0.0`.
+
+Do not change the shape of `FamilyMatch`. It is the only interface between the
+two streams.
 
 ## P1-09 requires a coordinated reset
 

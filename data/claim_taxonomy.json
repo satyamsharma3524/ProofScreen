@@ -1185,6 +1185,180 @@
         }
       }
     },
+    "product": {
+      "label": "Product Management",
+      "keywords": [
+        "product manager",
+        "product owner",
+        "product analytics",
+        "roadmap",
+        "prd",
+        "user research",
+        "discovery",
+        "activation",
+        "adoption",
+        "user retention",
+        "mvp",
+        "north star",
+        "user story",
+        "epic",
+        "backlog",
+        "a/b test"
+      ],
+      "dimension_weights": {
+        "CAUSAL_REASONING": 0.25,
+        "METRIC_OWNERSHIP": 0.2,
+        "PROCESS": 0.15,
+        "TOOL_FAMILIARITY": 0.05
+      },
+      "fact_keys": {
+        "activation_pct": {
+          "label": "Activation rate",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "retention_pct": {
+          "label": "Retention rate",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "adoption_pct": {
+          "label": "Feature adoption",
+          "kind": "percent",
+          "stability": "variable"
+        },
+        "monthly_active_users": {
+          "label": "Monthly active users",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "launch_count": {
+          "label": "Launches shipped",
+          "kind": "count",
+          "stability": "variable"
+        },
+        "experiment_count": {
+          "label": "Experiments run",
+          "kind": "count",
+          "stability": "variable"
+        }
+      },
+      "claim_types": {
+        "outcome_ownership": {
+          "label": "Moved a product outcome",
+          "weight": 25,
+          "keywords": [
+            "activation",
+            "adoption",
+            "retention",
+            "user retention",
+            "churn",
+            "conversion",
+            "engagement",
+            "grew",
+            "increased",
+            "uplift"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "METRIC_OWNERSHIP"
+          ]
+        },
+        "discovery": {
+          "label": "User research and problem discovery",
+          "weight": 20,
+          "keywords": [
+            "user research",
+            "user interview",
+            "discovery",
+            "persona",
+            "pain point",
+            "survey",
+            "validated",
+            "problem statement",
+            "wireframe",
+            "user onboarding"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "AUTHENTICITY"
+          ]
+        },
+        "launch_delivery": {
+          "label": "Shipping and launch execution",
+          "weight": 20,
+          "keywords": [
+            "launch",
+            "feature launch",
+            "shipped",
+            "released",
+            "mvp",
+            "rollout",
+            "beta",
+            "milestone",
+            "scope"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "SPECIFICITY"
+          ]
+        },
+        "prioritisation": {
+          "label": "Roadmap and trade-off decisions",
+          "weight": 15,
+          "keywords": [
+            "roadmap",
+            "prioritised",
+            "prioritisation",
+            "backlog",
+            "trade-off",
+            "deprioritised",
+            "sequencing",
+            "cut"
+          ],
+          "probe_focus": [
+            "CAUSAL_REASONING",
+            "PROCESS"
+          ]
+        },
+        "experimentation": {
+          "label": "Experimentation and measurement",
+          "weight": 15,
+          "keywords": [
+            "a/b test",
+            "experiment",
+            "hypothesis",
+            "variant",
+            "significance",
+            "north star",
+            "instrumentation",
+            "cohort"
+          ],
+          "probe_focus": [
+            "METRIC_OWNERSHIP",
+            "CAUSAL_REASONING"
+          ]
+        },
+        "stakeholder_alignment": {
+          "label": "Cross-functional alignment",
+          "weight": 5,
+          "keywords": [
+            "stakeholder",
+            "alignment",
+            "buy-in",
+            "spec",
+            "prd",
+            "cross-functional",
+            "engineering",
+            "design"
+          ],
+          "probe_focus": [
+            "PROCESS",
+            "AUTHENTICITY"
+          ]
+        }
+      }
+    },
     "general": {
       "label": "General / Unclassified",
       "keywords": [],
