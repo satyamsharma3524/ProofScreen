@@ -59,13 +59,22 @@ class Dimension(str, Enum):
 
 
 class ProbeLevel(str, Enum):
-    """ARTIFACT 3 — the question generation protocol, in order."""
+    """ARTIFACT 3 — the question generation protocol.
+
+    Member order here is cosmetic. The order a claim is actually probed in is
+    `engine/signals.PROBE_ORDER`, and a level is only selectable once it appears
+    there — which is why TRANSFER can be declared now and activated later.
+    """
 
     VALIDATION = "VALIDATION"      # you mentioned X, tell me more
     OPERATIONAL = "OPERATIONAL"    # how did the work run day to day
     INCIDENT = "INCIDENT"          # describe a specific time it went wrong
     DECISION = "DECISION"          # what did you decide, and what did you reject
     OUTCOME = "OUTCOME"            # what happened after, and how did you know
+    # A situation the candidate has NOT described, built from their own claims.
+    # A memorised resume can be recited; it cannot be transferred. Declared in
+    # P1-00, wired into the policy in P1-03 — inert until PROBE_ORDER changes.
+    TRANSFER = "TRANSFER"
 
 
 class Severity(str, Enum):
@@ -391,6 +400,11 @@ class CandidateGraph(BaseModel):
     candidate: CandidateRef
     job_family: str
     job_family_label: str
+    # Margin between the top two family matches, 0.0-1.0. A low value means the
+    # resume did not clearly belong to this cohort, and a misrouted candidate is
+    # scored against the wrong claim types — so it is surfaced, never swallowed.
+    # Populated in P1-08.
+    routing_confidence: float | None = None
     scored_for: RoleRef | None = None          # which weight profile produced this
     state: SessionState = SessionState.NEW
     questions_asked: int = 0
@@ -416,6 +430,10 @@ class CandidateSummary(BaseModel):
     role: str | None = None
     job_family: str = "general"
     job_family_label: str = ""
+    # One sentence, generated from stored rows, saying why this candidate sits
+    # where they sit — the ranked list currently answers "that", not "why".
+    # Populated in P1-13. No model call, ever.
+    why_ranked: str | None = None
     resume_score: int = 0
     weighted_evidence_score: int = 0
     competence_score: int = 0
@@ -457,6 +475,75 @@ class RankedCandidates(BaseModel):
 
     scored_for: RoleRef | None = None
     candidates: list[CandidateSummary] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# recruiter decisions — the outcome ProofScreen is measured against
+#
+# Without a recorded human decision to correlate against, "evidence beats resume
+# screening" is an assertion. These rows are what make it falsifiable.
+# ---------------------------------------------------------------------------
+
+
+class OutcomeDecision(str, Enum):
+    """Ordinal, worst to best. The order is load-bearing: the validation report
+    rank-correlates scores against it."""
+
+    rejected = "rejected"
+    shortlisted = "shortlisted"
+    interviewed = "interviewed"
+    offered = "offered"
+    hired = "hired"
+
+
+class OutcomeIn(BaseModel):
+    decision: OutcomeDecision
+    stage: str | None = Field(default=None, max_length=60)
+    role_id: str | None = None          # which lens the recruiter was looking through
+    decided_by: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class OutcomeOut(BaseModel):
+    id: str
+    candidate_id: str
+    role_id: str | None = None
+    decision: OutcomeDecision
+    stage: str | None = None
+    decided_by: str | None = None
+    note: str | None = None
+    decided_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# validation — does evidence outrank resume screening?
+#
+# Serves M4 from PHASE_1_SUCCESS_METRICS.md only. M1/M2/M3/M5 are operational
+# metrics printed by scripts/validation_report.py; they are not a dashboard
+# surface and are deliberately not modelled here.
+# ---------------------------------------------------------------------------
+
+
+class ValidationCohort(BaseModel):
+    job_family: str
+    n_decided: int = 0
+    # False => below the minimum sample size. Correlations are WITHHELD, never
+    # estimated: a correlation over four candidates is worse than no number.
+    sufficient: bool = False
+    competence_correlation: float | None = None
+    resume_correlation: float | None = None
+    competence_precision_at_5: float | None = None
+    resume_precision_at_5: float | None = None
+    # Top-quartile by resume, bottom-quartile by competence, rejected by the
+    # recruiter — the case ProofScreen exists to catch.
+    inversions_caught: int = 0
+
+
+class ValidationOut(BaseModel):
+    generated_at: datetime
+    minimum_n: int = 30
+    overall: ValidationCohort
+    cohorts: list[ValidationCohort] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

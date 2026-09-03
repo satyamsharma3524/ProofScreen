@@ -40,6 +40,33 @@ def test_health_reports_fixture_and_dry_run(client):
     assert body["job_families"] >= 7
 
 
+def test_p1_00_field_additions_are_still_inert():
+    """P1-00 added the Phase 1 contract surface; this pins what has not been
+    acted on yet.
+
+    The TRANSFER half of this pin has been DISCHARGED by P1-03, which is the
+    task it was waiting for — its docstring said "unreachable until then", and
+    then has arrived. Activation is now asserted where it belongs, in
+    `test_policy.py`: TRANSFER is in `signals.PROBE_ORDER` (selectable) and
+    deliberately absent from `signals.LADDER_ORDER` (never walked to, never
+    opens a claim). Do not re-add a "TRANSFER is unreachable" assertion here.
+
+    The two optional schema fields below are still genuinely inert.
+    """
+    from api.schemas import CandidateGraph, CandidateRef, CandidateSummary, ProbeLevel
+
+    assert ProbeLevel.TRANSFER.value == "TRANSFER"
+
+    # Both default to None until P1-08 / P1-13 fill them.
+    assert CandidateSummary(id="c_inert", name="Inert").why_ranked is None
+    graph = CandidateGraph(
+        candidate=CandidateRef(id="c_inert", name="Inert"),
+        job_family="general",
+        job_family_label="General",
+    )
+    assert graph.routing_confidence is None
+
+
 def test_openapi_is_the_contract(client):
     """The Next.js app generates its client from this; it must not 500."""
     paths = client.get("/openapi.json").json()["paths"]
