@@ -212,6 +212,77 @@ def test_routing_is_stable_across_disagreeing_model_runs(monkeypatch):
     assert seen == {"software_engineering"}
 
 
+# ---------------------------------------------------------------------------
+# P1-08a — GET /api/dev/detect. Routing has to be explainable without a token.
+# ---------------------------------------------------------------------------
+
+PRODUCT_RESUME = (
+    "Product manager for a payments app. Owned the roadmap and ran a/b tests, "
+    "lifting activation from 34% to 46%."
+)
+
+
+def test_detect_endpoint_explains_without_a_model_call(client):
+    """The acceptance criterion: terms hit, per-family scores and the margin,
+    with no model call. Routing is a pure function, so this holds by
+    construction — the assertion exists to keep it that way."""
+    before = client.get("/api/dev/llm").json()["calls"]
+
+    body = client.get("/api/dev/detect", params={"text": PRODUCT_RESUME}).json()
+
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
+    assert body["family"] == "product"
+    assert body["matched_terms"], "a routed resume must show the terms that routed it"
+    assert body["per_family_scores"]["product"] > 0
+    assert 0.0 <= body["confidence"] <= 1.0
+
+
+def test_detect_names_the_family_the_margin_is_measured_against(client):
+    """`confidence` is meaningless without knowing what it is a margin over.
+    Reporting 0.03 without naming the runner-up tells a recruiter a decision was
+    close but not what it was close to."""
+    body = client.get("/api/dev/detect", params={"text": PRODUCT_RESUME}).json()
+    assert body["runner_up"] is not None
+    assert body["runner_up"] != body["family"]
+    assert body["rejected_leader"] is None
+    assert body["confidence_is"].startswith("margin")
+
+
+def test_detect_explains_a_general_route(client):
+    """GENERAL has to explain itself too. "We saw npa and nothing else, and the
+    floor is two terms" is actionable; an empty result is not."""
+    body = client.get(
+        "/api/dev/detect", params={"text": "Worked on NPA recovery for a finance company."}
+    ).json()
+    assert body["family"] == GENERAL
+    assert body["confidence"] == 0.0
+    assert body["min_terms_required"] == 2
+    assert body["matched_terms"] == ["npa"]
+    # Two different zeros reach this endpoint. GENERAL's is the floor, not a
+    # tie, and the leading family was REJECTED rather than narrowly beaten —
+    # calling it a runner-up would misdescribe the one case someone is most
+    # likely to be investigating.
+    assert body["runner_up"] is None
+    assert body["rejected_leader"] == "banking_operations"
+    assert "floor" in body["confidence_is"]
+
+
+def test_detect_rejects_empty_text(client):
+    assert client.get("/api/dev/detect", params={"text": ""}).status_code == 422
+
+
+def test_detect_is_hidden_when_dev_endpoints_are_off(client, monkeypatch):
+    """It exposes how routing works and takes arbitrary text. It belongs behind
+    the same flag as the rest of /api/dev, not open on a deployed instance."""
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "enable_dev_endpoints", False)
+    assert (
+        client.get("/api/dev/detect", params={"text": PRODUCT_RESUME}).status_code == 404
+    )
+
+
 def test_routing_never_scores_presentation():
     """Structural. Two resumes with identical evidence and different fluency
     must route identically — routing reads vocabulary, never how well it is

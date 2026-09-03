@@ -5,6 +5,7 @@ misbehaves on stage. Guarded by ENABLE_DEV_ENDPOINTS.
 POST /api/dev/simulate                whole pipeline in one call
 POST /api/dev/sessions/{id}/answer    step one answer into a live session
 GET  /api/dev/fixture                 the hand-written sample graph
+GET  /api/dev/detect?text=...         why a resume routed where it did
 GET  /api/dev/llm                     cache hits, calls, fallbacks
 POST /api/dev/reset                   drop and recreate every table
 
@@ -20,7 +21,7 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api import ids
@@ -42,7 +43,7 @@ from api.schemas import (
     SimulateIn,
     SimulateOut,
 )
-from api.taxonomy import resolve_family
+from api.taxonomy import GENERAL, MIN_TERMS, family_label, match_family, resolve_family
 
 log = logging.getLogger("proofscreen.dev")
 
@@ -237,6 +238,54 @@ async def fixture() -> dict:
             status.HTTP_404_NOT_FOUND, "fixtures/sample_graph.json missing"
         )
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+@router.get("/detect")
+async def detect(text: str = Query(min_length=1, max_length=20_000)) -> dict:
+    """Explain a routing decision. Deterministic, read-only, no model call.
+
+    P1-08a. Routing decides which claim types a candidate is asked about and
+    which rubric weights score them, so "why did this resume land here?" is a
+    question someone asks the moment a result looks wrong. Answering it used to
+    mean reading `data/claim_taxonomy.json` by eye.
+
+    Returns a plain dict, like the other dev GETs. Deliberately NOT a schema:
+    `api/schemas.py` is frozen and Phase 1 needs zero edits to it.
+    """
+    _guard()
+    match = match_family(text)
+    ranked = sorted(match.per_family_scores.items(), key=lambda kv: -kv[1])
+    runner_up = next((k for k, _ in ranked if k != match.family), None)
+
+    # Two different zeros reach this point and they mean opposite things. A
+    # GENERAL route scores 0.0 because the winner fell under the two-term
+    # floor, NOT because two families tied -- and `runner_up` there is the
+    # family that led and was rejected, not a close second. Describing both as
+    # a margin would make the explainability endpoint lie in the one case
+    # somebody is most likely to be investigating.
+    routed = match.family != GENERAL
+    return {
+        "family": match.family,
+        "family_label": family_label(match.family),
+        # A MARGIN, not a probability: how far clear the winner is of the
+        # runner-up. It says whether the call was close, not whether it was
+        # right, and presenting it as a likelihood would be a lie about what
+        # was computed.
+        "confidence": match.confidence,
+        "confidence_is": (
+            "margin (top1 - top2) / top1, against runner_up"
+            if routed
+            else f"0.0 — no family reached the {MIN_TERMS}-term floor"
+        ),
+        "runner_up": runner_up if routed else None,
+        "rejected_leader": None if routed else runner_up,
+        "matched_terms": list(match.matched_terms),
+        "per_family_scores": dict(ranked),
+        # GENERAL has to explain itself too. "We found npa and nothing else" is
+        # a more useful answer than an empty result.
+        "min_terms_required": MIN_TERMS,
+        "chars_considered": len(text),
+    }
 
 
 @router.get("/llm")
