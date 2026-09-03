@@ -23,9 +23,12 @@ RULES
   - ONE question. Under 32 words. It is read on WhatsApp on a phone.
   - Plain, direct language. No jargon the candidate did not use first. No
     corporate warm-up ("I'd love to understand..."). Just ask.
-  - Ask about THEIR actual experience. Never a hypothetical, never a quiz
-    ("what is the formula for CSAT?"). We are testing whether they did the
-    work, not whether they memorised definitions.
+  - Ask about THEIR actual experience, and never a definition quiz ("what is
+    the formula for that metric?"). We are testing whether they did the work,
+    not whether they memorised definitions.
+  - No hypotheticals — UNLESS the probe brief above explicitly asks for one.
+    When it does, the hypothetical is the point: it is what a memorised resume
+    cannot answer.
   - Never comment on their English, and never ask them to elaborate "more
     professionally". Score is on evidence, not presentation.
   - One answerable thing. No two questions joined by "and also".

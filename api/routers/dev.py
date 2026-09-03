@@ -50,23 +50,30 @@ router = APIRouter(prefix="/api/dev", tags=["dev"])
 
 FIXTURE_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "sample_graph.json"
 
-# Used when simulate is called with no answers, so a single curl produces a
-# fully scored candidate. Deliberately uneven — a strong opening, a vague
-# middle, one refusal — so the output is not uniformly good.
+# SMOKE TEST ONLY — used when simulate is called with no answers, so a single
+# curl produces a fully scored candidate.
+#
+# Deliberately uneven — a strong opening, a vague middle, one refusal — so the
+# output is not uniformly good. Deliberately DOMAIN-LIGHT: ProofScreen verifies
+# reasoning, not professions, and a default answer set written in one industry's
+# vocabulary would score every other cohort's resume against the wrong nouns.
+# Any real demo or evaluation must pass `answers` explicitly.
 PLACEHOLDER_ANSWERS = [
-    "I had 35 agents across 4 pods, each with a senior associate. I ran daily "
-    "attendance tracking and weekly calibration with the quality team.",
-    "Billing complaints were about 40% of negative feedback, so we redesigned "
-    "the escalation workflow and added callback SLAs. CSAT moved from 78 to 92 "
-    "over about eleven weeks.",
-    "I remember the week before month-end when three agents resigned and the "
-    "queue backed up to nine hours. I pulled two people off email onto voice "
-    "and personally handled the top twelve escalations that Saturday.",
-    "We tracked everything in Genesys and I pulled the AHT and occupancy report "
-    "each morning before the huddle.",
+    "I owned a group of 35 people across 4 units, each with a senior person "
+    "reporting to me. I ran a daily check on the backlog and a weekly review "
+    "with the quality group.",
+    "About 40% of the failures traced back to one step in the intake process, "
+    "so we redesigned that step and added a follow-up check. The score moved "
+    "from 78 to 92 over about eleven weeks.",
+    "I remember the week before a major deadline when three people left within "
+    "days of each other and the backlog stretched to nine hours. I moved two "
+    "people across from another workstream and personally handled the twelve "
+    "most urgent items that weekend.",
+    "We tracked everything in Jira and I pulled the throughput and utilisation "
+    "report in Excel each morning before the stand-up.",
     "I'm not sure about the exact figures now.",
-    "Afterwards the reopen rate halved and we held CSAT above 90 for the next "
-    "two quarters. I'd have started the coaching earlier.",
+    "Afterwards the rework rate halved and we held the score above 90 for the "
+    "next two quarters. I'd have started the coaching earlier.",
 ]
 
 

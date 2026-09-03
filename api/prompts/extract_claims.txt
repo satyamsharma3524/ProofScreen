@@ -20,7 +20,7 @@ For each claim return:
   text        - the claim in one sentence, in the candidate's own words
   claim_type  - one key from the CLAIM TYPES list above. Nothing else.
   metric      - the measurable core, compressed. Use "before -> after" when the
-                resume states both: "CSAT 78% -> 92%", "9 hours -> 45 minutes".
+                resume states both: "78% -> 92%", "9 hours -> 45 minutes".
                 Use the bare figure otherwise: "50-member team", "18 services".
                 null when the claim carries no number.
   verifiable  - false if no follow-up question could test it

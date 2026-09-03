@@ -22,11 +22,13 @@ WHAT TO EXTRACT
 ---------------
 quantities         Every number, amount, duration or percentage the candidate
                    states. `value` exactly as they said it ("78%", "9 hours",
-                   "35"). `refers_to` = what it measures ("CSAT", "team size").
+                   "35"). `refers_to` = what that number measures, in their own
+                   words, whatever the field of work.
 
-process_steps      Distinct steps of HOW the work actually ran. "reviewed call
-                   recordings", "weekly calibration", "retrained the bottom
-                   quartile". One entry per step. Not opinions, not outcomes.
+process_steps      Distinct steps of HOW the work actually ran — a recurring
+                   check, a review they ran, a thing they did before another
+                   thing. One entry per step, in their words. Not opinions,
+                   not outcomes.
 
 causal_links       Cause -> action -> outcome chains. Fill all three fields ONLY
                    when the candidate states all three. Leave a field null when
@@ -40,10 +42,13 @@ metric_definitions Metrics they discuss. `how_measured` = their explanation of
                    explain it.
 
 incident_markers   Details only someone who was actually there would produce: a
-                   specific week or month, a named role or client, a one-off
-                   event, a decision under pressure. "Three agents resigned
-                   before month-end" is an incident marker. "Team management
-                   requires leadership" is not.
+                   specific week or month, a named role or counterparty, a
+                   one-off event, a decision under pressure. "Three people
+                   resigned the week before the deadline" is an incident
+                   marker. "Good management requires leadership" is not. This
+                   applies to any kind of work — an outage at 3am, the day
+                   before a release, the week of an audit, a deal that stalled
+                   in procurement.
 
 entities           Named systems, teams, processes, geographies, products.
 
