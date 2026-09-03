@@ -16,6 +16,7 @@ from api.config import settings
 from api.llm import complete_json, load_prompt
 from api.schemas import ClaimExtraction, ExtractedClaim
 from api.taxonomy import (
+    GENERAL,
     claim_type_menu,
     classify_claim,
     detect_family,
@@ -169,17 +170,25 @@ async def extract_claims(
     limit = limit or settings.max_claims
     trimmed = (resume_text or "")[:MAX_RESUME_CHARS]
 
-    # Detect first so the prompt can offer the right claim-type menu. The model
-    # may still override the family; we validate whatever comes back.
-    guessed = resolve_family(job_family) if job_family else detect_family(trimmed)
+    # P1-07 — ROUTING PRECEDENCE, decided here and nowhere else:
+    #
+    #   1. the requisition's job_family, when the caller supplied a real one
+    #   2. otherwise deterministic detection from the resume
+    #
+    # There is no third rung. The model's opinion is logged below, never
+    # honoured. A recruiter hiring for a support role gets the support rubric
+    # even when the resume reads like sales, because the requisition is a fact
+    # about the job and detection is only an inference about the candidate.
+    supplied = resolve_family(job_family) if job_family else GENERAL
+    routed = supplied if supplied != GENERAL else detect_family(trimmed)
 
     prompt = load_prompt(
         "extract_claims",
         resume_text=trimmed,
         max_claims=limit,
-        family_key=guessed,
+        family_key=routed,
         family_menu=_family_menu(),
-        claim_type_menu=claim_type_menu(guessed),
+        claim_type_menu=claim_type_menu(routed),
     )
 
     result = await complete_json(
@@ -187,14 +196,22 @@ async def extract_claims(
         ClaimExtraction,
         temperature=settings.llm_temperature_extract,
         fallback=lambda: ClaimExtraction(
-            job_family=guessed, claims=heuristic_claims(trimmed, guessed, limit)
+            job_family=routed, claims=heuristic_claims(trimmed, routed, limit)
         ),
     )
 
-    # If the model picked a different family, honour it only if it is real.
-    family = resolve_family(result.job_family) if result.job_family else guessed
-    if family == "general" and guessed != "general":
-        family = guessed
+    # The model still returns a family because the prompt still asks for one —
+    # it is a useful disagreement signal and it keeps the response schema
+    # stable. It is observed, not obeyed. Routing was already decided above.
+    proposed = resolve_family(result.job_family) if result.job_family else routed
+    if proposed != routed:
+        log.info(
+            "extract: model proposed family %s, routing stays %s (source=%s)",
+            proposed,
+            routed,
+            "requisition" if supplied != GENERAL else "detection",
+        )
+    family = routed
 
     kept: list[ExtractedClaim] = []
     seen_types: set[str] = set()

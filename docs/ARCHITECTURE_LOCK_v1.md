@@ -76,10 +76,15 @@ semantics. Ten cohorts is the ceiling for v1.
 *wording* is generative. The moment claim or probe-level choice enters a prompt,
 the interview stops being reproducible and explainability goes with it.
 
-**Known deviation, logged not fixed:** `extract.py:196` allows the model to
-override the detected family. This violates the boundary above. It is **not** a
-demo blocker because the demo pins `job_family` explicitly, and the fix is
-listed in v2 work below.
+**Known deviation — CLOSED by P1-07.** `extract.py:196` allowed the model to
+override the detected family, which violated the boundary above and made
+routing non-deterministic: the same resume could reach two different rubrics on
+two runs, with nothing recording that it had. Precedence is now fixed in one
+place — requisition, then deterministic detection, and no third rung. The
+model's family is still requested and is logged when it disagrees, because a
+disagreement is a useful signal; it is never honoured. Pinned by
+`test_model_cannot_override_detected_family` and
+`test_routing_is_stable_across_disagreeing_model_runs`.
 
 ## 3. Evaluation principles — FROZEN
 

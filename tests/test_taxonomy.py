@@ -6,11 +6,14 @@ Developer A owns this file. Family-detection tests live here rather than in
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from api.engine import extract
+from api.schemas import ClaimExtraction, ExtractedClaim
 from api.taxonomy import GENERAL, FamilyMatch, detect_family, match_family
 
 GOLDEN = json.loads(
@@ -141,6 +144,69 @@ def test_family_match_is_the_cross_stream_contract():
     assert set(m.per_family_scores) <= set(
         __import__("api.taxonomy", fromlist=["family_keys"]).family_keys()
     )
+
+
+# ---------------------------------------------------------------------------
+# P1-07 — routing precedence. Requisition > detection. The model has no vote.
+# ---------------------------------------------------------------------------
+
+SE_RESUME = (
+    "Backend engineer. Built REST APIs in Python on Postgres, deployed to "
+    "Kubernetes on AWS, and cut p95 latency from 900ms to 180ms."
+)
+
+
+def _stub_model(job_family: str):
+    """A model that confidently returns the wrong family."""
+
+    async def complete_json(prompt, model, **kwargs):
+        return ClaimExtraction(
+            job_family=job_family,
+            claims=[
+                ExtractedClaim(
+                    text="Cut p95 latency from 900ms to 180ms on the checkout service.",
+                    claim_type=None,
+                    verifiable=True,
+                )
+            ],
+        )
+
+    return complete_json
+
+
+def test_supplied_family_always_wins(monkeypatch):
+    """The requisition is a fact about the JOB. Detection is an inference about
+    the candidate, and the model's opinion is neither. A recruiter hiring for
+    support gets the support rubric even when the resume reads like engineering
+    — otherwise the score answers a question nobody asked."""
+    monkeypatch.setattr(extract, "complete_json", _stub_model("sales"))
+    family, _ = asyncio.run(
+        extract.extract_claims(SE_RESUME, job_family="customer_support")
+    )
+    assert family == "customer_support"
+
+
+def test_model_cannot_override_detected_family(monkeypatch):
+    """Closes the deviation logged in docs/ARCHITECTURE_LOCK_v1.md §2.
+
+    extract.py used to accept the model's family whenever it resolved to a real
+    one, which made routing non-deterministic: the same resume could land in two
+    different rubrics on two runs, and nothing recorded that it had happened.
+    """
+    monkeypatch.setattr(extract, "complete_json", _stub_model("hr_recruitment"))
+    family, _ = asyncio.run(extract.extract_claims(SE_RESUME))
+    assert family == "software_engineering" == detect_family(SE_RESUME)
+
+
+def test_routing_is_stable_across_disagreeing_model_runs(monkeypatch):
+    """Two runs over one resume route identically however the model wanders —
+    the acceptance criterion for P1-07."""
+    seen = set()
+    for proposal in ("sales", "banking_operations", "general", None):
+        monkeypatch.setattr(extract, "complete_json", _stub_model(proposal))
+        family, _ = asyncio.run(extract.extract_claims(SE_RESUME))
+        seen.add(family)
+    assert seen == {"software_engineering"}
 
 
 def test_routing_never_scores_presentation():
