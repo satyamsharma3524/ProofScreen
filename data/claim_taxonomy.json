@@ -1194,7 +1194,8 @@
         "roadmap",
         "prd",
         "user research",
-        "discovery",
+        "user interview",
+        "user onboarding",
         "activation",
         "adoption",
         "user retention",
@@ -1202,7 +1203,6 @@
         "north star",
         "user story",
         "epic",
-        "backlog",
         "a/b test"
       ],
       "dimension_weights": {
@@ -1314,7 +1314,8 @@
             "trade-off",
             "deprioritised",
             "sequencing",
-            "cut"
+            "cut",
+            "epic"
           ],
           "probe_focus": [
             "CAUSAL_REASONING",

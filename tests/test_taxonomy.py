@@ -111,6 +111,9 @@ def test_keywords_do_not_match_inside_unrelated_words(text, wrongly):
         ("Handled recruitment and onboarding for two business units.", "hr_recruitment"),
         ("Triaged tickets and drove escalations to resolution time targets.", "customer_support"),
         ("Owned deployments and API latency for the payments service.", "software_engineering"),
+        # y -> ies replaces the stem's y rather than following it, so it cannot
+        # live in the suffix group: "story" + "ies" is not a word.
+        ("Wrote user stories and ran discovery for the checkout roadmap.", "product"),
     ],
 )
 def test_stems_still_match_their_inflections(text, expected):

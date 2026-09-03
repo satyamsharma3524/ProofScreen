@@ -78,6 +78,76 @@ Do not refactor, improve, move or rename this code. Architecture is frozen.
 and P1-07 (requisition precedence) both change what the fixture contains.
 Regenerating before they land means regenerating twice.
 
+### P1-05a — a non-BPO seed persona (spec from Developer A)
+
+Folded into P1-05; it is not a new task and does not change the order above.
+
+**1. Task.** Add one non-BPO persona to the seed so the demo shows the same
+mechanism working in an unrelated job family. Ships with P1-05's single
+regeneration.
+
+**2. Current state.** All three personas (`PRIYA`, `ARJUN`, `ROHIT`) are
+`bpo_operations`, and `seed.py:259` **hardcodes** `job_family="bpo_operations"`
+inside `seed_person()` — so this is a code change, not only data. There is one
+job description constant, `JD_BPO` (`seed.py:52`). A persona dict carries
+`name · role · phone · email · resume · answers`, where `answers` is keyed by
+**claim type**, so a new family needs answers keyed to *its* claim types.
+
+`docs/TRANSFER_DESIGN_AUDIT.md` §6 PS-004 is the standing reason: *"seed
+answers must include one non-BPO family. The audit's whole point is undermined
+if the only demonstration is a call centre."* A single-family seed cannot
+demonstrate that the transfer probe and the six rubrics are cohort-neutral,
+which is the product's central claim.
+
+**3. Files to change.** `seed.py` (yours) · `fixtures/sample_graph.json`
+(generated) · `tests/test_pipeline.py` (yours) if you assert on the new
+persona. **No taxonomy change** — A has already added the `product` family
+(9 total), collision-checked, with six product resumes in
+`tests/data/routing_golden.json`.
+
+**4. Implementation steps.**
+1. Take `job_family` from the persona dict instead of the literal at
+   `seed.py:259`, defaulting to `"bpo_operations"` so the three existing
+   personas are byte-identical afterwards. Verify that before adding anything.
+2. Add `JD_PRODUCT` beside `JD_BPO`, and pass the persona's JD rather than the
+   constant.
+3. Add one persona with `"job_family": "product"`. Claim types available:
+   `outcome_ownership · discovery · launch_delivery · prioritisation ·
+   experimentation · stakeholder_alignment`. Fact keys: `activation_pct ·
+   retention_pct · adoption_pct · monthly_active_users · launch_count ·
+   experiment_count`.
+4. Write their answers to carry real signals — a quantity, a process sequence,
+   one complete cause→action→outcome chain, a specific incident, a defined
+   metric — mirroring how `STRONG_ANSWERS` is built in `tests/conftest.py`.
+5. Optionally add a `product` role profile so the re-ranking demo has a second
+   lens outside BPO. `claim_weights` **must sum to 100**.
+
+**5. Tests.** The three BPO personas' numbers are unchanged (the strongest
+assertion here — it proves step 1 was a no-op for them) · the product persona
+routes to `product` and scores on the product weights · claim weights sum to
+100 · the resume/competence inversion and the two-lens ranking flip still hold.
+
+**6. Verification commands.**
+
+    python seed.py --reset && python scripts/dump_fixture.py && pytest -q
+    python -c "import json;g=json.load(open('fixtures/sample_graph.json'));print({c['job_family'] for c in g['candidates']} if 'candidates' in g else g.keys())"
+
+Record all four candidates' numbers in the PR description, per P1-05.
+
+**7. Risks.**
+- **Do not score presentation.** A product persona invites "communicates well".
+  Forbidden, everywhere, always.
+- Adding `product` to `tests/conftest.py`'s vocabulary would be a **shared-file
+  change** — announce it. The BPO terms there are load-bearing for family
+  detection.
+- `seed.py:259` currently guarantees every seeded candidate is BPO. Anything
+  downstream that quietly assumes one family will surface here; that is the
+  point of the exercise, but expect it.
+- Product's `dimension_weights` cut `TOOL_FAMILIARITY` to a token share, so a
+  product persona's score is driven by causal reasoning and metric ownership.
+  A persona written like an engineer's will score oddly — that is the weights
+  working, not a bug.
+
 **P1-08 is split.** Developer A ships `GET /api/dev/detect` in `dev.py`; you
 ship the `routing_confidence` field on the graph.
 

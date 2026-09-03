@@ -162,6 +162,24 @@ the tree and re-ranks live for any role profile.
 - **Resume heuristics**: a parenthesised year is a job-title heading, a
   comma-heavy line with no verb is a skills list, and bare `lead`/`design` are
   nouns on a resume as often as verbs. All three are excluded explicitly.
+- **OPEN BUG — `taxonomy._INFLECTION` has no y-to-ies plural.** It covers
+  `s|es|ed|ing|er|ers|or|ors|ion|ions|ment|ments`, so a consonant+y keyword
+  never matches its plural: **`query` misses "queries"**, `policy` misses
+  "policies", `user story` misses "user stories". 20 keywords end in `-y`
+  across 7 families (~14 are consonant+y), so an engineer writing "optimised
+  slow queries" earns nothing for `query`. Found while adding the `product`
+  family; **not fixed**, because it changes routing for six families and P1-06
+  already shipped a reviewed golden-set diff. Fixing it means re-running that
+  diff. Owner: A (`taxonomy.py`).
+- **A family's keyword must be a compound wherever another family holds the
+  bare word.** `hr_recruitment` carries `onboarding` and `interview`; a product
+  resume saying "rebuilt user onboarding after twenty user interviews" fed HR
+  two hits and `product` none, and lost a real PM resume to HR by 0.016. Hence
+  `user onboarding` / `user interview` / `user retention` / `feature launch` in
+  the `product` family, and no bare `product` (it double-counts with `product
+  manager` and fires on "Product Support Engineer"). When adding a family,
+  check term collisions **in both directions** — a set intersection misses the
+  case where one family's compound contains another's bare term.
 - **Unit regexes must order alternatives longest-first** or `120ms` compresses
   to `120m`.
 - **Weight renormalisation must absorb the rounding remainder** in its last

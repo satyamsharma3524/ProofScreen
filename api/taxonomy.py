@@ -180,7 +180,19 @@ _INFLECTION = r"(?:s|es|ed|ing|er|ers|or|ors|ion|ions|ment|ments)?"
 
 @lru_cache(maxsize=512)
 def _term_pattern(term: str) -> re.Pattern[str]:
-    body = r"\s+".join(re.escape(part) for part in term.split())
+    """Word-boundary match on a taxonomy term, tolerating one inflection.
+
+    `y -> ies` is handled in the STEM rather than the suffix group, because it
+    replaces the y instead of following it: "user story" has to reach "user
+    stories", and `story` + `ies` is not a word. 20 taxonomy terms end in -y
+    across seven families -- query/queries, policy/policies,
+    discovery/discoveries -- and without this each one silently scores nothing
+    for its own plural.
+    """
+    parts = [re.escape(part) for part in term.split()]
+    if parts[-1].endswith("y"):
+        parts[-1] = parts[-1][:-1] + "(?:y|ies)"
+    body = r"\s+".join(parts)
     return re.compile(rf"(?<!\w){body}{_INFLECTION}(?!\w)")
 
 
