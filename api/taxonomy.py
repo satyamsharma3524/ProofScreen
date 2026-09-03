@@ -219,7 +219,7 @@ def _hits(text: str, keywords: list[str]) -> int:
 # A family needs at least this many distinct keywords before it beats GENERAL.
 # One term is a coincidence; "npa" alone does not make a resume a banking
 # resume. Carried over unchanged from the hit-count router it replaced.
-_MIN_TERMS = 2
+MIN_TERMS = 2
 
 
 class FamilyMatch(NamedTuple):
@@ -313,7 +313,7 @@ def match_family(text: str) -> FamilyMatch:
     best, top = ranked[0]
     runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
 
-    if len(matches[best]) < _MIN_TERMS or top <= 0.0:
+    if len(matches[best]) < MIN_TERMS or top <= 0.0:
         # Too thin to call. Report the terms anyway -- "we saw npa and nothing
         # else" is a more useful thing to show a recruiter than silence.
         return FamilyMatch(GENERAL, 0.0, matches[best], scores)

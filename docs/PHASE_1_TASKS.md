@@ -37,6 +37,7 @@ developer contracts for what a row has to carry.
 | `df9fbf8` | **P1-06** `FamilyMatch` routing | A | 126 → 133 | Golden-set accuracy **90.7% → 98.1%** (M5b target 95%). Cause was substring matching, not the specified IDF: `hr` ⊂ *through*, `api` ⊂ *rapid*, `arr` ⊂ *arranged* |
 | `034b7a6` | **P1-07** requisition precedence | A | 133 → 136 | Routing is deterministic across disagreeing model runs. All three tests verified to **fail** against the previous implementation |
 | `e321265` | *(unplanned)* `product` family + `y → ies` matching | A | 136 → 137 | Family added with **zero Python edits** — the "cohort #101" criterion, first exercised end to end. Inert for existing routing: 0 family changes across 57 pre-existing golden resumes. `y → ies` measured at 0 family changes and 0.0000 confidence drift on all 64 |
+| `p1-08a` | **P1-08a** `GET /api/dev/detect` | A | 137 → 142 | Routing explainable — matched terms, per-family scores, margin and the family it is measured against — at **0 LLM calls** (verified before/after via `/api/dev/llm`). No `schemas.py` edit: returns a plain dict like the other dev GETs. **Completes Developer A's Phase 1 queue** |
 
 **Current measured state**
 
