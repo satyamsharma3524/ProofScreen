@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -90,6 +91,10 @@ class Plan:
     probe_level: ProbeLevel
     target_dimension: Dimension | None = None
     reason: str = ""
+    # Set only for a TRANSFER probe. Chosen here, in the pure function, so the
+    # whole decision is reproducible from stored evidence and `ask_next` has
+    # nothing to do but forward it.
+    transfer: question_engine.TransferSpec | None = None
 
 
 @dataclass
@@ -115,11 +120,47 @@ class ClaimState:
 
     @property
     def levels_left(self) -> list[ProbeLevel]:
-        return [lv for lv in signal_rubrics.PROBE_ORDER if lv not in self.levels_used]
+        """Unused rungs of the ladder. TRANSFER is not one: it is offered only
+        by the stall branch, so it must not appear in the ordinary walk."""
+        return [lv for lv in signal_rubrics.LADDER_ORDER if lv not in self.levels_used]
+
+    @property
+    def transfer_used(self) -> bool:
+        """Derived from the levels actually asked rather than tracked
+        separately — `build_claim_states` reads those back from the questions
+        table, so this survives a process restart mid-interview and cannot
+        drift out of step with what the candidate was really sent."""
+        return ProbeLevel.TRANSFER in self.levels_used
+
+    @property
+    def transfer_available(self) -> bool:
+        """Exactly one transfer probe, and only to a claim that has stalled.
+
+        `stalled` already requires two answers, so an untouched claim can never
+        qualify: TRANSFER never opens a claim. Saturated claims are excluded
+        because there is nothing left to learn, not because they failed.
+        """
+        return (
+            settings.transfer_probe
+            and self.stalled
+            and not self.transfer_used
+            and not self.saturated
+            and bool(self.levels_used)
+        )
 
     @property
     def exhausted(self) -> bool:
-        return self.saturated or self.stalled or not self.levels_left
+        if self.saturated:
+            return True
+        if self.stalled:
+            # A stall used to end the claim outright. Now it earns one transfer
+            # probe first — the answers stopped adding evidence about what they
+            # did, which is precisely when asking about what they did NOT do
+            # separates a thin memory from a thin resume. With TRANSFER_PROBE
+            # off, `transfer_available` is always False and this reduces to the
+            # pre-phase behaviour exactly.
+            return not self.transfer_available
+        return not self.levels_left
 
     def weakest_dimension(self) -> Dimension | None:
         """Lowest-scoring dimension, un-probed ones first, heaviest weight as
@@ -309,6 +350,194 @@ def _dump_dimensions(dimensions: dict[Dimension, DimensionScore]) -> str:
 # THE POLICY
 # ---------------------------------------------------------------------------
 
+_SLOT_WS = re.compile(r"\s+")
+
+
+# Function words that must not be the last thing in a slot value. A cut on a
+# word boundary is not a cut on a clause boundary: "by rewriting the" is a
+# dangling fragment that reads as a broken string to the candidate.
+_DANGLING = frozenset(
+    "a an the and or but by for from to of in on at with into over under as "
+    "than that which while after before because so if when where".split()
+)
+
+
+def _phrase(text: str, limit: int = 70) -> str:
+    """Trim a stored signal down to a slot value for a question.
+
+    Deliberately not `question._short`: that one appends an ellipsis, which is
+    fine when the claim is quoted at the front of a question and wrong here,
+    because these values are read mid-sentence. Cuts on a word boundary and
+    then keeps backing up while the last word is one that cannot end a clause.
+    """
+    clean = _SLOT_WS.sub(" ", text or "").strip().rstrip(".,;:")
+    if len(clean) <= limit:
+        return clean
+    words = clean[:limit].split(" ")[:-1]          # drop the part-word
+    while words and words[-1].strip(".,;:").lower() in _DANGLING:
+        words.pop()
+    return " ".join(words).rstrip(".,;:")
+
+
+# The achievement shape a resume line almost always takes:
+#   "<verb> <subject> from <A> to <B> by <method>"
+# Everything from "from" or "by" onwards is the outcome they reached and the
+# method they used to reach it — i.e. the answer. A transfer probe needs the
+# SUBJECT, so it is cut away.
+_OUTCOME_CLAUSE = re.compile(r"\s+(?:from|by)\s+", re.IGNORECASE)
+
+# Leading past-tense achievement verbs. Regular ones end in "ed"; these are the
+# irregulars that appear at the head of a resume line.
+_IRREGULAR_VERBS = frozenset(
+    "led built grew cut drove ran won kept held made took set sold "
+    "rose spun brought".split()
+)
+
+
+def _problem_from(claim: Claim) -> str:
+    """The subject of another claim, phrased as something to take on.
+
+    A claim line is a RESULT — "Reduced AHT from 480 to 430 seconds by
+    rewriting the call opening scripts". Substituting that whole sentence asks
+    the candidate to take on an already-solved problem complete with its
+    solution, which is incoherent and hands them the answer. Strip the outcome
+    and method clauses and the leading achievement verb, and "AHT" is left:
+    their subject, with nothing about how it went.
+
+    Reads only the claim's own text, so no job family is needed to do it.
+    """
+    clean = _SLOT_WS.sub(" ", claim.text or "").strip()
+    subject = _OUTCOME_CLAUSE.split(clean, maxsplit=1)[0]
+    # A trailing appositive is more outcome: "Owned the payments service
+    # reliability, holding error budget under 0.1%" is a subject plus the
+    # result they got on it. Everything after the first comma goes.
+    subject = subject.split(",", maxsplit=1)[0].strip().rstrip(".,;:")
+
+    head, _, rest = subject.partition(" ")
+    lowered = head.lower()
+    if rest and (lowered.endswith("ed") or lowered in _IRREGULAR_VERBS):
+        subject = rest.strip()
+
+    # A pathological claim can trim to nothing useful; the full line is a worse
+    # question than a short one, but it is better than an empty slot.
+    return _phrase(subject if len(subject) >= 3 else clean)
+
+
+# The method slot sits inside a fixed grammatical frame ("Using $their_method,
+# where would you start?"), so `_method_phrase` has to GUARANTEE what it
+# returns fits there. A clause with its own subject does not.
+_METHOD_MAX_WORDS = 9
+_SUBJECT_HEADS = frozenset("i we they it there he she you my our the".split())
+_CLAUSE_JOINS = (", so ", ", and ", ", but ", " because ", " which ", " so we ")
+
+# When they stated no usable method. Refers to the method instead of quoting
+# it, which is the honest thing to do and reads correctly in the same frame.
+NO_METHOD = "the approach you described"
+
+
+def _method_phrase(text: str) -> str | None:
+    """A stored signal, if and only if it already reads as a method phrase.
+
+    Rejects rather than truncates. A method cut to fit — "Billing complaints
+    were about 40% of our negative feedback, so we" — is worse than not
+    quoting one at all, and truncation is what produced exactly that. The
+    heuristic extractor that runs in fixture mode returns whole sentences here,
+    so this is the common path offline, not an edge case.
+    """
+    clean = _SLOT_WS.sub(" ", text or "").strip().rstrip(".,;:")
+    if not clean:
+        return None
+    lowered = clean.lower()
+    if len(clean.split(" ")) > _METHOD_MAX_WORDS:
+        return None
+    if lowered.split(" ")[0] in _SUBJECT_HEADS:
+        return None
+    if any(join in lowered for join in _CLAUSE_JOINS):
+        return None
+    return clean
+
+
+def _their_method(evidence: AnswerSignals) -> str:
+    """The method the candidate described, in their own words.
+
+    Preference order is evidential strength, not convenience: a complete
+    cause -> action -> outcome chain is the strongest statement that they did
+    the thing, a bare action next, then a process step, then the metric they
+    said they watched. Within a tier, list order — so the same stored evidence
+    always yields the same phrase.
+    """
+    candidates = (
+        [link.action for link in evidence.causal_links if link.is_complete]
+        + [link.action for link in evidence.causal_links]
+        + [step.step for step in evidence.process_steps]
+        + [
+            f"the way you tracked {d.metric}"
+            for d in evidence.metric_definitions
+            if d.how_measured
+        ]
+    )
+    for candidate in candidates:
+        phrase = _method_phrase(candidate or "")
+        if phrase is not None:
+            return phrase
+    # Reached when a claim stalled before stating any usable method, and
+    # whenever the offline heuristics returned sentences rather than phrases.
+    return NO_METHOD
+
+
+def select_transfer(
+    claim: Claim,
+    evidence: AnswerSignals,
+    other_claims: list[Claim],
+) -> question_engine.TransferSpec:
+    """Choose the perturbation for a TRANSFER probe. Pure, deterministic, no
+    DB and no model call.
+
+    NOTE THE SIGNATURE: there is no `job_family` parameter, so a family branch
+    cannot be written in here without changing the contract — which a reviewer
+    will see. Family may reach the *wording* call; it may never reach this one.
+    Two candidates with identical evidence in unrelated industries must get the
+    identical question, or the mechanism is a scenario library in disguise and
+    every new cohort becomes an engineering ticket.
+
+    T1 (substitute the problem) whenever a second claim exists, because both
+    halves then come from the candidate's own resume — that is what makes it
+    cheap and what makes it test whether two lines belong to one person.
+    T3 (invert the outcome) otherwise, which is also the likely path for a thin
+    resume: fabricators narrate success and cannot debug a failure.
+    """
+    method = _their_method(evidence)
+
+    # Sort rather than trusting the caller's order: the target has to be a
+    # function of the claims, not of how they were passed in.
+    others = sorted(
+        (c for c in other_claims if c.id != claim.id),
+        key=lambda c: (c.order_index, c.id),
+    )
+    if others:
+        target = others[0]
+        return question_engine.TransferSpec(
+            operator=question_engine.TransferOperator.T1,
+            their_method=method,
+            other_problem=_problem_from(target),
+            target_claim_id=target.id,
+            basis=(
+                f"T1 substitute-the-problem: their method on {claim.id} applied "
+                f"to the problem they claimed in {target.id}"
+            ),
+        )
+
+    return question_engine.TransferSpec(
+        operator=question_engine.TransferOperator.T3,
+        their_method=method,
+        other_problem="",
+        target_claim_id=None,
+        basis=(
+            f"T3 invert-the-outcome: {claim.id} is the only claim, so there is "
+            "no second problem of their own to substitute"
+        ),
+    )
+
 
 def plan_next(states: list[ClaimState], index: int) -> Plan | None:
     """Decide (claim, probe level, target dimension) for question `index`.
@@ -320,8 +549,10 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
         return None
 
     if not settings.adaptive_probing:
-        # Strict sweep: level by level, claims in weight order.
-        for level in signal_rubrics.PROBE_ORDER:
+        # Strict sweep: level by level, claims in weight order. The ladder
+        # only — a fixed sweep has no stall signal to react to, so there is
+        # nothing for a transfer probe to be a response to.
+        for level in signal_rubrics.LADDER_ORDER:
             for state in states:
                 if level not in state.levels_used:
                     return Plan(state.claim, level, None, "fixed sweep")
@@ -342,6 +573,29 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
     for state in states:
         if state.exhausted:
             continue
+
+        if state.transfer_available:
+            # The claim stopped producing evidence. Spend one question on a
+            # problem they have not solved before giving up on it. Ahead of the
+            # gap logic on purpose: the reason to ask is the stall, not a
+            # dimension gap, and TRANSFER is not on the ladder to be walked to.
+            covered = signal_rubrics.dimensions_for_level(ProbeLevel.TRANSFER)
+            gap = min(
+                covered,
+                key=lambda d: state.dimensions[d].score if d in state.dimensions else 0,
+            )
+            return Plan(
+                state.claim,
+                ProbeLevel.TRANSFER,
+                gap,
+                f"stalled after {state.answers} answers — one transfer probe",
+                transfer=select_transfer(
+                    state.claim,
+                    signal_rubrics.merge_signals(state.answer_signals),
+                    [s.claim for s in states],
+                ),
+            )
+
         remaining = state.levels_left
         gap = state.weakest_dimension()
 
@@ -381,7 +635,7 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
 
         return Plan(state.claim, chosen, gap, reason)
 
-    return None      # every claim saturated, stalled or fully probed
+    return None      # every claim saturated, transferred or fully probed
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +732,7 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         job_family=session.job_family,
         prior_qa=prior,
         target_dimension=plan.target_dimension,
+        transfer=plan.transfer,
     )
 
     question = Question(
@@ -498,9 +753,10 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
     await db.commit()
 
     log.info(
-        "session %s Q%d -> %s / %s (%s)",
+        "session %s Q%d -> %s / %s (%s)%s",
         session.id, question.order_index + 1, plan.claim.claim_type,
         plan.probe_level.value, plan.reason,
+        f" [{plan.transfer.basis}]" if plan.transfer else "",
     )
     return question
 

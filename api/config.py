@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     max_claims: int = 3
     adaptive_probing: bool = True    # false => strict VALIDATION..OUTCOME order
     score_inline: bool = True
+    # One TRANSFER probe to a claim that has stalled, instead of abandoning it
+    # on the spot. false => the pre-phase interview, question for question.
+    transfer_probe: bool = True
 
     # Voice's share of a claim's score, applied only to voice-answered claims.
     # Set to 0 to remove the text/voice asymmetry entirely.

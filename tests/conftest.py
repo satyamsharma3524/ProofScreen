@@ -13,6 +13,7 @@ os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["OPENAI_API_KEY"] = ""              # fixture mode
 os.environ["ENABLE_DEV_ENDPOINTS"] = "true"
 os.environ["ADAPTIVE_PROBING"] = "true"
+os.environ["TRANSFER_PROBE"] = "true"   # tests that need it off use monkeypatch
 os.environ["SCORE_INLINE"] = "true"
 os.environ["MAX_QUESTIONS"] = "12"
 os.environ["MAX_CLAIMS"] = "3"

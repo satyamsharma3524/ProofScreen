@@ -46,14 +46,39 @@ PROBE_LEVEL_DIMENSIONS: dict[ProbeLevel, tuple[Dimension, ...]] = {
     ProbeLevel.INCIDENT: (Dimension.AUTHENTICITY, Dimension.SPECIFICITY),
     ProbeLevel.DECISION: (Dimension.CAUSAL_REASONING, Dimension.PROCESS),
     ProbeLevel.OUTCOME: (Dimension.METRIC_OWNERSHIP, Dimension.CAUSAL_REASONING),
+    # Only two, and deliberately. A transfer answer is about something that
+    # never happened, so it carries no quantities, no tools they used and no
+    # metric to define — asking it to mark SPECIFICITY or TOOL_FAMILIARITY
+    # probed would report coverage the answer cannot contain. What it does
+    # carry is reasoning and sequence. Nothing is subtracted either: claim
+    # scoring runs the rubric over the UNION of a claim's signals, so a
+    # transfer answer can only add. See TRANSFER_DESIGN_AUDIT.md §3 — this is
+    # the paragraph that exists so nobody later "fixes" the missing numbers.
+    ProbeLevel.TRANSFER: (Dimension.CAUSAL_REASONING, Dimension.PROCESS),
 }
 
+# Every probe level the policy may select. `ProbeLevel`'s own docstring makes
+# this tuple the registry: a level not listed here is declared but unreachable.
 PROBE_ORDER: tuple[ProbeLevel, ...] = (
     ProbeLevel.VALIDATION,
     ProbeLevel.OPERATIONAL,
     ProbeLevel.INCIDENT,
     ProbeLevel.DECISION,
     ProbeLevel.OUTCOME,
+    ProbeLevel.TRANSFER,
+)
+
+# The rungs the policy climbs in order — PROBE_ORDER minus TRANSFER.
+#
+# TRANSFER is selectable but it is not a rung. It is an exit ramp, offered once
+# by `plan_next` to a claim that has stalled, and it must never be reached by
+# the ordinary "next unused level" walk: a claim that is still producing
+# evidence should be asked about what it did, not about what it did not do.
+# Anything meaning "the ladder" reads THIS tuple; only the stall branch names
+# TRANSFER. Keeping the two apart is what makes "TRANSFER never opens a claim"
+# a property of the code rather than a convention.
+LADDER_ORDER: tuple[ProbeLevel, ...] = tuple(
+    lv for lv in PROBE_ORDER if lv is not ProbeLevel.TRANSFER
 )
 
 # Published targets. Tune these and the whole product's strictness moves.
@@ -279,8 +304,12 @@ def dimensions_for_level(level: ProbeLevel) -> tuple[Dimension, ...]:
 
 def level_for_dimension(dimension: Dimension) -> ProbeLevel:
     """The earliest probe level designed to elicit this dimension. Lets the
-    policy answer "which question would cover the gap I have?"."""
-    for level in PROBE_ORDER:
+    policy answer "which question would cover the gap I have?".
+
+    Walks the ladder, not PROBE_ORDER: a dimension gap is a reason to ask about
+    what the candidate did, never a reason to hand them a hypothetical.
+    """
+    for level in LADDER_ORDER:
         if dimension in PROBE_LEVEL_DIMENSIONS[level]:
             return level
     return ProbeLevel.VALIDATION
