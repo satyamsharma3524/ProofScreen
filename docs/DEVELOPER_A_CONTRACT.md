@@ -109,6 +109,70 @@ Verification commands must be executable and must actually test the claim. A
 command that asserts something the architecture does not do is a wrong command,
 not a failing feature — see the P1-00 OpenAPI note in `PHASE_1_TASKS.md`.
 
+## Recording what shipped — required, and it binds B too
+
+Developer B cannot read your session. The **Shipped ledger** in
+`PHASE_1_TASKS.md` is the only place either of you learns what the other
+actually changed, so a task is not done until it has a row there.
+
+**Add the ledger row in the same commit as the code.** A row written later is a
+row written from memory.
+
+Every row carries **Commit · Task · Owner · Tests (`before → after`, actual
+counts) · Measured effect**, where the measured effect is **a number, not an
+adjective**.
+
+**Measure before you change, not after.** You cannot state an effect without a
+baseline, and a baseline taken after the edit is not a baseline. This is how
+P1-06 discovered that the IDF weighting it was specified to add would move
+nothing, and that substring matching was the real defect — `hr` inside
+*through*, `api` inside *rapid*. Neither fact was visible without measuring
+first, and both would have been shipped as a confident guess.
+
+Write the golden set, the fixture or the assertion **before** the code it
+judges. A test authored afterwards describes the implementation instead of
+testing it.
+
+Wrong: *"routing is better"* · *"cleaner extraction"*
+Right: *"90.7% → 98.1% on 60 labelled resumes"* · *"0 family changes, 0.0000 drift"*
+
+**Log unplanned work too**, marked *(unplanned)*. The `product` family is the
+cautionary case: correct work, taxonomy-only, and completely invisible to the
+plan until someone wrote it down.
+
+**A regression test must be verified to fail without the fix.** Run it against
+the pre-change file and record that it failed — as P1-07's three tests were.
+
+### Deferrals must be measured, not assumed
+
+If you decide **not** to fix something, the reason has to survive a
+measurement. `y → ies` was deferred as "changes routing for six families";
+measured, it was **0 family changes and 0.0000 confidence drift across 64
+golden entries**, so the deferral was cautious rather than correct. A deferral
+is a claim about impact, and a claim about impact needs a number.
+
+## Two sessions, one stream — the live hazard
+
+Developer A's work has been running in **more than one Claude session at once**.
+The A/B split does not protect against that: both sessions own the same files.
+It has already cost real work — a throwaway measurement script mutated
+`data/claim_taxonomy.json` while the `product` family was still uncommitted,
+crashed before restoring, and destroyed it.
+
+If you are one of several A sessions:
+
+- **Commit before you measure.** Anything uncommitted is one crashed script
+  away from gone.
+- **Never mutate a tracked file from a scratch script.** Copy the repo file
+  into the scratchpad and mutate that, or monkeypatch in memory. If you must,
+  back it up on disk and restore in `try/finally`.
+- **Announce which task you hold** before starting, and re-run `git log` and
+  the full suite when you resume — the tree may have moved under you. P1-06
+  landed mid-task for the other session, which is why `test_taxonomy.py`
+  changed beneath them.
+- **Two sessions will reach different judgments on the same call.** When you
+  find one, resolve it with a measurement, not seniority.
+
 ## Branches and merging
 
 One task per branch: `p1-06-detect-family`, `p1-07-requisition-precedence`,

@@ -190,6 +190,59 @@ Verification commands must be executable and must actually test the claim. A
 command that asserts something the architecture does not do is a wrong command,
 not a failing feature — see the P1-00 OpenAPI note in `PHASE_1_TASKS.md`.
 
+## Recording what shipped — required, and it binds A too
+
+Developer A cannot read your session. The **Shipped ledger** in
+`PHASE_1_TASKS.md` is the only place either of us learns what the other
+actually changed, so a task is not done until it has a row there.
+
+**Add the ledger row in the same commit as the code.** A row written later is a
+row written from memory.
+
+Every row carries:
+
+| Field | Rule |
+|---|---|
+| Commit · Task · Owner | — |
+| Tests | `before → after`, actual counts |
+| Measured effect | **A number, not an adjective** |
+
+**Measure before you change, not after.** You cannot state an effect without a
+baseline, and a baseline taken after the edit is not a baseline. This is not
+ceremony — it is how P1-06 discovered that the IDF weighting it was specified
+to add would have moved nothing, and that substring matching was the real
+defect. Neither fact was visible without measuring first.
+
+Wrong: *"improved ranking explanations"* · *"routing is better"*
+Right: *"90.7% → 98.1% on 60 labelled resumes"* · *"0 family changes, 0.0000 drift"*
+
+**Log unplanned work too.** If you do something that was not a task — you find
+a bug, you fix something adjacent — it gets a row marked *(unplanned)*. Work
+that is invisible to the plan is work A will contradict or redo.
+
+**A regression test must be verified to fail without the fix.** Run it against
+the pre-change file and record that it failed. A test that passes both ways
+records nothing.
+
+### What each of your tasks has to measure
+
+| Task | The number A needs from you |
+|---|---|
+| **P1-09** | Table created; the reset was announced before it ran; existing row counts after re-seed |
+| **P1-10** | An outcome written and read back round-trip; decision ordering preserved (`rejected < shortlisted < interviewed < offered < hired`) |
+| **P1-13** | How many candidates get a non-null `why_ranked`, and that it **cites stored evidence** rather than restating the score in words |
+| **P1-11** | **M4a with its n**, published whichever direction it points — a negative correlation is a finding, not a failure. State it plainly |
+| **P1-12** | Endpoint returns the report; `minimum_n` honoured rather than reporting on thin data |
+| **P1-08b** | `routing_confidence` populated, and its distribution across the seeded candidates — if every candidate reads 1.00, the field is decorative |
+| **P1-05 / P1-05a** | All four candidates' numbers · the resume/competence inversion still holds · the two-lens ranking flip still holds · **TRANSFER still fires for the fabricator** |
+
+That last one is not optional. `seed.py:288` repeats the last answer once a
+pool is exhausted, and that repetition is what makes the fabricator's claims
+stall — which is what makes his three TRANSFER probes fire. It is the demo's
+best moment and it rests on behaviour that looks like a bug. Measured before
+you start: **only Rohit is transfer-probed, three times, every answer scoring
+`signals_found=0`.** If your change moves that number, say so before merging.
+
 ## Branches and merging
 
 One task per branch: `p1-09-candidate-outcomes`, `p1-10-outcome-endpoints`,

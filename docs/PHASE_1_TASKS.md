@@ -14,6 +14,55 @@ the architecture change we agreed not to make.
 
 ---
 
+## Shipped ledger
+
+**This section is the record of what actually shipped.** The task sections below
+are the plan; they are not updated as work lands. Two developers and several
+sessions work in parallel, so a plan that silently doubles as a status report
+leaves everyone guessing which it is.
+
+**Every merged task adds a row, including work that was not a planned task.**
+The `product` family below is exactly that case: it was the right thing to do
+and it was invisible to the plan until it was written down here.
+
+Numbers are **measured, not estimated** — see *Recording what shipped* in both
+developer contracts for what a row has to carry.
+
+| Commit | Task | Owner | Tests | Measured effect |
+|---|---|---|---|---|
+| `f0d47a7` | *(unplanned)* role dimension weights applied, not discarded | A | 102 → 103 | Dimension lenses were accepted, stored and returned with **no effect on any score**. Two roles with identical claim weights now rank differently |
+| `d52f223` | *(unplanned)* cohort-neutral prompts and dev placeholders | A | 103 | Every worked example on the primary LLM path was call-centre. Removed, not parameterised — per-family examples would break the one-taxonomy-entry criterion |
+| `ba43ba1` | **P1-00** frozen-file contract surface | A | 103 → 104 | All Phase 1 `schemas.py` additions in one commit. Zero further edits to that file have been needed since |
+| `7f326e0` | **P1-01 – P1-04** transfer probe | A | 104 → 126 | Stalled claims earn one transfer probe. Closes the hole where the fabricator got **fewer** questions than the honest candidate |
+| `df9fbf8` | **P1-06** `FamilyMatch` routing | A | 126 → 133 | Golden-set accuracy **90.7% → 98.1%** (M5b target 95%). Cause was substring matching, not the specified IDF: `hr` ⊂ *through*, `api` ⊂ *rapid*, `arr` ⊂ *arranged* |
+| `034b7a6` | **P1-07** requisition precedence | A | 133 → 136 | Routing is deterministic across disagreeing model runs. All three tests verified to **fail** against the previous implementation |
+| `e321265` | *(unplanned)* `product` family + `y → ies` matching | A | 136 → 137 | Family added with **zero Python edits** — the "cohort #101" criterion, first exercised end to end. Inert for existing routing: 0 family changes across 57 pre-existing golden resumes. `y → ies` measured at 0 family changes and 0.0000 confidence drift on all 64 |
+
+**Current measured state**
+
+| | |
+|---|---|
+| Tests | **137 passing** |
+| Families | **9** (8 real + `general`) |
+| Golden set | 64 entries — 60 labelled, 4 ambiguous |
+| Routing accuracy | **98.3%** (M5b target 95%) |
+| Known miss | `g21` — one keyword (`npa`) is below the two-term floor. Correct behaviour, generous label |
+
+**Open, logged, not fixed**
+
+- **`seed.py` is single-family.** All three personas are `bpo_operations`,
+  hardcoded at `seed.py:259`. A one-cohort seed cannot demonstrate cohort
+  neutrality, which is the product's central claim. Specced as P1-05a.
+- **The seed answer-repeat and the transfer probe are coupled.** `seed.py:288`
+  repeats the last answer once a pool is exhausted; that repetition is what
+  makes Rohit's claims stall, which is what makes his three TRANSFER probes
+  fire. Measured: only the fabricator is transfer-probed, and he answers with
+  authored evasions scoring `signals_found=0` — the thesis demonstrating
+  itself. **Anyone "fixing" the repetition must re-verify that TRANSFER still
+  fires**, or the demo loses the moment it exists for.
+
+---
+
 ## P1-00 — The single frozen-file commit ★ *(gate for the whole phase)*
 
 Every `api/schemas.py` change in Phase 1, batched into one reviewed commit so
