@@ -16,10 +16,11 @@ Weights live in data, not code, so the PM can retune "team handling is worth
 from __future__ import annotations
 
 import json
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 TAXONOMY_PATH = Path(__file__).resolve().parents[1] / "data" / "claim_taxonomy.json"
 
@@ -163,20 +164,156 @@ def fact_is_stable(family_key: str | None, key: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _hits(text: str, keywords: list[str]) -> int:
+# A keyword matches at a word boundary, optionally carrying one ordinary
+# inflection. Naked substring matching -- what this replaced -- fired on
+# ordinary English: "hr" inside *through* gave every resume an HR point, and
+# inside *shrinkage* made BPO's own keyword donate one; "api" inside *rapid*
+# and *capital*, "arr" inside *arranged*, "deal" inside *dealt*.
+#
+# The suffix group is why this is a prefix match and not `\b...\b`: the
+# taxonomy stores stems, and "recruit" has to keep matching recruiter,
+# recruiting and recruitment. It is deliberately inflections only -- no
+# stemmer, because a stemmer is a dependency and a source of surprises, and
+# this list is auditable by the PM who edits the taxonomy.
+_INFLECTION = r"(?:s|es|ed|ing|er|ers|or|ors|ion|ions|ment|ments)?"
+
+
+@lru_cache(maxsize=512)
+def _term_pattern(term: str) -> re.Pattern[str]:
+    body = r"\s+".join(re.escape(part) for part in term.split())
+    return re.compile(rf"(?<!\w){body}{_INFLECTION}(?!\w)")
+
+
+def _matched(text: str, keywords: list[str]) -> tuple[str, ...]:
+    """Which keywords appear, each counted once however often it occurs.
+
+    Once, not per occurrence: a resume that says SQL eleven times is not eleven
+    times more a data resume, and rewarding repetition would make the router
+    trivially gameable by the same keyword stuffing this product exists to see
+    through.
+    """
     low = (text or "").lower()
-    return sum(1 for kw in keywords if kw in low)
+    return tuple(kw for kw in keywords if _term_pattern(kw).search(low))
 
 
-def detect_family(text: str) -> str:
-    """Best job family for a resume by keyword hit count."""
-    scores = {
-        key: _hits(text, cfg.get("keywords", []))
+def _hits(text: str, keywords: list[str]) -> int:
+    return len(_matched(text, keywords))
+
+
+# ---------------------------------------------------------------------------
+# family routing
+# ---------------------------------------------------------------------------
+
+# A family needs at least this many distinct keywords before it beats GENERAL.
+# One term is a coincidence; "npa" alone does not make a resume a banking
+# resume. Carried over unchanged from the hit-count router it replaced.
+_MIN_TERMS = 2
+
+
+class FamilyMatch(NamedTuple):
+    """Why a resume routed where it did.
+
+    THE CROSS-STREAM CONTRACT (P1-06). `graph.py` reads `confidence` for
+    `CandidateGraph.routing_confidence` and `/api/dev/detect` renders all four
+    fields. Nothing else crosses between the two work streams, so changing this
+    shape is a conversation, not a solo edit.
+
+    `confidence` is a MARGIN, not a probability: how far the winner is clear of
+    the runner-up, 0.0 when nothing matched and 1.0 when only one family scored
+    at all. It answers "was this close?", which is the question a recruiter
+    looking at a mis-routed candidate actually has. It is not a claim about
+    being right.
+    """
+
+    family: str
+    confidence: float
+    matched_terms: tuple[str, ...]
+    per_family_scores: dict[str, float]
+
+
+@lru_cache(maxsize=1)
+def _idf() -> dict[str, float]:
+    """Inverse document frequency over the family vocabularies, at load time.
+
+    A term shared by several families discriminates less; one held by a single
+    family discriminates most. `pipeline` (sales and data_analytics) is worth
+    less than `kubernetes`.
+
+    MEASURED CAVEAT, worth knowing before trusting this: on the taxonomy as it
+    stands 105 of 106 terms belong to exactly one family, so IDF is very nearly
+    a constant and moves almost nothing today. It earns its place as families
+    grow and start to overlap -- and it is honest about what it cannot see. IDF
+    measures ambiguity WITHIN the taxonomy, so it scores `data`, `support`,
+    `model` and `engagement` as maximally distinctive when their real problem is
+    ambiguity against ordinary English. That needs a stop list built from a
+    background corpus; it is not this function's job and it is not in Phase 1.
+    """
+    real = {k: v.get("keywords", []) for k, v in families().items() if k != GENERAL}
+    n = len(real) or 1
+    df: dict[str, int] = {}
+    for keywords in real.values():
+        for term in set(keywords):
+            df[term] = df.get(term, 0) + 1
+    return {term: math.log(n / count) for term, count in df.items()}
+
+
+@lru_cache(maxsize=1)
+def _family_norms() -> dict[str, float]:
+    """L2 norm of each family's IDF vector -- the cosine denominator.
+
+    Without it a family wins by owning a longer keyword list: software
+    engineering has 19 terms and customer support 11, and raw sums would tilt
+    every close call the same way. Square root rather than a plain sum on
+    purpose: dividing by the total would let a three-term family reach a third
+    of its ceiling on one lucky match.
+    """
+    idf = _idf()
+    norms = {}
+    for key, cfg in families().items():
+        if key == GENERAL:
+            continue
+        total = sum(idf.get(term, 0.0) ** 2 for term in set(cfg.get("keywords", [])))
+        norms[key] = math.sqrt(total) or 1.0
+    return norms
+
+
+def match_family(text: str) -> FamilyMatch:
+    """Route a resume to a job family, deterministically and with no model call.
+
+    Pure function of `text` and the taxonomy file. Same input, same output,
+    forever -- which is what makes routing replayable and what lets
+    `/api/dev/detect` explain a decision without spending a token.
+    """
+    idf, norms = _idf(), _family_norms()
+    matches = {
+        key: _matched(text, cfg.get("keywords", []))
         for key, cfg in families().items()
         if key != GENERAL
     }
-    best = max(scores, key=lambda k: scores[k]) if scores else GENERAL
-    return best if scores.get(best, 0) >= 2 else GENERAL
+    scores = {
+        key: round(sum(idf.get(t, 0.0) for t in terms) / norms[key], 6)
+        for key, terms in matches.items()
+    }
+    if not scores:
+        return FamilyMatch(GENERAL, 0.0, (), {})
+
+    ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+    best, top = ranked[0]
+    runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
+
+    if len(matches[best]) < _MIN_TERMS or top <= 0.0:
+        # Too thin to call. Report the terms anyway -- "we saw npa and nothing
+        # else" is a more useful thing to show a recruiter than silence.
+        return FamilyMatch(GENERAL, 0.0, matches[best], scores)
+
+    confidence = round((top - runner_up) / top, 6)
+    return FamilyMatch(best, confidence, matches[best], scores)
+
+
+def detect_family(text: str) -> str:
+    """Best job family for a resume. Signature preserved for existing callers;
+    anything needing the reasoning calls `match_family()`."""
+    return match_family(text).family
 
 
 def classify_claim(text: str, family_key: str | None = None) -> str:

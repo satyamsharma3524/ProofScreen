@@ -52,7 +52,7 @@ PROBE_LEVEL_DIMENSIONS: dict[ProbeLevel, tuple[Dimension, ...]] = {
     # probed would report coverage the answer cannot contain. What it does
     # carry is reasoning and sequence. Nothing is subtracted either: claim
     # scoring runs the rubric over the UNION of a claim's signals, so a
-    # transfer answer can only add. See TRANSFER_DESIGN_AUDIT.md §3 — this is
+    # transfer answer can only add. See docs/TRANSFER_DESIGN_AUDIT.md §3 — this is
     # the paragraph that exists so nobody later "fixes" the missing numbers.
     ProbeLevel.TRANSFER: (Dimension.CAUSAL_REASONING, Dimension.PROCESS),
 }

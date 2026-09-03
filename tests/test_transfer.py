@@ -135,7 +135,7 @@ def test_transfer_question_works_with_no_api_key():
 
 def test_the_transfer_brief_forbids_asking_for_numbers():
     """A transfer answer legitimately contains no quantities and no tools used
-    (TRANSFER_DESIGN_AUDIT.md §3). The brief must say so, or the model asks for
+    (docs/TRANSFER_DESIGN_AUDIT.md §3). The brief must say so, or the model asks for
     figures about a hypothetical and invites invention."""
     brief = PROBE_BRIEFS[ProbeLevel.TRANSFER]
     assert "Do NOT ask for numbers" in brief

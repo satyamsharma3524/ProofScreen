@@ -1,0 +1,88 @@
+{
+  "_note": [
+    "P1-06 golden set for taxonomy.match_family(). 50 resume fragments.",
+    "",
+    "AUTHORED BEFORE THE SCORER WAS WRITTEN, deliberately. A golden set written",
+    "after the implementation is a description of the implementation, not a test",
+    "of it. If an entry here is wrong, fix the entry and say so in the PR — do",
+    "not fix it by widening the taxonomy until it passes.",
+    "",
+    "Entries carrying `family` are scored for accuracy (M5b).",
+    "Entries carrying `ambiguous: true` are EXCLUDED from accuracy and assert",
+    "low confidence instead: they are genuinely two families at once, and a",
+    "router that claims certainty about them is lying. `plausible` records which",
+    "families a human would accept.",
+    "",
+    "The prose is deliberately not keyword-stuffed. Real resumes bury two or",
+    "three signals in ordinary sentences, and a router tuned on dense keyword",
+    "soup will look far better here than it does in production."
+  ],
+  "resumes": [
+    {"id": "g01", "family": "bpo_operations", "text": "Team Lead for an international voice process. Managed rosters for 42 agents across three shifts and ran weekly calibration with the quality team."},
+    {"id": "g02", "family": "bpo_operations", "text": "Handled inbound and outbound campaigns for a UK telecom client. Brought AHT down from 8 minutes to 5 and kept occupancy above 85%."},
+    {"id": "g03", "family": "bpo_operations", "text": "Six years in BPO operations. Owned shrinkage and abandon rate for a 200-seat call centre in Gurgaon."},
+    {"id": "g04", "family": "bpo_operations", "text": "Managed nesting batches for new hires on a night shift voice process before they moved to the production floor."},
+    {"id": "g05", "family": "bpo_operations", "text": "Operations manager at a call center supporting a US retail client. Reported CX metrics to the client every Monday."},
+    {"id": "g06", "family": "bpo_operations", "text": "Ran workforce planning for a 24x7 contact centre. Roster design, occupancy targets and shrinkage control across two sites."},
+
+    {"id": "g07", "family": "customer_support", "text": "Support engineer handling tickets in Zendesk. Cut first response time from 9 hours to under 2."},
+    {"id": "g08", "family": "customer_support", "text": "Led the escalation desk for a SaaS product. Owned resolution time for P1 issues and ran the chat support queue."},
+    {"id": "g09", "family": "customer_support", "text": "Customer success manager for 60 enterprise accounts, working mostly out of Freshdesk and email support."},
+    {"id": "g10", "family": "customer_support", "text": "Helpdesk lead. Triaged tickets, wrote macros for the top ten issue types, and reduced reopen rate by a third."},
+    {"id": "g11", "family": "customer_support", "text": "Managed a support team of 12 covering chat support and email support for an e-commerce platform."},
+    {"id": "g12", "family": "customer_support", "text": "Technical support specialist. Took escalation from tier 1 and tracked resolution time week over week."},
+
+    {"id": "g13", "family": "sales", "text": "Inside sales rep carrying a quota of $1.2M ARR. Built pipeline through outbound prospecting and closed 34 deals last year."},
+    {"id": "g14", "family": "sales", "text": "B2B field sales across western India. Consistently at 110% of target with a conversion rate of 22% from qualified leads."},
+    {"id": "g15", "family": "sales", "text": "Managed the sales funnel for a fintech product, from first lead to closing, and grew revenue 40% year on year."},
+    {"id": "g16", "family": "sales", "text": "Account executive. Owned a pipeline of 80 prospects and hit quota six quarters running."},
+    {"id": "g17", "family": "sales", "text": "Regional sales manager. Grew ARR from $400K to $1.1M and coached four inside sales reps on closing technique."},
+    {"id": "g18", "family": "sales", "text": "Ran the deal desk. Pricing approvals, quota planning and revenue forecast reviews for the field sales org."},
+
+    {"id": "g19", "family": "banking_operations", "text": "Credit analyst in retail banking. Reviewed loan files for underwriting and cleared KYC exceptions before disbursement."},
+    {"id": "g20", "family": "banking_operations", "text": "Branch operations manager. Owned CASA growth, daily reconciliation and audit compliance for a metro branch."},
+    {"id": "g21", "family": "banking_operations", "text": "Worked in NPA recovery for a housing finance company, coordinating with legal on more than 300 accounts."},
+    {"id": "g22", "family": "banking_operations", "text": "Processed insurance claims and mutual fund transactions at a bank's back office in Mumbai."},
+    {"id": "g23", "family": "banking_operations", "text": "Compliance officer for a lending business. Ran KYC audits and reported exceptions to the risk committee."},
+    {"id": "g24", "family": "banking_operations", "text": "Loan operations executive. Handled disbursement checks, credit memos and monthly reconciliation."},
+
+    {"id": "g25", "family": "software_engineering", "text": "Backend engineer working in Python and Java. Built REST APIs on Postgres and deployed to Kubernetes on AWS."},
+    {"id": "g26", "family": "software_engineering", "text": "Full stack developer. React on the frontend, Node on the backend. Cut p95 latency from 900ms to 180ms."},
+    {"id": "g27", "family": "software_engineering", "text": "Built event pipelines on Kafka and Redis, running as microservices behind an API gateway."},
+    {"id": "g28", "family": "software_engineering", "text": "Senior engineer. Owned the deploy tooling and improved throughput of the ingestion service fourfold."},
+    {"id": "g29", "family": "software_engineering", "text": "Developer on a payments platform. Wrote the reconciliation service in Java against a Postgres database."},
+    {"id": "g30", "family": "software_engineering", "text": "Frontend developer building React interfaces against internal APIs. Shipped weekly."},
+
+    {"id": "g31", "family": "data_analytics", "text": "Data analyst. Built dashboards in Tableau and Power BI on top of a Snowflake warehouse."},
+    {"id": "g32", "family": "data_analytics", "text": "Built ETL pipelines with dbt and Airflow, and maintained the reporting layer in SQL."},
+    {"id": "g33", "family": "data_analytics", "text": "Machine learning engineer. Trained a demand forecast model and took it to production."},
+    {"id": "g34", "family": "data_analytics", "text": "Analytics lead. Owned the SQL reporting stack and a Looker dashboard suite for the commercial team."},
+    {"id": "g35", "family": "data_analytics", "text": "Wrote SQL against the data warehouse to produce weekly reporting for the operations group."},
+    {"id": "g36", "family": "data_analytics", "text": "Data engineer. Airflow DAGs, dbt models and a warehouse feeding Tableau extracts."},
+
+    {"id": "g37", "family": "hr_recruitment", "text": "Recruiter hiring for engineering roles. Sourcing on Naukri and Shine, managed offer rollout and joinee follow-up."},
+    {"id": "g38", "family": "hr_recruitment", "text": "HRBP for a 400-person org. Owned attrition, engagement surveys and the onboarding programme."},
+    {"id": "g39", "family": "hr_recruitment", "text": "Talent acquisition specialist. Ran interview panels and reduced time to offer from 40 days to 22."},
+    {"id": "g40", "family": "hr_recruitment", "text": "HR generalist handling payroll, onboarding and exit formalities for two business units."},
+    {"id": "g41", "family": "hr_recruitment", "text": "Led campus hiring. Sourcing, interview coordination and joinee onboarding for 120 offers."},
+    {"id": "g42", "family": "hr_recruitment", "text": "Recruitment manager. Built a sourcing team of six and cut attrition in the first 90 days by half."},
+
+    {"id": "g43", "family": "general", "text": "Experienced professional with strong communication skills and a consistent track record of delivering results in fast-paced environments."},
+    {"id": "g44", "family": "general", "text": "Managed a team of 20 and improved process efficiency across the department over two years."},
+    {"id": "g45", "family": "general", "text": "MBA graduate seeking opportunities with a growth-oriented organisation. Strong analytical and leadership abilities."},
+    {"id": "g46", "family": "general", "text": "Project manager. Ran daily stand-ups, tracked deliverables against milestones and presented to stakeholders every week."},
+    {"id": "g47", "family": "general", "text": "Operations executive. Handled vendor coordination, invoice follow-up and the daily MIS for the regional office."},
+
+    {"id": "g51", "family": "general", "text": "Drove client engagement through structured quarterly reviews with each account owner."},
+    {"id": "g52", "family": "general", "text": "Arranged vendor contracts and dealt with escalations through the regional office."},
+    {"id": "g53", "family": "general", "text": "Rapid capital deployment was reviewed by the risk committee at the end of each quarter."},
+    {"id": "g54", "family": "general", "text": "Re-engineered the intake process and delivered rapid improvements in turnaround time."},
+    {"id": "g55", "family": "general", "text": "Reacted quickly to shifting priorities and supported multiple workstreams through the transition."},
+    {"id": "g56", "family": "bpo_operations", "text": "Owned shrinkage and occupancy for a 150-seat process, reporting the numbers through the daily huddle."},
+    {"id": "g57", "family": "hr_recruitment", "text": "Recruiter for technology roles. Owned the recruiting funnel from sourcing through offer rollout."},
+
+    {"id": "g48", "ambiguous": true, "plausible": ["sales", "data_analytics"], "text": "Sales operations analyst. Built a pipeline dashboard in Tableau and reported quota attainment to the field sales team."},
+    {"id": "g49", "ambiguous": true, "plausible": ["bpo_operations", "customer_support"], "text": "Support operations lead in a call centre. Owned ticket escalation and AHT for the voice process."},
+    {"id": "g50", "ambiguous": true, "plausible": ["banking_operations", "data_analytics"], "text": "Business analyst for a bank. Built SQL reporting on loan disbursement and audit exception data."}
+  ]
+}

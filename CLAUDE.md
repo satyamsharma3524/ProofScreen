@@ -29,15 +29,21 @@ Both push to `main` hourly, which only stays conflict-free because ownership is
 strict. **Never edit the other developer's files** — that is rule 3 below, and
 it is the whole mechanism.
 
-- **Developer B's brief is `docs/DEVELOPER_B_CONTRACT.md`** — ownership, task
-  order, branch names, and a precondition to verify *before* branching. It is
+- **Each developer has a brief: `docs/DEVELOPER_A_CONTRACT.md` (intelligence
+  path — routing, questioning, evidence) and `docs/DEVELOPER_B_CONTRACT.md`
+  (everything the recruiter reads).** Each carries ownership, task order,
+  branch names, and a precondition to verify *before* branching. Both are
   subordinate to `EXECUTION_STANDARD.md`, `ARCHITECTURE_LOCK_v1.md` and
   `PHASE_1_TASKS.md`; where they conflict, they win.
-- **Ownership has two sources and they disagree.** The table in `README.md`
-  assigns `engine/signals.py` to B; the do-not-edit list in
-  `DEVELOPER_B_CONTRACT.md` assigns it to A. **For Phase 1 the contract wins**,
-  and `PHASE_1_TASKS.md` P1-03 says why: *A edits, B reviews the hunk.* Settled
-  — do not re-litigate it per task.
+- **The only interface between the two streams is `FamilyMatch`**, the
+  NamedTuple A publishes from `taxonomy.py` in P1-06. Do not change its shape
+  once B has started P1-08b without telling them.
+- **Ownership has three sources and they disagree.** The table in `README.md`
+  assigns `engine/signals.py` to B and `models.py` / `ids.py` to A; both
+  contracts say the opposite. **For Phase 1 the contracts win** — they are
+  per-file, explicit and mutually consistent. `PHASE_1_TASKS.md` P1-03 says why
+  for `signals.py`: *A edits, B reviews the hunk.* Settled — do not
+  re-litigate it per task.
 - **`api/schemas.py` is the tripwire.** Frozen, two owners, and Phase 1 needs
   **zero** edits to it — P1-00 pre-landed every field both developers need. If
   a task seems to require opening it, the task is wrong. Stop and raise it.

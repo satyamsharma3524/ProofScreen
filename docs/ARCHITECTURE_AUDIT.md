@@ -39,7 +39,7 @@ covered here, per instruction.
 
 **1. `orchestrator.py` (816 lines) carries five distinct responsibilities in
 one file with one owner.**
-[`api/engine/orchestrator.py`](api/engine/orchestrator.py) currently holds:
+[`api/engine/orchestrator.py`](../api/engine/orchestrator.py) currently holds:
    a. the pure policy (`Plan`, `ClaimState`, `plan_next`, lines 87–138,
       313–384) — genuinely side-effect-free already;
    b. a hand-rolled repository layer (`_claims_of`, `_questions_of`,
@@ -58,8 +58,8 @@ one file with one owner.**
 
 **2. The DimensionScore JSON codec is duplicated, not shared.**
 `orchestrator._load_dimensions`/`_dump_dimensions`
-([orchestrator.py:286–305](api/engine/orchestrator.py#L286)) and
-`graph._load_dimensions` ([graph.py:70–81](api/engine/graph.py#L70)) are two
+([orchestrator.py:286–305](../api/engine/orchestrator.py#L286)) and
+`graph._load_dimensions` ([graph.py:70–81](../api/engine/graph.py#L70)) are two
 independently written functions doing the same job — deserialising
 `ClaimScore.dimensions_json` into `dict[Dimension, DimensionScore]` — with
 different signatures (one keyed by `Dimension`, one by `str`) and no shared
@@ -71,7 +71,7 @@ has to be remembered twice.
 (`submit_answer` line 701, `score_pending` line 721, `finalize` line 750)
 instead of at module scope, and `graph.py` imports
 `api.engine.evidence.signals_of` **inside a per-row loop**
-([graph.py:268](api/engine/graph.py#L268)) instead of once at the top of the
+([graph.py:268](../api/engine/graph.py#L268)) instead of once at the top of the
 file. This was verified empirically, not assumed: a throwaway venv imported
 `api.engine.graph` and `api.engine.orchestrator` at module scope with no
 special ordering and it worked cleanly — neither module actually references
@@ -84,9 +84,9 @@ the pattern already looks like "we did this on purpose."
 **4. `signals_of()` / fact rehydration is read from two different tables
 with no shared invariant.** Consistency's `known_facts` (used to detect
 contradictions,
-[orchestrator.py:193](api/engine/orchestrator.py#L193)) reads from the
+[orchestrator.py:193](../api/engine/orchestrator.py#L193)) reads from the
 `session_facts` table. The evidence graph's per-claim `facts` list
-([graph.py:267–273](api/engine/graph.py#L267)) reads
+([graph.py:267–273](../api/engine/graph.py#L267)) reads
 `Response.signals_json` and pulls `.facts` back out through
 `evidence.signals_of()`. Both are *supposed* to represent "facts this
 candidate has stated," but they are read from two different persisted
@@ -96,31 +96,31 @@ asserts they stay in agreement as the schema evolves.
 **5. `scoring.claim_score()` is called from two different shapes of input,
 and the signature itself is the evidence.** Its type is
 `Mapping[Dimension, DimensionScore] | Mapping[Dimension, int]`
-([scoring.py:114](api/engine/scoring.py#L114)). `evidence.score_response()`
+([scoring.py:114](../api/engine/scoring.py#L114)). `evidence.score_response()`
 calls it once per **answer**, over the six freshly-scored dimensions
-([evidence.py:363](api/engine/evidence.py#L363)). `orchestrator.recompute_claim`
+([evidence.py:363](../api/engine/evidence.py#L363)). `orchestrator.recompute_claim`
 calls it again over the six **claim-level, merged-across-answers** dimensions
-([orchestrator.py:630](api/engine/orchestrator.py#L630)). Same function name,
+([orchestrator.py:630](../api/engine/orchestrator.py#L630)). Same function name,
 same module, two conceptually different callers ("answer score" vs "claim
 score") sharing one union-typed signature. This is exactly the kind of
 implicit contract Phase 2 should make explicit.
 
 **6. `evidence._nodes_from()` types its own core input as `dict[Dimension,
-"object"]`** ([evidence.py:286–287](api/engine/evidence.py#L286)) — a
+"object"]`** ([evidence.py:286–287](../api/engine/evidence.py#L286)) — a
 deliberately untyped forward reference to `object`, for a value that is in
 practice always `dict[Dimension, DimensionScore]`. This is the one place in
 the "signal" pipeline where the type contract is dropped rather than
 declared.
 
 **7. `merge_dimension_scores()` in `scoring.py` is dead code.**
-([scoring.py:79–105](api/engine/scoring.py#L79)) It is explicitly marked
+([scoring.py:79–105](../api/engine/scoring.py#L79)) It is explicitly marked
 `DEPRECATED` in its own docstring and superseded by
 `engine.signals.score_claim()`. A repo-wide grep found zero callers, in
 tests or production code. Flagged for removal — not removed here, since
 removing working (if unused) code isn't part of this audit's mandate.
 
 **8. `whatsapp.py` bypasses the `Depends(get_db)` convention used
-everywhere else.** [`routers/whatsapp.py:30`](api/routers/whatsapp.py#L30)
+everywhere else.** [`routers/whatsapp.py:30`](../api/routers/whatsapp.py#L30)
 imports `SessionLocal` directly, while `sessions.py`, `recruiter.py`,
 `dev.py` and `candidates.py` all take `db: AsyncSession = Depends(get_db)`.
 The reason is legitimate and already documented in `CLAUDE.md` ("the webhook
@@ -174,7 +174,7 @@ Stage D  Persisted evidence            EvidenceNode (per answer×dimension row)
 Stage E  Aggregate / dashboard         CandidateGraph, DimensionScore (radar), CandidateSummary
 ```
 
-`ScoreRequest`/`ScoreResult` ([schemas.py:293–321](api/schemas.py#L293)) is
+`ScoreRequest`/`ScoreResult` ([schemas.py:293–321](../api/schemas.py#L293)) is
 already the right model for a typed contract — it's the actual "the seam"
 object the two devs agreed on, it's documented, and both directions (A→B,
 B→A) are named types. The other four stages should be brought up to that
@@ -187,7 +187,7 @@ same standard.
    `evidence.enforce_verbatim()` and "verbatim-checked, safe to score" after
    it — with nothing in the type system distinguishing the two. In practice
    there is exactly one call site today
-   ([evidence.py:341–348](api/engine/evidence.py#L341)) and it is
+   ([evidence.py:341–348](../api/engine/evidence.py#L341)) and it is
    disciplined about the order (`raw = await complete_json(...)` →
    `sig, dropped = enforce_verbatim(raw, answer)` → only `sig` reaches
    scoring). The risk is entirely about the *next* call site someone adds.
@@ -204,7 +204,7 @@ same standard.
 2. **Stage C has no named type.** `dict[Dimension, DimensionScore]` is
    passed between `signals.py`, `scoring.py`, `evidence.py`, `orchestrator.py`
    and `graph.py` as a bare dict literal every time, and in one place
-   ([evidence.py:286](api/engine/evidence.py#L286)) as `dict[Dimension,
+   ([evidence.py:286](../api/engine/evidence.py#L286)) as `dict[Dimension,
    "object"]` — the type is dropped entirely. **Recommendation:** a single
    type alias,
    ```python
@@ -287,7 +287,7 @@ paper:
 - Both get the `DimensionScores` codec from `signals.py` (Phase 2 #3),
   instead of each having its own copy.
 - `graph.py` promotes its per-row `from api.engine.evidence import
-  signals_of` ([graph.py:268](api/engine/graph.py#L268)) to a top-level
+  signals_of` ([graph.py:268](../api/engine/graph.py#L268)) to a top-level
   import — verified safe (Phase 1's empirical check), and it's also a minor
   performance fix since the import currently re-runs on every question/answer
   row in the loop.
@@ -373,7 +373,7 @@ long as `orchestrator.py`'s own functions that use them still work.
 
 **New file: `engine/policy.py`** — the pure state machine, extracted
 verbatim (no logic changes): `Plan`, `ClaimState`, `plan_next`
-([orchestrator.py:87–138, 313–384](api/engine/orchestrator.py#L87)). This is
+([orchestrator.py:87–138, 313–384](../api/engine/orchestrator.py#L87)). This is
 the single highest-value move in the plan: `plan_next` takes
 `list[ClaimState]` and an `int` and returns `Plan | None` — it already has
 zero DB and zero LLM dependency, so this extraction promotes it to a fifth
@@ -387,7 +387,7 @@ so `tests/test_policy.py`'s import is untouched.
 **New file: `engine/session_repo.py`** — the raw-SQL helpers and the
 DB-touching parts of state assembly: `_claims_of`, `_questions_of`,
 `_open_question`, `_qa_rows`, `known_facts`, `build_claim_states`
-([orchestrator.py:146–283](api/engine/orchestrator.py#L146)). These already
+([orchestrator.py:146–283](../api/engine/orchestrator.py#L146)). These already
 share one property today (they only read; `orchestrator.py` proper is where
 writes happen) — separating them makes that property visible and testable
 in isolation with an in-memory sqlite session and no LLM/scoring
@@ -396,8 +396,8 @@ involvement at all.
 **Shared home for the codec (Phase 2 #3): `engine/signals.py`** — 
 `dump_dimension_scores`/`load_dimension_scores`, replacing
 `orchestrator._load_dimensions`/`_dump_dimensions`
-([orchestrator.py:286–305](api/engine/orchestrator.py#L286)) and
-`graph._load_dimensions` ([graph.py:70–81](api/engine/graph.py#L70)) with
+([orchestrator.py:286–305](../api/engine/orchestrator.py#L286)) and
+`graph._load_dimensions` ([graph.py:70–81](../api/engine/graph.py#L70)) with
 one implementation each module imports.
 
 **`engine/orchestrator.py` (slimmed, ~450–500 lines)** — keeps everything

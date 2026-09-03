@@ -3,7 +3,7 @@
 Two developers share this repo and push to `main` hourly. These documents are
 what keep that conflict-free, so the reading order below is not a suggestion:
 `EXECUTION_STANDARD.md` §1 requires the frozen documents to be read *before*
-proposing code, and `DEVELOPER_B_CONTRACT.md` declares itself subordinate to
+proposing code, and both developer contracts declare themselves subordinate to
 three of them.
 
 `CLAUDE.md` and `README.md` stay at the repo root. Everything else is here.
@@ -24,12 +24,14 @@ three of them.
 
 Then whichever of the two contracts applies to you:
 
+- **Developer A** — [DEVELOPER_A_CONTRACT.md](DEVELOPER_A_CONTRACT.md). The
+  intelligence path: routing, what gets asked, how an answer becomes evidence.
 - **Developer B** — [DEVELOPER_B_CONTRACT.md](DEVELOPER_B_CONTRACT.md).
-  Ownership, task order, branch names, and a precondition to verify *before
-  branching*.
-- **Developer A** — ownership table in [../README.md](../README.md), overridden
-  for Phase 1 by the do-not-edit list in `DEVELOPER_B_CONTRACT.md`. See the
-  ownership note below.
+  Everything the recruiter reads.
+
+Each contract carries its own ownership list, task order, branch names, and a
+precondition to verify **before branching**. They are the authority on who may
+edit what — see the ownership note below.
 
 ---
 
@@ -62,13 +64,19 @@ wins.
 
 ## Two things a new session gets wrong
 
-**Ownership has two sources and they disagree.** The table in `../README.md`
-assigns `engine/signals.py` to Developer B. The do-not-edit list in
-`DEVELOPER_B_CONTRACT.md` assigns it to A. For Phase 1 the contract wins, and
-`PHASE_1_TASKS.md` P1-03 says why: *"Owner A, **B reviews the `signals.py`
+**Ownership has three sources and they disagree.** The table in
+`../README.md` assigns `engine/signals.py` to Developer B and `models.py` /
+`ids.py` to A; both contracts say the opposite. **For Phase 1 the contracts
+win** — they are per-file, explicit, and mutually consistent. `PHASE_1_TASKS.md`
+P1-03 says why for `signals.py`: *"Owner A, **B reviews the `signals.py`
 hunk**"* — A edits, B reviews. Do not re-litigate this per task.
 
-**The planning-to-code ratio is a known risk, already logged.** 19 documents
+The one interface between the two streams is **`FamilyMatch`**, the NamedTuple
+A publishes from `taxonomy.py` in P1-06. B reads it in `graph.py` and calls
+into A's modules for nothing else. Its shape must not change after B starts
+P1-08b without telling them.
+
+**The planning-to-code ratio is a known risk, already logged.** 21 documents
 sit in this folder. `EXECUTION_STANDARD.md` proposes C2 as the guardrail — *no
 phase may add more planning documents than it merges implementation tasks* —
 and notes Phase 1's documentation budget is already spent. Adding another

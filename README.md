@@ -378,6 +378,16 @@ and then the dashboard Dev B built against it disagrees with the live API.
 
 ---
 
+## Documentation
+
+Process, architecture and phase plans live in **[docs/](docs/)** — start at
+[docs/README.md](docs/README.md) for the binding reading order and which
+documents are superseded history rather than instructions. `CLAUDE.md` and this
+file are the only markdown at the repo root.
+
+Developer B's brief is [docs/DEVELOPER_B_CONTRACT.md](docs/DEVELOPER_B_CONTRACT.md);
+the active plan is [docs/PHASE_1_TASKS.md](docs/PHASE_1_TASKS.md).
+
 ## File ownership
 
 `api/schemas.py` is the **only** file with two owners, and it is frozen.
@@ -393,6 +403,17 @@ and then the dashboard Dev B built against it disagrees with the live API.
 | `routers/candidates.py`, `sessions.py`, `whatsapp.py`, `dev.py` | `seed.py`, `scripts/`, `tests/` |
 | `prompts/extract_claims.txt`, `generate_question.txt` | `prompts/extract_signals.txt` |
 | `Dockerfile`, `docker-compose.yml`, deploy | the Next.js dashboard (separate repo) |
+
+> **Phase 1 overrides three rows of this table.**
+> [docs/DEVELOPER_A_CONTRACT.md](docs/DEVELOPER_A_CONTRACT.md) and
+> [docs/DEVELOPER_B_CONTRACT.md](docs/DEVELOPER_B_CONTRACT.md) give B
+> `api/models.py` and `api/ids.py` (for the `candidate_outcomes` table in
+> P1-09) and put `engine/signals.py` on B's do-not-edit list. For
+> `signals.py`, `docs/PHASE_1_TASKS.md` P1-03 states the arrangement: **A
+> edits, B reviews the hunk.** Where the contract and this table disagree, the
+> contracts win for the duration of Phase 1. Do not re-litigate it per task.
+> The one cross-stream interface is `FamilyMatch`, published from
+> `api/taxonomy.py` in P1-06.
 
 **The seam is the `responses` table.** A fills `raw_text`; B fills
 `signals_json`. In code it is one function:

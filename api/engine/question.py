@@ -44,7 +44,7 @@ _WS = re.compile(r"\s+")
 
 class TransferOperator(str, Enum):
     """The perturbation applied to the candidate's own reasoning. T2, T4 and T5
-    are designed in TRANSFER_DESIGN_AUDIT.md §3 and deliberately not built."""
+    are designed in docs/TRANSFER_DESIGN_AUDIT.md §3 and deliberately not built."""
 
     T1 = "T1"      # substitute the problem: their method, their OTHER claim
     T3 = "T3"      # invert the outcome: the number moved against them
@@ -160,7 +160,7 @@ FALLBACK_QUESTIONS: dict[ProbeLevel, str] = {
 # The offline transfer question. A template rather than a fixed sentence,
 # because the substance has to come from the candidate's own claims — a
 # hand-written scenario would be a per-cohort authoring cost, which is the
-# failure mode TRANSFER_DESIGN_AUDIT.md §5 exists to prevent.
+# failure mode docs/TRANSFER_DESIGN_AUDIT.md §5 exists to prevent.
 TRANSFER_FALLBACKS: dict[TransferOperator, Template] = {
     # "taken on", not "solved" or "moved": the slot holds another claim's
     # subject, which may be a metric, a system or a team, and the wording has
