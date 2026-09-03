@@ -127,19 +127,54 @@ async def create_role(
 async def resolve_weights(
     db: AsyncSession, job_family: str, role_id: str | None
 ) -> tuple[dict[str, float], dict[str, float], RoleRef | None]:
-    """(claim weights, dimension weights, which role produced them)."""
+    """(claim weights, dimension weight OVERRIDE, which role produced them).
+
+    The second element is the role's EXPLICIT dimension weights, or {} when the
+    role did not set any. Empty means "use the family defaults that were already
+    applied when the claim was scored" — so an empty dict lets the caller keep
+    the stored claim score untouched instead of recomputing it to the same
+    number. See `_claim_score_under()`.
+    """
     family = resolve_family(job_family)
     if role_id:
         role = await db.get(JobRole, role_id)
         if role is not None:
             claim_w = json.loads(role.claim_weights_json or "{}") or default_claim_weights(family)
-            dim_w = json.loads(role.dimension_weights_json or "{}") or dimension_weights(family)
+            dim_w = json.loads(role.dimension_weights_json or "{}")
             return (
                 claim_w,
                 dim_w,
                 RoleRef(id=role.id, title=role.title, job_family=role.job_family),
             )
-    return default_claim_weights(family), dimension_weights(family), None
+    return default_claim_weights(family), {}, None
+
+
+def _claim_score_under(
+    stored: ClaimScore | None, job_family: str, dim_weights: dict[str, float]
+) -> int:
+    """Re-score one stored claim through a role's dimension lens.
+
+    THE LATE-LENS RULE. Dimension scores are stored per claim, so a recruiter
+    who weights CAUSAL_REASONING above TOOL_FAMILIARITY gets a different claim
+    score over the SAME evidence — no re-interviewing, no model call, pure
+    arithmetic over rows we already have.
+
+    With no override this returns the stored score unchanged, so the default
+    path is byte-identical to before (and keeps the voice blend that was applied
+    when the claim was first scored).
+    """
+    if stored is None:
+        return 0
+    if not dim_weights:
+        return stored.score
+
+    by_dimension = _load_dimensions(stored.dimensions_json)
+    ordered = {
+        d: by_dimension[d.value] for d in scoring.DIMENSION_ORDER if d.value in by_dimension
+    }
+    if not ordered:
+        return stored.score
+    return scoring.claim_score(ordered, job_family, weights=dim_weights)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +244,9 @@ async def build_candidate_graph(
         return None
 
     family = resolve_family(candidate.job_family)
-    claim_weights, _dim_weights, role_ref = await resolve_weights(db, family, role_id or candidate.role_id)
+    claim_weights, dim_weights, role_ref = await resolve_weights(
+        db, family, role_id or candidate.role_id
+    )
 
     claims = (
         await db.execute(
@@ -299,7 +336,7 @@ async def build_candidate_graph(
             for d in scoring.DIMENSION_ORDER
         ]
         weight = float(claim_weights.get(claim.claim_type, 0.0))
-        claim_score = stored.score if stored else 0
+        claim_score = _claim_score_under(stored, family, dim_weights)
 
         claim_graphs.append(
             ClaimGraph(
@@ -423,6 +460,9 @@ async def rank_candidates(
     role_claim_weights = (
         json.loads(role.claim_weights_json or "{}") if role else None
     )
+    # The same late lens the detail view applies, so the ranked list and the
+    # candidate graph can never disagree about a claim's score.
+    role_dim_weights = json.loads(role.dimension_weights_json or "{}") if role else {}
 
     profiles = {
         p.candidate_id: p
@@ -471,7 +511,10 @@ async def rank_candidates(
         if role_claim_weights is not None and claims:
             # Re-rank: same stored evidence, this recruiter's weights.
             pairs = [
-                (c.claim_type, claim_scores[c.id].score if c.id in claim_scores else 0)
+                (
+                    c.claim_type,
+                    _claim_score_under(claim_scores.get(c.id), family, role_dim_weights),
+                )
                 for c in claims
             ]
             weighted, coverage = scoring.weighted_evidence_score(pairs, role_claim_weights)

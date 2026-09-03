@@ -297,6 +297,55 @@ def test_role_weights_re_rank_identical_evidence(client):
     assert by_people != by_ops, "role weights did not change any score"
 
 
+def test_role_dimension_weights_actually_change_the_score(client):
+    """Regression: dimension_weights were accepted, stored, returned — and then
+    dropped on the floor (`claim_weights, _dim_weights, role_ref = ...`), so a
+    recruiter could configure a lens, see it persisted, and observe no effect
+    on any ranking. Same claim weights in both roles here, so ONLY the dimension
+    lens can move these numbers.
+    """
+    shared_claims = {"team_handling": 40, "csat_improvement": 30, "aht_control": 30}
+    depth = client.post(
+        "/api/recruiter/roles",
+        json={
+            "title": "Reasoning First",
+            "job_family": "bpo_operations",
+            "claim_weights": shared_claims,
+            "dimension_weights": {"CAUSAL_REASONING": 70, "PROCESS": 20, "SPECIFICITY": 10},
+        },
+    )
+    tools = client.post(
+        "/api/recruiter/roles",
+        json={
+            "title": "Tooling First",
+            "job_family": "bpo_operations",
+            "claim_weights": shared_claims,
+            "dimension_weights": {"TOOL_FAMILIARITY": 70, "SPECIFICITY": 20, "PROCESS": 10},
+        },
+    )
+    assert depth.status_code == 201 and tools.status_code == 201
+    depth_id, tools_id = depth.json()["id"], tools.json()["id"]
+
+    by_depth = {
+        c["id"]: c["competence_score"]
+        for c in client.get(f"/api/recruiter/candidates?role_id={depth_id}").json()["candidates"]
+    }
+    by_tools = {
+        c["id"]: c["competence_score"]
+        for c in client.get(f"/api/recruiter/candidates?role_id={tools_id}").json()["candidates"]
+    }
+    assert by_depth.keys() == by_tools.keys()
+    assert by_depth != by_tools, "dimension weights had no effect on the ranked list"
+
+    # And the detail view must agree with the list view, or a recruiter who
+    # clicks through sees a different number than the one they ranked on.
+    candidate_id = next(iter(by_depth))
+    graph = client.get(
+        f"/api/recruiter/candidates/{candidate_id}?role_id={depth_id}"
+    ).json()
+    assert graph["competence_score"] == by_depth[candidate_id]
+
+
 def test_ranked_list_is_sorted_by_competence(client):
     rows = client.get("/api/recruiter/candidates").json()["candidates"]
     scores = [r["competence_score"] for r in rows]
