@@ -38,12 +38,13 @@ developer contracts for what a row has to carry.
 | `034b7a6` | **P1-07** requisition precedence | A | 133 → 136 | Routing is deterministic across disagreeing model runs. All three tests verified to **fail** against the previous implementation |
 | `e321265` | *(unplanned)* `product` family + `y → ies` matching | A | 136 → 137 | Family added with **zero Python edits** — the "cohort #101" criterion, first exercised end to end. Inert for existing routing: 0 family changes across 57 pre-existing golden resumes. `y → ies` measured at 0 family changes and 0.0000 confidence drift on all 64 |
 | `p1-08a` | **P1-08a** `GET /api/dev/detect` | A | 137 → 142 | Routing explainable — matched terms, per-family scores, margin and the family it is measured against — at **0 LLM calls** (verified before/after via `/api/dev/llm`). No `schemas.py` edit: returns a plain dict like the other dev GETs. **Completes Developer A's Phase 1 queue** |
+| `p1-09` | **P1-09** `candidate_outcomes` | B | 142 → 146 | 12 → 13 tables. The row that makes the objective falsifiable: until a human decision is stored, M4a has no second column. Append-only by shape (no unique key on `candidate_id`), `role_id` `SET NULL` so deleting a lens cannot delete a rejection. All 4 tests verified to fail against the pre-change file. **Measured, and raised under §9:** SQLite runs `PRAGMA foreign_keys=0`, so all **17** `ondelete` clauses in `models.py` (15 CASCADE, 2 SET NULL) are inert under the suite and enforced only on Postgres — the SET NULL test asserts the *declaration* via metadata instead. Pragma left off: `api/db.py` is in neither ownership list and re-arming 17 clauses at once is not a table task |
 
 **Current measured state**
 
 | | |
 |---|---|
-| Tests | **137 passing** |
+| Tests | **146 passing** |
 | Families | **9** (8 real + `general`) |
 | Golden set | 64 entries — 60 labelled, 4 ambiguous |
 | Routing accuracy | **98.3%** (M5b target 95%) |

@@ -301,6 +301,63 @@ class Profile(Base):
     computed_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
 
 
+class CandidateOutcome(Base):
+    """What a human actually decided. Append-only. B writes.
+
+    THE ROW THAT MAKES THE PRODUCT FALSIFIABLE. Every other number in this
+    schema is ProofScreen measuring itself: `resume_score` diverging from
+    `competence_score` is a demo, not evidence that the second one is right.
+    This is the only table holding a real hiring decision, so it is the second
+    column M4a rank-correlates against.
+
+    APPEND-ONLY BY SHAPE, NOT BY COMMENT. There is deliberately no unique
+    constraint on `candidate_id`: a candidate moves shortlisted -> interviewed
+    -> offered, and each step is a new row. Overwriting would destroy the
+    history the correlation is computed over. `create_all()` cannot express a
+    trigger, so the guarantee is structural and pinned by
+    `test_outcome_rows_are_append_only`.
+    """
+
+    __tablename__ = "candidate_outcomes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), index=True
+    )
+    # SET NULL, never CASCADE. Deleting a scoring lens must not delete the
+    # record that a person was rejected -- the decision happened; the lens it
+    # was viewed through is only context. CASCADE here would quietly destroy
+    # exactly the rows the validation report is computed over.
+    #
+    # NOTE, measured: SQLite runs with PRAGMA foreign_keys=0, so this clause
+    # (and the other 16 in this file) is inert under the test suite and is
+    # enforced only on Postgres. `test_role_id_is_declared_set_null` therefore
+    # asserts the DECLARATION through SQLAlchemy metadata rather than trusting
+    # the runtime it happens to be tested on.
+    role_id: Mapped[str | None] = mapped_column(
+        ForeignKey("job_roles.id", ondelete="SET NULL"), default=None
+    )
+    # Ordinal: rejected < shortlisted < interviewed < offered < hired.
+    # Validated by schemas.OutcomeDecision at the API boundary; stored as a
+    # string like every other enum column here, so a new value needs no
+    # migration.
+    decision: Mapped[str] = mapped_column(String(20), index=True)
+    # The recruiter's own pipeline naming ("phone screen", "panel 2"). Free
+    # text, never read by scoring -- it must not become a second, contradictory
+    # status alongside `decision`.
+    stage: Mapped[str | None] = mapped_column(String(60), default=None)
+    decided_by: Mapped[str | None] = mapped_column(String(120), default=None)
+    note: Mapped[str | None] = mapped_column(String(500), default=None)
+    decided_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
+
+
 Index("ix_questions_session_order", Question.session_id, Question.order_index)
 Index("ix_evidence_claim_dimension", Evidence.claim_id, Evidence.dimension)
 Index("ix_session_facts_session_key", SessionFact.session_id, SessionFact.key)
+# The query the validation report runs per candidate: their decision
+# history, in order.
+Index(
+    "ix_candidate_outcomes_candidate_decided",
+    CandidateOutcome.candidate_id,
+    CandidateOutcome.decided_at,
+)

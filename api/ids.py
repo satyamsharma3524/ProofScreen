@@ -67,6 +67,10 @@ def profile_id() -> str:
     return f"p_{_short()}"
 
 
+def outcome_id() -> str:
+    return f"o_{_short()}"
+
+
 def join_code() -> str:
     """6 chars, no lookalikes — a candidate types this into WhatsApp."""
     safe = "".join(c for c in _ALPHABET if c not in "OI01")

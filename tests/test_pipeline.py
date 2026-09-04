@@ -637,3 +637,153 @@ def test_llm_diagnostics_prove_no_network_calls_were_made(client):
     assert body["mode"] == "fixture"
     assert body["calls"] == 0
     assert body["fallbacks"] > 0
+
+
+# ---------------------------------------------------------------------------
+# P1-09 — candidate_outcomes
+# ---------------------------------------------------------------------------
+
+
+def test_outcome_table_exists():
+    """12 -> 13 tables. The table is inert until P1-10 writes to it."""
+    from api.models import Base, CandidateOutcome
+
+    assert "candidate_outcomes" in Base.metadata.tables
+    assert CandidateOutcome.__tablename__ == "candidate_outcomes"
+
+
+def test_outcome_ids_use_the_o_prefix():
+    """Short prefixed ids, because on demo day you read them off a screen."""
+    from api import ids
+
+    assert ids.outcome_id().startswith("o_")
+
+
+def test_outcome_rows_are_append_only():
+    """A candidate's decision history must accumulate, not overwrite.
+
+    Append-only is enforced by SHAPE — deliberately no unique constraint on
+    `candidate_id` — because `create_all()` cannot express a trigger. So the
+    guarantee needs a test or it is only a comment: two decisions for one
+    candidate coexist, and recording the second leaves the first exactly as it
+    was. Overwriting would destroy the history M4a is computed over.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from api import ids
+    from api.db import SessionLocal
+    from api.models import Candidate, CandidateOutcome
+
+    async def scenario() -> tuple[int, str, str | None]:
+        async with SessionLocal() as db:
+            candidate = Candidate(
+                id=ids.candidate_id(), name="Outcome History", phone="+919810099001"
+            )
+            db.add(candidate)
+            await db.commit()
+
+            first = CandidateOutcome(
+                id=ids.outcome_id(),
+                candidate_id=candidate.id,
+                decision="shortlisted",
+                stage="phone screen",
+                decided_by="recruiter@example.com",
+            )
+            db.add(first)
+            await db.commit()
+            first_id = first.id
+
+            db.add(
+                CandidateOutcome(
+                    id=ids.outcome_id(),
+                    candidate_id=candidate.id,
+                    decision="rejected",
+                    stage="panel",
+                )
+            )
+            await db.commit()
+
+            rows = (
+                await db.execute(
+                    select(CandidateOutcome).where(
+                        CandidateOutcome.candidate_id == candidate.id
+                    )
+                )
+            ).scalars().all()
+            earlier = next(r for r in rows if r.id == first_id)
+            return len(rows), earlier.decision, earlier.stage
+
+    count, earlier_decision, earlier_stage = asyncio.run(scenario())
+
+    assert count == 2, "the second decision replaced the first instead of appending"
+    assert earlier_decision == "shortlisted", "the earlier decision was mutated"
+    assert earlier_stage == "phone screen"
+
+
+def test_role_id_is_declared_set_null_and_the_outcome_survives():
+    """Deleting a scoring lens must not delete the record that someone was
+    rejected.
+
+    Asserts the DECLARATION, not the runtime. Measured: SQLite runs with
+    `PRAGMA foreign_keys = 0`, so all 17 `ondelete` clauses in models.py (15
+    CASCADE, 2 SET NULL) are inert under this suite and enforced only on
+    Postgres. A test that asserted the nulling would be asserting SQLite's
+    default rather than our design, and would pass for the wrong reason if
+    somebody later changed the clause to CASCADE.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from api import ids
+    from api.db import SessionLocal
+    from api.models import Candidate, CandidateOutcome, JobRole
+
+    fk = next(
+        f for f in CandidateOutcome.__table__.foreign_keys if f.parent.name == "role_id"
+    )
+    assert fk.ondelete == "SET NULL", (
+        "role_id must be SET NULL — CASCADE would destroy hiring decisions when "
+        "a recruiter deletes a lens"
+    )
+    candidate_fk = next(
+        f
+        for f in CandidateOutcome.__table__.foreign_keys
+        if f.parent.name == "candidate_id"
+    )
+    assert candidate_fk.ondelete == "CASCADE"
+
+    async def scenario() -> bool:
+        async with SessionLocal() as db:
+            role = JobRole(
+                id=ids.role_id(), title="Disposable Lens", job_family="bpo_operations"
+            )
+            candidate = Candidate(
+                id=ids.candidate_id(), name="Lens Deleted", phone="+919810099002"
+            )
+            db.add_all([role, candidate])
+            await db.commit()
+
+            outcome = CandidateOutcome(
+                id=ids.outcome_id(),
+                candidate_id=candidate.id,
+                role_id=role.id,
+                decision="rejected",
+            )
+            db.add(outcome)
+            await db.commit()
+            outcome_id = outcome.id
+
+            await db.delete(role)
+            await db.commit()
+
+            return (
+                await db.execute(
+                    select(CandidateOutcome).where(CandidateOutcome.id == outcome_id)
+                )
+            ).scalar_one_or_none() is not None
+
+    assert asyncio.run(scenario()), "deleting a lens destroyed the hiring decision"
+
