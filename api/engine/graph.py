@@ -439,6 +439,152 @@ async def recompute_profile(db: AsyncSession, candidate_id: str) -> Profile | No
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# P1-13 — why_ranked
+#
+# The ranked list is the first screen a recruiter opens, and until now it
+# answered `that` a candidate ranks where they do and never `why`. The
+# drill-down answers it in full, but nobody opens twenty drill-downs.
+#
+# Two rules this sentence obeys:
+#   1. It CITES EVIDENCE, never restates the score. "competence 56" in prose is
+#      a row of text with no information in it.
+#   2. It COSTS NOTHING EXTRA. Every input is already loaded by
+#      rank_candidates(); counting quantities from responses.signals_json would
+#      mean ~12 JSON parses per candidate on the busiest endpoint.
+# ---------------------------------------------------------------------------
+
+# Each rubric counts a disjoint bucket of signals — specificity counts
+# quantities and named entities, process counts steps, causal counts chains,
+# authenticity counts incidents, tool counts tools, metric counts definitions —
+# so summing signal_count across the six is a true total, not double counting.
+_DIMENSION_PHRASE = {
+    "SPECIFICITY": "concrete figures",
+    "PROCESS": "process detail",
+    "METRIC_OWNERSHIP": "metric ownership",
+    "CAUSAL_REASONING": "causal reasoning",
+    "AUTHENTICITY": "recalled incidents",
+    "TOOL_FAMILIARITY": "tool usage",
+}
+
+
+def _dimension_totals(
+    claims: "list[Claim]", claim_scores: "dict[str, ClaimScore]"
+) -> dict:
+    """Structured counts from `dimensions_json`. No string parsing.
+
+    The `basis` strings are for display ("3 quantities, 2 named entities") and
+    parsing them back would couple this sentence to their wording. The numbers
+    beside them are the real data.
+    """
+    signals = 0
+    probed: set[str] = set()
+    best: tuple[int, str] | None = None
+    specificity_signals = 0
+    scored_claims = 0
+    stalled: list[str] = []
+
+    for claim in claims:
+        stored = claim_scores.get(claim.id)
+        if stored is None:
+            continue
+        scored_claims += 1
+        for key, entry in _load_dimensions(stored.dimensions_json).items():
+            signals += entry.signal_count
+            if entry.probed:
+                probed.add(key)
+            if key == "SPECIFICITY":
+                specificity_signals += entry.signal_count
+            if entry.score > 0 and (best is None or entry.score > best[0]):
+                best = (entry.score, key)
+        # Probed at least twice and still nothing: the adaptive stop gave up on
+        # this claim. That is a finding about the candidate, not a gap in ours.
+        if (stored.answers_count or 0) >= 2 and stored.score == 0:
+            stalled.append(claim.claim_type)
+
+    return {
+        "signals": signals,
+        "probed": len(probed),
+        "best": best,
+        "specificity_signals": specificity_signals,
+        "scored_claims": scored_claims,
+        "stalled": stalled,
+    }
+
+
+def _why_ranked(
+    claims: "list[Claim]",
+    claim_scores: "dict[str, ClaimScore]",
+    contradiction_count: int,
+    questions_asked: int,
+    family: str,
+    claim_weights: "dict[str, float]",
+) -> str:
+    """One sentence, from stored rows, no model call.
+
+    Three clauses: what evidence exists, what undermines it, and what this
+    lens cared about. The third is why the sentence changes with `role_id` —
+    the same evidence read through a different lens is a different explanation,
+    and a list view whose reasoning ignored the lens would contradict the
+    ranking it sits next to.
+    """
+    if not claims:
+        return "No claims extracted from this resume yet."
+    if questions_asked == 0:
+        return f"{len(claims)} claims extracted, not yet interviewed."
+
+    totals = _dimension_totals(claims, claim_scores)
+    if totals["scored_claims"] == 0:
+        return f"{len(claims)} claims extracted, no answers scored yet."
+
+    parts: list[str] = [
+        f"{totals['signals']} evidence signal"
+        f"{'' if totals['signals'] == 1 else 's'} across "
+        f"{totals['scored_claims']} claim"
+        f"{'' if totals['scored_claims'] == 1 else 's'}, "
+        f"{totals['probed']} of 6 dimensions probed"
+    ]
+
+    if totals["best"]:
+        score, key = totals["best"]
+        parts.append(f"strongest on {_DIMENSION_PHRASE.get(key, key.lower())} ({score})")
+    if totals["specificity_signals"] == 0:
+        # The single most diagnostic absence: no number anywhere in any answer.
+        parts.append("no concrete figures in any answer")
+    if totals["stalled"]:
+        labels = ", ".join(
+            claim_type_label(family, t) for t in sorted(set(totals["stalled"]))
+        )
+        parts.append(
+            f"{len(totals['stalled'])} claim"
+            f"{'' if len(totals['stalled']) == 1 else 's'} stalled ({labels})"
+        )
+    parts.append(
+        "no contradictions"
+        if not contradiction_count
+        else f"{contradiction_count} contradiction"
+        f"{'' if contradiction_count == 1 else 's'}"
+    )
+
+    # The lens clause. Names the claim type these weights care about most and
+    # how the candidate actually did on it, so the explanation moves when the
+    # ranking moves.
+    present = {c.claim_type for c in claims}
+    weighted = [(claim_weights.get(t, 0.0), t) for t in present]
+    if weighted:
+        weight, heaviest = max(weighted, key=lambda pair: (pair[0], pair[1]))
+        if weight > 0:
+            claim = next(c for c in claims if c.claim_type == heaviest)
+            stored = claim_scores.get(claim.id)
+            scored = f" scored {stored.score}" if stored else " not yet scored"
+            parts.append(
+                f"this lens weights {claim_type_label(family, heaviest)} most "
+                f"({weight:g}%),{scored}"
+            )
+
+    return "; ".join(parts) + "."
+
+
 async def rank_candidates(
     db: AsyncSession, role_id: str | None = None
 ) -> tuple[RoleRef | None, list[CandidateSummary]]:
@@ -530,11 +676,25 @@ async def rank_candidates(
             consistency_score = profile.consistency_score if profile else 100
             badge = Badge(profile.badge) if profile else Badge.unverified
 
+        effective_weights = (
+            role_claim_weights
+            if role_claim_weights is not None
+            else default_claim_weights(family)
+        )
+
         out.append(
             CandidateSummary(
                 id=candidate.id,
                 name=candidate.name,
                 role=candidate.role,
+                why_ranked=_why_ranked(
+                    claims,
+                    claim_scores,
+                    profile.contradiction_count if profile else 0,
+                    session.questions_asked if session else 0,
+                    family,
+                    effective_weights,
+                ),
                 job_family=family,
                 job_family_label=family_label(family),
                 resume_score=profile.resume_score if profile else 0,

@@ -929,3 +929,87 @@ def test_recording_an_outcome_makes_no_model_call(client):
 
     assert client.get("/api/dev/llm").json()["calls"] == before
 
+
+# ---------------------------------------------------------------------------
+# P1-13 — why_ranked
+# ---------------------------------------------------------------------------
+
+
+def test_every_ranked_candidate_explains_itself(client):
+    """Phase acceptance criterion 9: 100% of ranked rows carry a reason."""
+    onboard(client, name="Explains Itself", phone="+919810031001")
+    rows = client.get("/api/recruiter/candidates").json()["candidates"]
+    assert rows
+    missing = [r["name"] for r in rows if not (r["why_ranked"] or "").strip()]
+    assert not missing, f"no explanation for: {missing}"
+
+
+def test_why_ranked_cites_evidence_not_the_score(client):
+    """B's contract requires it cite stored evidence rather than restate the
+    score in words. "competence 56" in prose is a row of text carrying no
+    information a recruiter did not already have from the number beside it."""
+    body = onboard(client, name="Cites Evidence", phone="+919810031002")
+    run_interview(client, body["session_id"])
+
+    row = next(
+        r for r in client.get("/api/recruiter/candidates").json()["candidates"]
+        if r["id"] == body["candidate_id"]
+    )
+    sentence = row["why_ranked"].lower()
+
+    assert "evidence signal" in sentence
+    assert "dimensions probed" in sentence
+    for restatement in ("competence", "badge", "verified", "partial score"):
+        assert restatement not in sentence, (
+            f"the sentence restates the score ({restatement!r}) instead of citing evidence"
+        )
+
+
+def test_why_ranked_distinguishes_candidates(client):
+    """A sentence that reads the same for everybody is decoration."""
+    strong = onboard(client, name="Strong Reason", phone="+919810031003")
+    run_interview(client, strong["session_id"], STRONG_ANSWERS)
+    weak = onboard(client, name="Evasive Reason", phone="+919810031004")
+    run_interview(client, weak["session_id"], EVASIVE_ANSWERS)
+
+    rows = {r["id"]: r["why_ranked"] for r in
+            client.get("/api/recruiter/candidates").json()["candidates"]}
+    assert rows[strong["candidate_id"]] != rows[weak["candidate_id"]]
+    # And the evasive candidate's sentence names the diagnostic absence.
+    assert "no concrete figures" in rows[weak["candidate_id"]]
+    assert "stalled" in rows[weak["candidate_id"]]
+
+
+def test_why_ranked_changes_with_the_role_lens(client):
+    """Same evidence, different lens, different explanation. A list view whose
+    reasoning ignored the lens would contradict the ranking beside it."""
+    body = onboard(client, name="Lens Reason", phone="+919810031005")
+    run_interview(client, body["session_id"], STRONG_ANSWERS)
+
+    people = client.post("/api/recruiter/roles", json={
+        "title": "People Reason", "job_family": "bpo_operations",
+        "claim_weights": {"team_handling": 80, "aht_control": 20}}).json()["id"]
+    ops = client.post("/api/recruiter/roles", json={
+        "title": "Ops Reason", "job_family": "bpo_operations",
+        "claim_weights": {"aht_control": 80, "team_handling": 20}}).json()["id"]
+
+    def reason(role_id: str) -> str:
+        rows = client.get(f"/api/recruiter/candidates?role_id={role_id}").json()["candidates"]
+        return next(r["why_ranked"] for r in rows if r["id"] == body["candidate_id"])
+
+    under_people, under_ops = reason(people), reason(ops)
+    assert under_people != under_ops, "the explanation ignored the lens"
+    assert "Team handling" in under_people
+    assert "AHT" in under_ops
+
+
+def test_why_ranked_makes_no_model_calls(client):
+    """Rule 12: traceable without another model call."""
+    body = onboard(client, name="Reason No LLM", phone="+919810031006")
+    run_interview(client, body["session_id"])
+
+    before = client.get("/api/dev/llm").json()["calls"]
+    rows = client.get("/api/recruiter/candidates").json()["candidates"]
+    assert any(r["why_ranked"] for r in rows), "nothing rendered, nothing proven"
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
