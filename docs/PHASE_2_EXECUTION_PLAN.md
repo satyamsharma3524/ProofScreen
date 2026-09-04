@@ -1,4 +1,245 @@
-# Phase 2 Execution Plan — Make the Signal Durable and Sellable
+# Phase 2 Execution Plan — Question Quality Infrastructure
+
+**Objective owner:** Abhishek (A) · **Duration:** ~1.5 weeks · **Entry
+condition: Phase 1 closed** — M1b = 100%, M5c = 0%, guardrails green, M4a
+published as `insufficient data (n < 30)`. All four hold as of 2026-09-05.
+
+Architecture frozen per `ARCHITECTURE_LOCK_v1.md`. **Nothing here proposes new
+architecture.** The validator is the same pattern as `evidence.enforce_verbatim()`
+and `taxonomy.normalise_claim_type()`: Python validates what the model returned.
+
+Produced under `EXECUTION_STANDARD.md` §10. Task-level specs are the
+seven-section form, in `docs/tasks/P2-0*.md`.
+
+---
+
+## 1. Objective
+
+**Make question generation measurable, auditable and deterministic in quality.**
+
+At completion, two questions are answerable from stored rows rather than
+opinion:
+
+- *"Why was this question accepted?"*
+- *"How often does the system generate bad questions?"*
+
+The question sits at the entrance of the evidence system. Everything downstream
+— extraction, signals, consistency, scoring, ranking, outcomes — is bounded by
+what the question managed to elicit. A perfect scoring engine over a bad
+question set produces confident nonsense, and we currently have no way to know
+which we have.
+
+## 2. Current State — including what must NOT be rebuilt
+
+**Already correct. Do not touch:**
+
+| Mechanism | Where | Why it stays |
+|---|---|---|
+| Deterministic planner | `orchestrator.plan_next()` | Pure function of stored evidence. Structure is where interview validity comes from; moving selection into a prompt converts a structured interview into an unstructured one |
+| LLM wording only | `question.generate_question()` | The split is load-bearing and already enforced by `select_transfer()` having no `job_family` parameter |
+| Verbatim enforcement | `evidence.enforce_verbatim()` | The pattern this phase copies |
+| `is_non_answer()` | `evidence.py:66` | Pure, no LLM. **P2-04 reuses it; do not write a second one** |
+| `FALLBACK_QUESTIONS` | `question.py:130` | Production code, not stubs. **Exempt from validation by construction** — see §4 R1 |
+| Five probe briefs + transfer templates | `question.py` | Cohort-neutral. No per-family examples, ever |
+
+**The gap:** `Question` rows record `text`, `probe_level`, `target_dimension`,
+`order_index`, `answered`. Nothing records *whether the question was any good*,
+so no metric over question quality is computable today.
+
+## 3. Deliverables
+
+### D11 — Question golden set (defect corpus)
+
+`tests/data/question_golden.json`. **Not a corpus of good questions** — a
+labelled defect corpus, authored **before** the validator, per the contract rule
+that a test written afterwards describes the implementation instead of testing
+it.
+
+Carries `accept` entries as well as `reject`. A validator that rejects
+everything must **fail** the suite. This mirrors the routing floor lesson:
+`test_every_ambiguous_resume_is_flagged` is worthless without
+`test_no_confident_route_is_flagged`.
+
+### D12 — `question.validate()`
+
+Pure Python, no LLM, returns `QuestionValidation(accepted, violations)`.
+Seven rules — see P2-02 for the full spec and each rule's deterministic test.
+
+### D13 — Bounded regeneration
+
+One retry maximum, then fallback. The retry prompt carries the **violated rule
+names** — never examples, which would re-introduce cohort bias at config level.
+
+### D14 — Repair turn
+
+`is_non_answer()` on an inbound answer issues a repair question that does
+**not** consume interview budget.
+
+### D15 — M6 question metrics
+
+`validator_accept_rate · validator_reject_rate · fallback_rate · repair_rate ·
+repeat_rate`, computed from stored rows in `scripts/validation_report.py`.
+
+## 4. Risks
+
+| | Risk | Mitigation |
+|---|---|---|
+| **R1** | **A naive validator rejects the production fallback.** `FALLBACK_QUESTIONS[VALIDATION]` is literally *"Tell me more about this…"* and `[INCIDENT]` is *"Tell me about one specific time…"*. CLAUDE.md rule 5 requires every LLM call to have a fallback, so a validator that can reject the fallback leaves **no path at all** | The fallback path never enters the validator. Structural, not an exemption list: `validate()` is called on model output only, and P2-03's flow returns the fallback without re-validating. Pinned by a test |
+| **R2** | **A naive scope rule rejects the entire TRANSFER mechanism.** `select_transfer()` picks `target = others[0]` — deliberately a *different* claim — and T1 is the majority path ("whenever a second claim exists"). Scope drift **is** the mechanism | Rule 6 is two rules in one: non-TRANSFER probes stay in claim scope; a TRANSFER probe must reference `plan.transfer.target_claim_id`. Stronger than an exemption — it enforces drift to *the planner's* target and nowhere else |
+| **R3** | **A hypothetical rule rejects 100% of transfer probes.** All three transfer strings open with "Suppose" by design | Rule 4 is conditioned on `probe_level == TRANSFER`, and asserted in **both** directions: hypothetical on a non-TRANSFER level must reject |
+| **R4** | **Unbounded regeneration breaks the latency guardrail** (+20% median turn ceiling, `PHASE_1_SUCCESS_METRICS.md` §G). Every turn already blocks on a model call | Hard cap of one retry, enforced in code and asserted by a test that counts LLM calls via `/api/dev/llm` |
+| **R5** | **The repair turn changes when TRANSFER fires.** `ClaimState.stalled` is *answers ≥ 2 and last `signals_found == 0`*. A repair answer is an extra answer on the same claim, so a claim could reach `stalled` a turn earlier and pull its transfer probe forward | Repair answers are excluded from the `answers` count that feeds `stalled`. Measured against the seed: transfer probe count must stay at **3, all Rohit, all `signals_found = 0`** — the Phase 1 invariant |
+| **R6** | **`order_index` currently means two things** — position in the transcript *and* budget consumed (`order_index=session.questions_asked`, `orchestrator.py:745`). A non-budget-consuming repair turn splits those apart | `order_index` derives from a count of the session's questions; `questions_asked` stays the budget counter. Stated in P2-04, tested by asserting a repair does not move `questions_asked` |
+| **R7** | Validator rules that double-count. A "single evidence target" rule was proposed and **dropped**: its example is a double-barrel question (rule 3), and one-dimension-per-question is already guaranteed upstream by `plan_next` passing a single `target_dimension` | Seven rules, each with a distinct defect. Two rules firing on one defect corrupts the reject-rate metric this phase exists to produce |
+| **R8** | Hinglish and code-switched answers mis-scored as defects | The golden set carries Hinglish entries. Rule 7 anchors on claim terms, which survive transliteration; no rule may read fluency, grammar or register — CLAUDE.md rule 6 |
+
+## 5. Deferred Work
+
+- **D6–D10** (Evaluation entity, versioning, replay, tenant isolation, score
+  history) — now Phase 3, below. **Cost of deferring, stated honestly:** D9
+  argues tenant isolation is *"the only deliverable whose cost grows with every
+  day of real data."* That cost is ~0 today — four seeded personas, no customer,
+  no accumulating production data — and becomes real the week a customer
+  contract is drafted. **Trigger: do D9 before the first customer's data
+  lands**, not on a calendar.
+- **A question-quality *rubric*** (is this the *best* question?) — out of scope.
+  Questions have no single correct answer, which is why D11 measures validator
+  precision/recall against labelled defects instead.
+- **LLM-as-judge on question quality** — rejected, not deferred. It would make
+  the metric the model's opinion, violating §8 and rule 1.
+- **M1a / M2 re-specification** — recorded as measured amendments in
+  `PHASE_1_SUCCESS_METRICS.md` §A. Changing a frozen target is a separate
+  decision.
+- **`routing_status` enum** (`MATCHED · LOW_CONFIDENCE · CONFLICTING · GENERAL`)
+  — the right eventual shape for what `routing_confidence` 0.0 now overloads,
+  but `api/schemas.py` is frozen and dual-owned. `GET /api/dev/detect` already
+  carries the disambiguation. Do it when the dashboard needs it.
+- **`extract._metric_of` seconds unit** — a known defect (CLAUDE.md), and a
+  claim-extraction concern rather than a question concern. Phase 2 does not
+  touch extraction.
+
+## 6. Success Metrics
+
+Computable from stored rows. No model call. Published by
+`scripts/validation_report.py`.
+
+| | Definition | Source | Target |
+|---|---|---|---|
+| **M6a Validator precision** | Of golden entries the validator rejects, % a human labelled `reject` | `question_golden.json` | **≥ 95%** |
+| **M6b Validator recall** | Of golden entries labelled `reject`, % the validator catches | same | **≥ 90%** |
+| **M6c Accept-rate on good questions** | Of golden entries labelled `accept`, % accepted | same | **≥ 95%** — the anti-gaming guard. A validator that rejects everything scores 100% recall and fails here |
+| **M6d Live reject rate** | % of generated questions failing attempt 1 | `questions.violations_json` | **Reported, not targeted** — see C4 |
+| **M6e Fallback rate** | % of asked questions that came from `FALLBACK_QUESTIONS` | `questions.source` | **≤ 5%** in live mode |
+| **M6f Repair rate** | % of answers triggering a repair turn | `questions.is_repair` | **Reported** |
+| **M6g Repeat rate** | % of questions rejected for duplicate content | `questions.violations_json` | **Reported** |
+
+**Guardrails — must not regress:**
+
+| Guardrail | Baseline | Limit |
+|---|---|---|
+| Test suite | **186 passing** | Never red; ≥ 210 by phase end |
+| Median turn latency | current | **+20% ceiling** — R4 is the live threat |
+| Transfer probe invariant | 3 probes, all Rohit, all `signals_found = 0` | Unchanged (R5) |
+| Anti-bias invariants | 3 structural tests green | Never edited to pass |
+| Fixture / rubric agreement | exact | `test_pipeline` fixture assertions stay green |
+| `TRANSFER_PROBE=false` reproduces the pre-phase system | competence 56/46/14/61 | Unchanged |
+| Routing accuracy | 98.3% M5b | Unchanged — Phase 2 does not touch `taxonomy.py` |
+
+**Counter-metrics — do NOT optimise:**
+
+- **C4 — do not optimise the live reject rate downward.** A reject means the
+  validator did its job. Driving M6d to zero by loosening rules produces a
+  validator that accepts everything, which is indistinguishable from having no
+  validator. M6a–M6c on the labelled set are the goal; M6d is a diagnostic.
+- **C5 — do not optimise the fallback rate to zero by weakening the fallback.**
+  The fallbacks are deliberately conservative. CLAUDE.md: *if a fallback ever
+  looks better, the fallback has become the product.*
+- **C6 — do not add validator rules to raise recall on the golden set.** Rules
+  must describe defects that harm evidence elicitation, not defects that happen
+  to be in our corpus. A rule with one supporting entry is overfitting.
+
+## 7. Task Breakdown
+
+| ID | Task | Owner | Files | Deps | Migration impact | Binary acceptance |
+|---|---|---|---|---|---|---|
+| **P2-01** | Question golden set (defect corpus, ≥ 60 entries) | A | `tests/data/question_golden.json`, `tests/test_questions.py` (new) | — | none | File exists, ≥ 60 entries, every rule represented, both verdicts present, Hinglish + all six probe levels covered; a stub validator that rejects everything **fails** the suite |
+| **P2-02** | `question.validate()` — 7 rules, pure | A | `api/engine/question.py`, `tests/test_questions.py` | P2-01 | none | M6a ≥ 95%, M6b ≥ 90%, M6c ≥ 95% on the golden set, 0 LLM calls (asserted via `/api/dev/llm`) |
+| **P2-03** | Bounded regeneration, 1 retry → fallback | A | `api/engine/question.py`, `api/models.py`, `tests/test_questions.py` | P2-02 | **schema change** + fixture regeneration | A rejected question triggers exactly **1** extra LLM call, never 2; second failure returns a fallback; `questions.source` recorded |
+| **P2-04** | Repair turn on `is_non_answer()` | A | `api/engine/orchestrator.py`, `api/models.py`, `tests/test_policy.py` | P2-03 | **schema change** (same reset) | A non-answer issues a repair question and leaves `questions_asked` unchanged; transfer invariant still 3/3 Rohit |
+| **P2-05** | M6 metrics in the validation report | A | `scripts/validation_report.py`, `tests/test_questions.py` | P2-01 … P2-04 | none | All seven M6 numbers printed, 0 model calls, endpoint and script agree field-for-field |
+
+`api/models.py` is Developer B's file by contract. Abhishek has lifted the
+restriction for this work; the schema change is still **announced to Satyam
+before it lands**, because it forces a `docker compose down -v` on his machine.
+
+## 8. Dependency Graph
+
+```
+P2-01  golden set  ──▶ P2-02  validate()  ──▶ P2-03  regeneration ──▶ P2-04  repair turn
+   │                      │                       │                      │
+   └──────────────────────┴───────────────────────┴──────────────────────┴──▶ P2-05  M6 metrics
+```
+
+**Critical path:** P2-01 → P2-02 → P2-03 → P2-04 → P2-05. Sequential by nature —
+each task's acceptance depends on the previous one's output.
+
+**Not parallelisable across two developers**, and that is deliberate: all five
+tasks land in three files on the intelligence path. B's stream is idle for this
+phase. **If B needs work in parallel, take D9 (tenant isolation) from Phase 3** —
+it touches no file in this phase and its cost only grows.
+
+**One schema reset serves P2-03 and P2-04.** Land the `questions` columns once,
+in P2-03, including the `is_repair` column P2-04 needs but does not yet use. Two
+resets for one phase is an avoidable demo-day hazard.
+
+## 9. Acceptance Criteria
+
+1. `question_golden.json` has ≥ 60 entries, both verdicts, all seven rules, all
+   six probe levels, and Hinglish entries.
+2. A deliberately broken validator that rejects every input **fails** the suite
+   on M6c.
+3. `validate()` makes **zero** LLM calls, asserted against `/api/dev/llm`.
+4. M6a ≥ 95%, M6b ≥ 90%, M6c ≥ 95% on the golden set.
+5. A rejected question causes **exactly one** regeneration, never more —
+   asserted by call count, not by reading the code.
+6. Two consecutive failures return a `FALLBACK_QUESTIONS` entry, and the
+   fallback is **never** passed through `validate()`.
+7. A non-answer issues a repair question and `session.questions_asked` is
+   **unchanged**.
+8. The transfer invariant holds: seed produces **3** transfer probes, all Rohit,
+   all `signals_found = 0`.
+9. `TRANSFER_PROBE=false` still reproduces competence 56 / 46 / 14 / 61.
+10. All seven M6 numbers appear in `scripts/validation_report.py` output and in
+    `GET /api/recruiter/validation`, from one implementation.
+11. Suite green and larger: **≥ 210 tests**.
+12. Median turn latency within +20% of the Phase 1 baseline.
+
+## 10. Implementation Order
+
+| Step | Task | Gate before proceeding |
+|---|---|---|
+| 1 | **Commit Phase 1** (12 modified files, 186 green) | `git log` shows it; contract rule *commit before you measure* |
+| 2 | P2-01 golden set | Reviewed by Satyam. **Authored before any validator code exists** |
+| 3 | P2-02 `validate()` | M6a/M6b/M6c pass; every rule verified to fail without its implementation |
+| 4 | Announce the `questions` schema change to Satyam | He must `docker compose down -v` |
+| 5 | P2-03 regeneration + schema | Call-count test passes; fixture regenerated once |
+| 6 | P2-04 repair turn | Transfer invariant re-measured, not assumed |
+| 7 | P2-05 M6 metrics | Script and endpoint agree field-for-field |
+| 8 | Re-run the full Phase 1 validation report | No M1–M5 number moved |
+
+---
+
+# Phase 3 Execution Plan — Make the Signal Durable and Sellable
+
+> **Re-designated 2026-09-05.** This was the approved Phase 2 plan. It is
+> unchanged below — not one deliverable was cut and none of the reasoning is
+> retracted. It moved because **its own entry condition is not met**: it
+> requires *"the validation report has produced a number — positive or
+> negative"*, and M4a stands at `insufficient data (n < 30)` with n = 0.
+> D6–D10 make a score *defensible to a paying customer*; nothing here makes
+> the score better, and question quality caps how good the score can be.
+> See Phase 2 above for the re-scope, and §Deferred there for what this
+> costs.
 
 **Duration:** ~7 weeks · **Team:** 2 engineers · **Entry condition: Phase 1
 acceptance criteria all green, and the validation report has produced a number

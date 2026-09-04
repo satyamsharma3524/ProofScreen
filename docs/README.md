@@ -44,7 +44,7 @@ edit what — see the ownership note below.
 | [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) | Before deploying anything |
 | [REPO_STRUCTURE.md](REPO_STRUCTURE.md) | Orienting in the tree; the data-flow one-liners |
 | [PLATFORM_ARCHITECTURE_REVIEW.md](PLATFORM_ARCHITECTURE_REVIEW.md) | Scaling questions — cohorts, families, multi-tenant |
-| [PHASE_2_EXECUTION_PLAN.md](PHASE_2_EXECUTION_PLAN.md) | **Not yet.** Phase 2 work is forbidden until Phase 1 exits |
+| [PHASE_2_EXECUTION_PLAN.md](PHASE_2_EXECUTION_PLAN.md) | **Active.** Phase 1 exited 2026-09-05. Phase 2 is Question Quality Infrastructure; the previously-approved D6–D10 plan is preserved in the same file as **Phase 3**, re-designated because its own entry condition (M4a has produced a number) is not met. Task specs in [tasks/](tasks/) |
 
 ## Superseded — history, not instructions
 
