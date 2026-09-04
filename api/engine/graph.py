@@ -58,6 +58,7 @@ from api.schemas import (
 )
 from api.taxonomy import (
     claim_type_label,
+    match_family,
     default_claim_weights,
     dimension_weights,
     family_label,
@@ -378,6 +379,25 @@ async def build_candidate_graph(
         else 0
     )
 
+    # P1-08b — how close the routing call was.
+    #
+    # THIS IS A MARGIN, NOT A PROBABILITY: (top1 - top2) / top1 over the
+    # per-family scores. It answers "was this close?", which is the question a
+    # recruiter looking at a mis-routed candidate actually has. It makes no
+    # claim about being right — a confidently wrong router would report 1.00.
+    #
+    # 0.0 has two causes, and `job_family` is what tells them apart: either no
+    # family cleared the two-term floor (family reads `general`), or two
+    # families tied exactly (family reads the winner). `CandidateGraph` has one
+    # float and `schemas.py` is frozen, so the disambiguation lives in the pair
+    # of fields rather than in a second one. `GET /api/dev/detect` renders the
+    # full explanation.
+    #
+    # Reuses the resume already loaded above for `resume_score`, so this costs
+    # no query and no model call — `match_family` is a pure function of the
+    # text and the taxonomy file.
+    confidence = match_family(resume.raw_text).confidence if resume else None
+
     return CandidateGraph(
         candidate=CandidateRef(
             id=candidate.id, name=candidate.name, role=candidate.role, phone=candidate.phone
@@ -388,6 +408,7 @@ async def build_candidate_graph(
         state=SessionState(session.state) if session else SessionState.NEW,
         questions_asked=session.questions_asked if session else 0,
         resume_score=r_score,
+        routing_confidence=confidence,
         weighted_evidence_score=weighted,
         competence_score=competence,
         badge=scoring.badge_for(competence),

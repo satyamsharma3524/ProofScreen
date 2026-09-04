@@ -1267,3 +1267,93 @@ def test_validation_endpoint_makes_no_model_call(client):
     assert resp.status_code == 200 and resp.json()["generated_at"]
     assert client.get("/api/dev/llm").json()["calls"] == before
 
+
+# ---------------------------------------------------------------------------
+# P1-08b — routing_confidence
+# ---------------------------------------------------------------------------
+
+# No family vocabulary at all, but long enough to pass the ingest floor. Used
+# to exercise the fallback path rather than the happy one.
+UNROUTABLE_RESUME = """Jordan Ellis - Generalist, Remote
+
+EXPERIENCE
+- Looked after a variety of assorted matters for several different groups
+- Handled the usual things that came up from week to week without much fuss
+- Wrote up the outcomes afterwards so everyone knew what had happened
+
+INTERESTS
+Reading, walking, cooking
+"""
+
+
+def test_routing_confidence_is_populated_in_the_graph(client):
+    """The field existed since P1-00 and was always null."""
+    body = onboard(client, name="Routing Confidence", phone="+919810070001")
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    assert graph["routing_confidence"] is not None
+    assert 0.0 <= graph["routing_confidence"] <= 1.0
+
+
+def test_routing_confidence_matches_match_family(client):
+    """Parity with A's published contract. If these drift, the candidate record
+    is reporting a margin the router did not compute."""
+    from api.taxonomy import match_family
+
+    body = onboard(client, name="Routing Parity", phone="+919810070002")
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    assert graph["routing_confidence"] == match_family(RESUME).confidence
+    assert graph["job_family"] == match_family(RESUME).family
+
+
+def test_low_confidence_routing_is_visible_in_the_graph(client):
+    """A resume that clears no family's two-term floor must not be silently
+    filed under a confident guess. `general` plus 0.0 is the visible form of
+    "we could not tell" — and the PAIR of fields is what distinguishes it from
+    an exact tie, since CandidateGraph carries one float and schemas.py is
+    frozen."""
+    body = client.post(
+        "/api/candidates/text",
+        json={
+            "resume_text": UNROUTABLE_RESUME,
+            "name": "Unroutable Jordan",
+            "phone": "+919810070003",
+        },
+    )
+    assert body.status_code == 201, body.text
+    graph = client.get(
+        f"/api/recruiter/candidates/{body.json()['candidate_id']}"
+    ).json()
+    assert graph["job_family"] == "general"
+    assert graph["routing_confidence"] == 0.0
+
+
+def test_routing_confidence_is_not_decorative(client):
+    """B's contract: if every candidate reads 1.00 the field tells a recruiter
+    nothing. Measured on the seeded personas as 0.17 / 0.40 / 0.72."""
+    for index, (name, resume) in enumerate(
+        [("Discriminate BPO", RESUME), ("Discriminate None", UNROUTABLE_RESUME)]
+    ):
+        client.post(
+            "/api/candidates/text",
+            json={"resume_text": resume, "name": name,
+                  "phone": f"+919810071{index:03d}"},
+        )
+    values = {
+        c["id"]: client.get(f"/api/recruiter/candidates/{c['id']}").json()[
+            "routing_confidence"
+        ]
+        for c in client.get("/api/recruiter/candidates").json()["candidates"]
+    }
+    present = {v for v in values.values() if v is not None}
+    assert len(present) > 1, f"routing_confidence collapsed to {present} — decorative"
+
+
+def test_routing_confidence_makes_no_model_call(client):
+    """match_family is a pure function of the text and the taxonomy file, and
+    the resume was already loaded for resume_score."""
+    body = onboard(client, name="Routing No LLM", phone="+919810070004")
+    before = client.get("/api/dev/llm").json()["calls"]
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    assert graph["routing_confidence"] is not None
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
