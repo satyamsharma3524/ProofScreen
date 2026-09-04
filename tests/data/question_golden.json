@@ -1,0 +1,1978 @@
+{
+  "_note": [
+    "P2-01 defect corpus for question.validate() (P2-02). AUTHORED BEFORE THE VALIDATOR,",
+    "deliberately: a corpus written afterwards describes the implementation instead of",
+    "testing it. Same rule that made routing_golden.json find substring matching.",
+    "",
+    "THIS IS A DEFECT CORPUS, NOT A CORPUS OF GOOD QUESTIONS. Routing has one correct",
+    "answer per resume; a question does not. What IS decidable is whether a given",
+    "question carries a given defect, so entries label defects and the validator is",
+    "measured on precision and recall against those labels.",
+    "",
+    "`accept` entries are 61% of the corpus ON PURPOSE. A validator that rejects",
+    "everything scores 100% recall, so M6c (accept-rate on good questions) is what",
+    "stops that, and it needs a substantial accept population to mean anything.",
+    "",
+    "`naive_reject_risk` names the rule a naive implementation would wrongly fire on an",
+    "accept entry. Those entries are the whole point of the corpus: each rule has at",
+    "least two, and they are where the rule's real boundary is decided.",
+    "",
+    "INVARIANT: every reject entry carries primary_rule, and primary_rule is present in",
+    "rules[]. Prevents attribution drift inside the corpus itself.",
+    "",
+    "If an entry here is wrong, FIX THE ENTRY and record it in the ledger — never fix it",
+    "by loosening a validator rule until it passes.",
+    "",
+    "No entry may be rejected for fluency, grammar, spelling, register or politeness.",
+    "The Hinglish entries are the test of that (CLAUDE.md rule 6).",
+    "",
+    "TWO FINDINGS FROM AUTHORING, both encoded as entries rather than prose:",
+    "  q63 — a valid T1 transfer probe names TWO fact targets by construction (the",
+    "        method's metric and the target claim's), so R3 must NOT be evaluated on",
+    "        TRANSFER. R6 already constrains which second subject is permitted.",
+    "  q60 — the RENDERED fallback quotes the claim including its figures, so it fails",
+    "        R1 by construction. That is the evidence for runtime bypassing the",
+    "        validator; it is not a defect to fix in question.py."
+  ],
+  "rule_2_threshold": {
+    "metric": "content-word Jaccard over a MINIMAL stopword list",
+    "measured_bands": {
+      "duplicate": [
+        0.4,
+        0.462
+      ],
+      "borderline": [
+        0.111,
+        0.333
+      ],
+      "distinct": [
+        0.0,
+        0.231
+      ]
+    },
+    "recommended_threshold": 0.37,
+    "finding": "AGGRESSIVE stopword removal DESTROYS this signal. Stripping the interrogative words (what/did/you/how/about/do) collapsed the duplicate band to 0.167-0.455 and the distinct band to 0.000-0.250 — an overlap of -0.083, i.e. no separating threshold exists. The interrogative frame IS the duplication signal: 'what did you decide to do about X' repeated with a different X is the defect. A minimal stopword list separates at +0.169 (distinct ceiling 0.231, duplicate floor 0.400), and 0.37 is the midpoint of the usable gap above the highest BORDERLINE pair (0.333). Measured, not guessed — the same discipline that derived MARGIN_FLOOR from the 0.397/0.321 band."
+  },
+  "questions": [
+    {
+      "id": "q01",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "So you cut AHT from 480s to 310s across 28 agents — how did you get it from 480 to 310?",
+      "verdict": "reject",
+      "primary_rule": "answer_leakage",
+      "rules": [
+        "answer_leakage"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "supplies both figures and the headcount the answer was meant to produce"
+    },
+    {
+      "id": "q02",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "You grew activation from 41% to 63% — walk me through how you got to 63%.",
+      "verdict": "reject",
+      "primary_rule": "answer_leakage",
+      "rules": [
+        "answer_leakage"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "the before and after are both handed over; nothing is left to establish"
+    },
+    {
+      "id": "q03",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced AHT from 480s to 310s and raised CSAT from 78% to 91%",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did you reduce AHT and improve CSAT?",
+      "verdict": "reject",
+      "primary_rule": "multiple_fact_targets",
+      "rules": [
+        "multiple_fact_targets"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "resolves to {aht_seconds, csat_pct}. RULING A: the claim bundles two metrics, but question validity must not depend on upstream extraction mistakes — one answer still cannot carry two evidence targets"
+    },
+    {
+      "id": "q04",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Imagine the cache had not helped at all. What would you have tried next?",
+      "verdict": "reject",
+      "primary_rule": "hypothetical_misuse",
+      "rules": [
+        "hypothetical_misuse"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "situational phrasing on VALIDATION, whose job is to establish the scope they actually held"
+    },
+    {
+      "id": "q05",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Ran weekly calibration and cut quality score variance by 22%",
+        "claim_type": "coaching_quality",
+        "claim_metric": "22%",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Was that the calibration round where variance was sitting at 41%?",
+      "verdict": "reject",
+      "primary_rule": "unsupported_metric",
+      "rules": [
+        "unsupported_metric"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "41% appears in no claim and no prior answer — the interviewer invented the figure"
+    },
+    {
+      "id": "q06",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What was your scope on the handle time work — how many agents, which queue, and over what period?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "answer_leakage",
+      "is_fallback": false,
+      "why": "anchors on the claim's words and withholds every one of its numbers: the R1/R7 boundary"
+    },
+    {
+      "id": "q07",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Mentored three juniors through their first production migration",
+        "claim_type": "mentoring",
+        "claim_metric": "three",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did the review side of that look like — how often, and on whose code?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "no_claim_anchor",
+      "is_fallback": false,
+      "why": "shares no word with the claim TEXT; anchors on the claim-type label 'Mentoring and review'"
+    },
+    {
+      "id": "q08",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced AHT from 480s to 310s and raised CSAT from 78% to 91%",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did you reduce AHT?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "multiple_fact_targets",
+      "is_fallback": false,
+      "why": "RULING A, the accept half: one fact target from a bundled claim is a valid question"
+    },
+    {
+      "id": "q09",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced AHT from 480s to 310s and raised CSAT from 78% to 91%",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "VALIDATION",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did you improve CSAT?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "multiple_fact_targets",
+      "is_fallback": false,
+      "why": "RULING A, the other accept half — the interviewer had two valid options and took one"
+    },
+    {
+      "id": "q10",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Handle time ka scope kya tha — kitne agents, aur kaunsi queue?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "code-switched, anchored on handle time; register is never a defect (CLAUDE.md rule 6)"
+    },
+    {
+      "id": "q11",
+      "family": "product",
+      "context": {
+        "claim": "Ran 40 user interviews to find the top three pain points before writing the PRD",
+        "claim_type": "discovery",
+        "claim_metric": "40",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did you pick the users you interviewed, and how many did you end up speaking to?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "asks for the count instead of supplying it, and names no metric value at all"
+    },
+    {
+      "id": "q12",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "claim_type": "reliability",
+        "claim_metric": "12 -> 3",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Which services were in the rotation you owned, and how was on-call split across the team?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target (service_count), no figures offered"
+    },
+    {
+      "id": "q13",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [
+          "How did the handle time work run day to day, and which systems did you use?"
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did this work day to day? Walk me through the steps and the systems you used.",
+      "verdict": "reject",
+      "primary_rule": "duplicate_content",
+      "rules": [
+        "duplicate_content"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "near-identical to the prior question; a second answer adds nothing"
+    },
+    {
+      "id": "q14",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Day to day, how did you keep latency down and uptime up?",
+      "verdict": "reject",
+      "primary_rule": "multiple_fact_targets",
+      "rules": [
+        "multiple_fact_targets"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "resolves to {p95_latency_ms, uptime_pct}"
+    },
+    {
+      "id": "q15",
+      "family": "product",
+      "context": {
+        "claim": "Ran 40 user interviews to find the top three pain points before writing the PRD",
+        "claim_type": "discovery",
+        "claim_metric": "40",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What would you do if a whole segment refused to be interviewed?",
+      "verdict": "reject",
+      "primary_rule": "hypothetical_misuse",
+      "rules": [
+        "hypothetical_misuse"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "OPERATIONAL asks how the work actually ran, not what they would do"
+    },
+    {
+      "id": "q16",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Can you elaborate a bit more on that?",
+      "verdict": "reject",
+      "primary_rule": "no_claim_anchor",
+      "rules": [
+        "no_claim_anchor"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "shares nothing with the claim; the candidate cannot tell what is being asked about"
+    },
+    {
+      "id": "q17",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "TOOL_FAMILIARITY",
+        "prior_questions": [
+          "How did the handle time work run day to day?"
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Which system did you pull the handle time reports out of?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "duplicate_content",
+      "is_fallback": false,
+      "why": "same topic as the prior question, genuinely different ask — the R2 boundary"
+    },
+    {
+      "id": "q18",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced AHT from 480s to 310s and raised CSAT from 78% to 91%",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Day to day, how did you track AHT?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "multiple_fact_targets",
+      "is_fallback": false,
+      "why": "bundled claim, single fact target"
+    },
+    {
+      "id": "q19",
+      "family": "product",
+      "context": {
+        "claim": "Ran 18 experiments against a single north star metric, 5 of which shipped",
+        "claim_type": "experimentation",
+        "claim_metric": "18",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Experiment ka process kya tha — kaise decide karte the ki kaunsa test chalega?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "code-switched, one fact target (experiment_count)"
+    },
+    {
+      "id": "q20",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Walk me through how the cache was rolled out — what were the steps?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "process detail on the claim's own subject, no figures"
+    },
+    {
+      "id": "q21",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did the weekly rhythm look like while you were rebuilding the first-run flow?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "anchored on the claim, zero fact targets named"
+    },
+    {
+      "id": "q22",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Ran weekly calibration and cut quality score variance by 22%",
+        "claim_type": "coaching_quality",
+        "claim_metric": "22%",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Who else scored calls in the calibration, and how did you compare notes?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "anchored on the calibration claim, asking for process rather than numbers"
+    },
+    {
+      "id": "q23",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "claim_type": "reliability",
+        "claim_metric": "12 -> 3",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did the on-call handover run at the end of each week?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "anchored on the on-call claim, asking how the handover actually ran"
+    },
+    {
+      "id": "q24",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [
+          "Tell me about one specific time the first-run flow went wrong."
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about a specific time this went wrong. What happened that week?",
+      "verdict": "reject",
+      "primary_rule": "duplicate_content",
+      "rules": [
+        "duplicate_content"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "a rephrasing of the prior question"
+    },
+    {
+      "id": "q25",
+      "family": "product",
+      "context": {
+        "claim": "Ran 40 user interviews to find the top three pain points before writing the PRD",
+        "claim_type": "discovery",
+        "claim_metric": "40",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about the interview where retention dropped 12% — what did you change after it?",
+      "verdict": "reject",
+      "primary_rule": "unsupported_metric",
+      "rules": [
+        "unsupported_metric"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "12% appears in no claim and no answer; the interviewer invented the evidence"
+    },
+    {
+      "id": "q26",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [
+          "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+          "Ran weekly calibration and cut quality score variance by 22%"
+        ],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about a week when handle time spiked and the queue backed up.",
+      "verdict": "reject",
+      "primary_rule": "scope_drift",
+      "rules": [
+        "scope_drift"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "probing the attrition claim but asking about the handle time claim"
+    },
+    {
+      "id": "q27",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me more.",
+      "verdict": "reject",
+      "primary_rule": "no_claim_anchor",
+      "rules": [
+        "no_claim_anchor"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "no anchor at all; generic to the point of being unanswerable"
+    },
+    {
+      "id": "q28",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [
+          "One week in March it jumped to 520 seconds because of a payments outage."
+        ],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "You mentioned it jumped to 520 seconds that week — what did you do about it?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "unsupported_metric",
+      "is_fallback": false,
+      "why": "520 came from the CANDIDATE's own answer, so quoting it back is not invention — the R5 boundary"
+    },
+    {
+      "id": "q29",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about your worst month for attrition — what actually happened?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target, anchored on the claim being probed"
+    },
+    {
+      "id": "q30",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Koi ek week batao jab handle time bahut badh gaya — us waqt kya hua tha?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "code-switched incident probe, properly anchored"
+    },
+    {
+      "id": "q31",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about a time the cache served something stale — what happened?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "asks for one specific remembered failure on the claim's own subject"
+    },
+    {
+      "id": "q32",
+      "family": "product",
+      "context": {
+        "claim": "Ran 18 experiments against a single north star metric, 5 of which shipped",
+        "claim_type": "experimentation",
+        "claim_metric": "18",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about an experiment that won on the metric you were watching and lost somewhere else.",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target (experiment_count)"
+    },
+    {
+      "id": "q33",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "claim_type": "reliability",
+        "claim_metric": "12 -> 3",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about the worst incident you were paged for on that rotation.",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target (incident_count), anchored"
+    },
+    {
+      "id": "q34",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "You brought attrition from 31% to 18% — what did you decide to do to get it to 18%?",
+      "verdict": "reject",
+      "primary_rule": "answer_leakage",
+      "rules": [
+        "answer_leakage"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "hands over both endpoints of the claim's metric"
+    },
+    {
+      "id": "q35",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [
+          "What did you decide to do about the slow reads, and what did you rule out?"
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did you decide to do about it, and what did you consider but decide against?",
+      "verdict": "reject",
+      "primary_rule": "duplicate_content",
+      "rules": [
+        "duplicate_content"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "the same question already asked, with the subject removed"
+    },
+    {
+      "id": "q36",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced AHT from 480s to 310s and raised CSAT from 78% to 91%",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did you decide to fix first, AHT or CSAT?",
+      "verdict": "reject",
+      "primary_rule": "multiple_fact_targets",
+      "rules": [
+        "multiple_fact_targets"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "two fact targets; the answer cannot be attributed to either"
+    },
+    {
+      "id": "q37",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [
+          "Ran 40 user interviews to find the top three pain points before writing the PRD",
+          "Ran 18 experiments against a single north star metric, 5 of which shipped"
+        ],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did you decide about the interview segments and the PRD scope?",
+      "verdict": "reject",
+      "primary_rule": "scope_drift",
+      "rules": [
+        "scope_drift"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "probing the activation claim, asking about the discovery claim"
+    },
+    {
+      "id": "q38",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [
+          "How did the attrition work run day to day?"
+        ],
+        "prior_answers": [
+          "I ran skip-levels every fortnight and logged every stated reason for leaving."
+        ],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did you decide to do about the leavers, and what did you consider but reject?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "multiple_fact_targets",
+      "is_fallback": false,
+      "why": "two clauses, ONE evidence target, zero fact keys — the shape PROBE_BRIEFS[DECISION] asks for"
+    },
+    {
+      "id": "q39",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [
+          "Ran 40 user interviews to find the top three pain points before writing the PRD",
+          "Ran 18 experiments against a single north star metric, 5 of which shipped"
+        ],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did you decide to change in the first-run flow, and what did you leave alone?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "scope_drift",
+      "is_fallback": false,
+      "why": "stays inside its own claim while other claims exist — the R6 boundary"
+    },
+    {
+      "id": "q40",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Cache add karne ka decision kaise liya — aur kya options reject kiye?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "code-switched decision probe, anchored on cache"
+    },
+    {
+      "id": "q41",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Ran weekly calibration and cut quality score variance by 22%",
+        "claim_type": "coaching_quality",
+        "claim_metric": "22%",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "When you and the QA lead disagreed on a score, how did you settle it?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "anchored on the claim's own subject"
+    },
+    {
+      "id": "q42",
+      "family": "product",
+      "context": {
+        "claim": "Ran 18 experiments against a single north star metric, 5 of which shipped",
+        "claim_type": "experimentation",
+        "claim_metric": "18",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did you decide which experiments to stop early?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target, anchored on the experiments claim, asking for the decision rule"
+    },
+    {
+      "id": "q43",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "claim_type": "reliability",
+        "claim_metric": "12 -> 3",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did you decide what counted as a page-worthy incident?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target, anchored on the claim, and no value is handed over"
+    },
+    {
+      "id": "q44",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "DECISION",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What did you change first on the handle time work, and why that one?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target, no figures supplied"
+    },
+    {
+      "id": "q45",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "p95 went from 900ms to 240ms — how do you know the 240 held?",
+      "verdict": "reject",
+      "primary_rule": "answer_leakage",
+      "rules": [
+        "answer_leakage"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "both endpoints supplied; only the verification is left to the candidate"
+    },
+    {
+      "id": "q46",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Afterwards, what happened to AHT and to shrinkage?",
+      "verdict": "reject",
+      "primary_rule": "multiple_fact_targets",
+      "rules": [
+        "multiple_fact_targets"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "{aht_seconds, shrinkage_pct} — two outcomes, one answer"
+    },
+    {
+      "id": "q47",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [
+          "Every Monday I reviewed the funnel drop-off step by step."
+        ],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Suppose activation had dropped instead. What would you have checked first?",
+      "verdict": "reject",
+      "primary_rule": "hypothetical_misuse",
+      "rules": [
+        "hypothetical_misuse"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "OUTCOME exists to establish what actually happened"
+    },
+    {
+      "id": "q48",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Did attrition hold at 12% afterwards?",
+      "verdict": "reject",
+      "primary_rule": "unsupported_metric",
+      "rules": [
+        "unsupported_metric"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "12% is in neither the claim (31% -> 18%) nor any answer"
+    },
+    {
+      "id": "q49",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Afterwards, how did you know it was the rebuild that moved activation?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "hypothetical_misuse",
+      "is_fallback": false,
+      "why": "asks about what happened, not what would have; one fact target"
+    },
+    {
+      "id": "q50",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Six months on, where did handle time settle, and how did you know?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "answer_leakage",
+      "is_fallback": false,
+      "why": "names the metric, supplies no value — the candidate provides the number"
+    },
+    {
+      "id": "q51",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Baad mein attrition kahan settle hui, aur aapko kaise pata chala?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "code-switched outcome probe, one fact target, no figures"
+    },
+    {
+      "id": "q52",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did you know the latency win held after the cutover?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target named, no value supplied, and it asks how they verified it"
+    },
+    {
+      "id": "q53",
+      "family": "product",
+      "context": {
+        "claim": "Ran 40 user interviews to find the top three pain points before writing the PRD",
+        "claim_type": "discovery",
+        "claim_metric": "40",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What ended up changing in the PRD because of what you heard?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "anchored on the claim, no fact target named"
+    },
+    {
+      "id": "q54",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Ran weekly calibration and cut quality score variance by 22%",
+        "claim_type": "coaching_quality",
+        "claim_metric": "22%",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "After the calibration changes, what happened to the variance between scorers?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "anchored, no figures offered"
+    },
+    {
+      "id": "q55",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "claim_type": "reliability",
+        "claim_metric": "12 -> 3",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "What happened to the incident count after you changed the rotation?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "one fact target, and it asks what the count became rather than asserting it"
+    },
+    {
+      "id": "q56",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [
+          "We shadowed reads for a week before cutting over."
+        ],
+        "other_claims": [
+          "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+          "Mentored three juniors through their first production migration"
+        ],
+        "transfer_target_claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "transfer_operator": "T1"
+      },
+      "question": "Suppose you had to take on the junior mentoring instead. Using shadowed reads, where would you start?",
+      "verdict": "reject",
+      "primary_rule": "scope_drift",
+      "rules": [
+        "scope_drift"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "drifts to a THIRD claim; the planner selected the on-call rotation as the transfer target"
+    },
+    {
+      "id": "q57",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [
+          "Every morning I pulled the five longest calls and reviewed them with the agent."
+        ],
+        "other_claims": [
+          "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+          "Ran weekly calibration and cut quality score variance by 22%"
+        ],
+        "transfer_target_claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "transfer_operator": "T1"
+      },
+      "question": "Suppose you had taken on the weekly calibration instead. Using the daily call reviews, where would you start?",
+      "verdict": "reject",
+      "primary_rule": "scope_drift",
+      "rules": [
+        "scope_drift"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "the planner's target was the attrition claim; this substitutes the calibration claim"
+    },
+    {
+      "id": "q58",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [
+          "Every Monday I reviewed the funnel drop-off step by step."
+        ],
+        "other_claims": [
+          "Ran 40 user interviews to find the top three pain points before writing the PRD",
+          "Ran 18 experiments against a single north star metric, 5 of which shipped"
+        ],
+        "transfer_target_claim": "Ran 40 user interviews to find the top three pain points before writing the PRD",
+        "transfer_operator": "T1"
+      },
+      "question": "Suppose you had taken on the 18 experiments instead. Using the weekly funnel review, where would you start?",
+      "verdict": "reject",
+      "primary_rule": "scope_drift",
+      "rules": [
+        "scope_drift",
+        "unsupported_metric"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "drifts to a third claim AND imports its figure; a deliberate co-occurrence entry for M6h"
+    },
+    {
+      "id": "q59",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "claim_type": "attrition_control",
+        "claim_metric": "31% -> 18%",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [
+          "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process"
+        ],
+        "transfer_target_claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "transfer_operator": "T1"
+      },
+      "question": "Suppose things had gone the other way. What then?",
+      "verdict": "reject",
+      "primary_rule": "no_claim_anchor",
+      "rules": [
+        "no_claim_anchor"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "no anchor to the claim or the transfer target; unanswerable"
+    },
+    {
+      "id": "q60",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": "T3"
+      },
+      "question": "On \"Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache\" — Suppose that had moved the number the wrong way instead. What would you check first, and what would rule a cause out?",
+      "verdict": "reject",
+      "primary_rule": "answer_leakage",
+      "rules": [
+        "answer_leakage"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": true,
+      "why": "THE RENDERED FALLBACK. `On \\\"<claim>\\\" — <base>` quotes the claim including its figures, so the production fallback fails R1 by construction. This entry is the evidence for why runtime bypasses the validator (P2-02 R1) — it is not a bug to fix in question.py"
+    },
+    {
+      "id": "q61",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Cut p95 latency on the checkout service from 900ms to 240ms by adding a read-through cache",
+        "claim_type": "performance_work",
+        "claim_metric": "900ms -> 240ms",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [
+          "We shadowed reads for a week before cutting over."
+        ],
+        "other_claims": [
+          "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+          "Mentored three juniors through their first production migration"
+        ],
+        "transfer_target_claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "transfer_operator": "T1"
+      },
+      "question": "Suppose you had taken on the on-call rotation instead. Using shadowed reads, where would you start?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "scope_drift",
+      "is_fallback": false,
+      "why": "drift to the planner's OWN target is the T1 mechanism, not a defect"
+    },
+    {
+      "id": "q62",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [
+          "Every Monday I reviewed the funnel drop-off step by step."
+        ],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": "T3"
+      },
+      "question": "Suppose reviewing the funnel each week had made things worse instead of better. What is your first hypothesis, and what would rule it out?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "hypothetical_misuse",
+      "is_fallback": false,
+      "why": "the same 'Suppose' opening that q47 is rejected for — legitimate here and only here, keyed on probe_level"
+    },
+    {
+      "id": "q63",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [
+          "Every morning I reviewed the longest calls with the agent."
+        ],
+        "other_claims": [
+          "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters"
+        ],
+        "transfer_target_claim": "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters",
+        "transfer_operator": "T1"
+      },
+      "question": "Suppose you had taken on the attrition problem instead. Using the daily handle time reviews, where would you start?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "multiple_fact_targets",
+      "is_fallback": false,
+      "why": "FINDING: a valid T1 probe names TWO fact targets by construction — the method's metric and the target claim's. R3 must therefore not be evaluated on TRANSFER; R6 already constrains which second subject is allowed"
+    },
+    {
+      "id": "q64",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [
+          "Every Monday I reviewed the funnel drop-off step by step."
+        ],
+        "other_claims": [],
+        "transfer_target_claim": "Ran 40 user interviews to find the top three pain points before writing the PRD",
+        "transfer_operator": "T1"
+      },
+      "question": "Suppose aapko user interviews wala kaam lena hota. Weekly funnel review use karke, kahan se shuru karte?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "code-switched valid T1 to the planner's target"
+    },
+    {
+      "id": "q65",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Ran weekly calibration and cut quality score variance by 22%",
+        "claim_type": "coaching_quality",
+        "claim_metric": "22%",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": "T3"
+      },
+      "question": "Suppose the calibration had made scores less consistent instead. What is your first hypothesis, and what would rule it out?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "valid T3 invert-the-outcome; no second claim needed"
+    },
+    {
+      "id": "q66",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "claim_type": "reliability",
+        "claim_metric": "12 -> 3",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": "T3"
+      },
+      "question": "Suppose changing the rotation had raised incidents instead. What would you check first?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "valid T3, one fact target, anchored on the claim"
+    },
+    {
+      "id": "q67",
+      "family": "product",
+      "context": {
+        "claim": "Ran 18 experiments against a single north star metric, 5 of which shipped",
+        "claim_type": "experimentation",
+        "claim_metric": "18",
+        "probe_level": "TRANSFER",
+        "target_dimension": "CAUSAL_REASONING",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": "T3"
+      },
+      "question": "Suppose the experiment had come out flat instead of winning. What would you look at first, and what would rule a cause out?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "valid T3 on a third family, one fact target"
+    },
+    {
+      "id": "q71",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "VALIDATION",
+        "target_dimension": "SPECIFICITY",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Aapne AHT 480s se 310s tak kaise laaya — 480 se 310 kaise kiya?",
+      "verdict": "reject",
+      "primary_rule": "answer_leakage",
+      "rules": [
+        "answer_leakage"
+      ],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "code-switched and still leaking: both endpoints of the claim's metric are handed over, so the defect is the numerals and not the language"
+    },
+    {
+      "id": "q72",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced AHT from 480s to 310s and raised CSAT from 78% to 91%",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Baad mein AHT aur CSAT dono ka kya hua?",
+      "verdict": "reject",
+      "primary_rule": "multiple_fact_targets",
+      "rules": [
+        "multiple_fact_targets"
+      ],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "two fact targets in a code-switched question — {aht_seconds, csat_pct} resolve the same way whatever language names them"
+    },
+    {
+      "id": "q73",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Agar activation gir jaata to aap kya karte?",
+      "verdict": "reject",
+      "primary_rule": "hypothetical_misuse",
+      "rules": [
+        "hypothetical_misuse"
+      ],
+      "hinglish": true,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "hypothetical on an OPERATIONAL probe; the rule keys on probe_level, never on register"
+    },
+    {
+      "id": "q68",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [
+          "Afterwards, how did you know it was the rebuild that moved activation?"
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Which activation step did you watch most closely afterwards?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "duplicate_content",
+      "is_fallback": false,
+      "why": "shares the topic and the word 'activation' with the prior question while asking something genuinely new — the second R2 boundary case"
+    },
+    {
+      "id": "q69",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [],
+        "prior_answers": [
+          "It settled at 305 seconds after we shortened the disclaimer."
+        ],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "You said it settled at 305 seconds — what were you tracking to know it held?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "unsupported_metric",
+      "is_fallback": false,
+      "why": "305 is the CANDIDATE's own figure and appears in no claim, so it is neither invention nor leakage — the numeral provenance boundary"
+    },
+    {
+      "id": "q70",
+      "family": "product",
+      "context": {
+        "claim": "Ran 18 experiments against a single north star metric, 5 of which shipped",
+        "claim_type": "experimentation",
+        "claim_metric": "18",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did the measurement side work — who set it up each time?",
+      "verdict": "accept",
+      "primary_rule": null,
+      "rules": [],
+      "hinglish": false,
+      "naive_reject_risk": "no_claim_anchor",
+      "is_fallback": false,
+      "why": "shares no word with the claim TEXT; anchors on the claim-type label 'Experimentation and measurement', which is the second R7 boundary case"
+    }
+  ],
+  "jaccard_ladder": [
+    {
+      "id": "j1",
+      "expected": "duplicate",
+      "a": "How did the handle time work run day to day, and which systems did you use?",
+      "b": "How did this work day to day? Walk me through the steps and the systems you used."
+    },
+    {
+      "id": "j2",
+      "expected": "duplicate",
+      "a": "What did you decide to do about the slow reads, and what did you rule out?",
+      "b": "What did you decide to do about it, and what did you consider but decide against?"
+    },
+    {
+      "id": "j3",
+      "expected": "duplicate",
+      "a": "Tell me about one specific time the first-run flow went wrong.",
+      "b": "Tell me about a specific time this went wrong. What happened that week?"
+    },
+    {
+      "id": "j4",
+      "expected": "borderline",
+      "a": "How did you pick the users you interviewed?",
+      "b": "How did you recruit the people you spoke to?"
+    },
+    {
+      "id": "j5",
+      "expected": "borderline",
+      "a": "What happened to attrition afterwards?",
+      "b": "Where did attrition settle six months on?"
+    },
+    {
+      "id": "j6",
+      "expected": "distinct",
+      "a": "How did the handle time work run day to day?",
+      "b": "Which system did you pull the handle time reports out of?"
+    },
+    {
+      "id": "j7",
+      "expected": "distinct",
+      "a": "Tell me about your worst month for attrition.",
+      "b": "How did you decide which leavers to follow up with?"
+    },
+    {
+      "id": "j8",
+      "expected": "distinct",
+      "a": "Walk me through how the cache was rolled out.",
+      "b": "How did you know the latency win held after the cutover?"
+    }
+  ]
+}

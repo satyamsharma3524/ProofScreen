@@ -214,6 +214,17 @@ resets for one phase is an avoidable demo-day hazard.
 11. Suite green and larger: **≥ 210 tests**.
 12. Median turn latency within +20% of the Phase 1 baseline.
 
+## Shipped ledger
+
+Developer B cannot read Developer A's session; this table is the only place
+either learns what the other actually changed. **A task is not done until it has
+a row here, added in the same commit as the code.** Every measured effect is a
+number, not an adjective.
+
+| Commit | Task | Owner | Tests | Measured effect |
+|---|---|---|---|---|
+| `p2-01` | **P2-01** question golden set (defect corpus) | A | 186 → 237 | **73 entries, 44 accept (60.3%) / 29 reject (39.7%)**, authored before the validator exists. 7 rules × 3–6 rejects and ≥ 2 adversarial accepts each; 6 probe levels × both verdicts; 3 families (bpo 32 · product 22 · swe 19); 9 Hinglish (6 accept / 3 reject). 51 tests, **0 production files touched**. **THREE FINDINGS, each encoded as an entry or a test rather than prose.** (1) **Rule 2's threshold is 0.37, measured over an authored 8-pair ladder** — and the measurement inverted the intuition: an *aggressive* stopword list collapses the duplicate and distinct bands into a **−0.083 overlap, so no separating threshold exists**, because the interrogative frame *is* what repeats. A minimal list separates at **+0.169** (distinct ≤ 0.231, duplicate ≥ 0.400); 0.37 is the midpoint above the highest borderline pair (0.333). Guessing the 0.6 the spec sketched would have made rule 2 catch nothing. (2) **A valid T1 transfer probe names two fact targets by construction** (`q63` — the method's metric plus the target claim's), so **rule 3 must not be evaluated on TRANSFER**; rule 6 already constrains which second subject is allowed. (3) **The rendered fallback fails rule 1** (`q60`) — `On "<claim>" — <base>` quotes the claim including its figures, which is the evidence for the runtime bypass and not a defect to fix in `question.py`. **Rule 3 renamed** `double_barrel` → `multiple_fact_targets` before anything persisted it: grammar was the wrong axis, since `PROBE_BRIEFS[DECISION]` deliberately asks a two-clause question about one subject. **Schema delta approved in review:** `rule` → `primary_rule` + `rules[]`, adding **M6h rule attribution** — precision and recall answer *"did we reject the right question?"* and not *"for the intended reason?"*, and without M6h a validator that rejects correctly via the wrong rule looks green while the team tunes the wrong rule. **Defect found in the corpus itself, by measuring it:** the first pass had 6 Hinglish entries and all 6 were accepts, which lets a validator pass the coverage test by learning *code-switched ⇒ accept* — the same bias with the opposite sign. Three Hinglish rejects added, test strengthened to require ≥ 2 |
+
 ## 10. Implementation Order
 
 | Step | Task | Gate before proceeding |
