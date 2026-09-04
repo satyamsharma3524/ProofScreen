@@ -1357,3 +1357,130 @@ def test_routing_confidence_makes_no_model_call(client):
     assert graph["routing_confidence"] is not None
     assert client.get("/api/dev/llm").json()["calls"] == before
 
+
+# ---------------------------------------------------------------------------
+# P1-05 / P1-05a — a non-BPO seed persona
+#
+# Asserted at the persona-declaration level rather than by running seed.py:
+# the suite runs on its own in-memory database, and re-seeding inside a test
+# would couple every assertion here to the demo data's current numbers.
+# The seeded numbers themselves are recorded in the shipped ledger, measured.
+# ---------------------------------------------------------------------------
+
+
+def test_the_three_bpo_personas_still_default_to_bpo():
+    """A GUARD, not a proof — and the distinction matters.
+
+    This test passes with or without step 1, so it records nothing about that
+    change. The no-op was established by MEASUREMENT: the three personas scored
+    56 / 46 / 14 competence before the edit and 56 / 46 / 14 after, with
+    TRANSFER unchanged at 3 probes and zero signals. That measurement is the
+    evidence, and it is recorded in the shipped ledger.
+
+    What this test does is stop the no-op being broken later. The moment
+    someone adds `job_family` to PRIYA, the default path stops being exercised
+    and the baseline comparison silently stops meaning anything.
+    """
+    import seed
+
+    for persona in (seed.PRIYA, seed.ARJUN, seed.ROHIT):
+        assert "job_family" not in persona, (
+            f"{persona['name']} now declares a family; the default path is no "
+            f"longer exercised and the no-op claim is untested"
+        )
+        assert "jd" not in persona, f"{persona['name']} now overrides the JD"
+
+
+def test_the_product_persona_declares_its_family_and_jd():
+    import seed
+
+    assert seed.MAYA["job_family"] == "product"
+    assert seed.MAYA["jd"] is seed.JD_PRODUCT
+    assert seed.MAYA in seed.SEEDS
+    assert len(seed.SEEDS) == 4
+
+
+def test_the_product_resume_routes_to_product():
+    """A cohort added to the taxonomy with zero Python edits, exercised end to
+    end for the first time."""
+    from api.taxonomy import match_family
+
+    import seed
+
+    match = match_family(seed.MAYA["resume"])
+    assert match.family == "product"
+    assert match.confidence > 0.0
+    assert len(match.matched_terms) >= 2
+
+
+def test_the_product_personas_answers_key_to_product_claim_types():
+    """Answers are keyed by claim type, so a new family needs answers keyed to
+    ITS claim types — a BPO key here would silently fall through to the
+    "I don't remember" default and the persona would score like a fabricator."""
+    from api.taxonomy import claim_types
+
+    import seed
+
+    available = set(claim_types("product"))
+    assert set(seed.MAYA["answers"]) <= available, (
+        f"unknown claim types: {set(seed.MAYA['answers']) - available}"
+    )
+    assert len(seed.MAYA["answers"]) >= 3
+
+
+def test_the_product_lens_weights_sum_to_100():
+    import seed
+
+    total = sum(seed.ROLE_PRODUCT_OUTCOME["claim_weights"].values())
+    assert total == 100, f"claim weights sum to {total}"
+    assert seed.ROLE_PRODUCT_OUTCOME["job_family"] == "product"
+
+
+def test_the_product_personas_answers_carry_real_signals():
+    """A's spec step 4: the answers must carry a quantity, a process sequence,
+    one complete cause-action-outcome chain, a specific incident and a defined
+    metric. Checked through the same heuristic extractor the seed runs under,
+    so this measures what the seed will actually produce rather than what the
+    prose looks like."""
+    from api.engine import evidence, signals
+
+    import seed
+
+    merged = signals.merge_signals(
+        [
+            evidence.heuristic_signals(answer, "product")
+            for pool in seed.MAYA["answers"].values()
+            for answer in pool
+        ]
+    )
+    assert merged.quantities, "no quantity anywhere in the product answers"
+    assert merged.process_steps, "no process step"
+    assert any(c.is_complete for c in merged.causal_links), (
+        "no COMPLETE cause-action-outcome chain — product weights CAUSAL_REASONING "
+        "highest (0.238), so this persona would score oddly without one"
+    )
+    assert merged.incident_markers, "no specific remembered incident"
+    assert merged.metric_definitions, "no metric discussed"
+
+
+def test_no_seed_answer_rewards_presentation():
+    """Forbidden everywhere, always. A product persona invites "communicates
+    well"; nothing in the seed may reward polish, fluency or confidence.
+
+    Also a guard rather than a proof: it passes against the pre-change seed too,
+    because the pre-change seed was already clean. Its job is the next persona
+    somebody adds.
+    """
+    import seed
+
+    banned = (
+        "articulate", "well-spoken", "communicates well", "fluent",
+        "confident presence", "polished", "eloquent", "great communicator",
+    )
+    for persona in seed.SEEDS:
+        blob = " ".join(
+            answer for pool in persona["answers"].values() for answer in pool
+        ).lower()
+        for phrase in banned:
+            assert phrase not in blob, f"{persona['name']} rewards presentation: {phrase!r}"
+

@@ -1,13 +1,14 @@
 {
   "_note": "Reference evidence graph — the exact shape of GET /api/recruiter/candidates/{id}. GENERATED from the real engine by `python seed.py` and then `scripts/dump_fixture.py`, never hand-written, so the fixture and the rubrics can never drift apart. tests/test_pipeline.py asserts every claim_score here is what engine/signals.py + engine/scoring.py recompute from the stored dimension scores. Served live at GET /api/dev/fixture.",
   "candidate": {
-    "id": "c_677827",
+    "id": "c_cacf97",
     "name": "Priya Raghavan",
     "role": "Support Team Lead",
     "phone": "+919810000001"
   },
   "job_family": "bpo_operations",
   "job_family_label": "BPO / Contact Centre Operations",
+  "routing_confidence": 0.718687,
   "scored_for": null,
   "state": "COMPLETE",
   "questions_asked": 12,
@@ -96,7 +97,7 @@
   ],
   "claims": [
     {
-      "id": "cl_be784e",
+      "id": "cl_875b11",
       "text": "Improved CSAT from 78% to 92% in four quarters by redesigning the escalation workflow",
       "claim_type": "csat_improvement",
       "claim_type_label": "CSAT improvement",
@@ -182,8 +183,8 @@
           "answer": "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_f8cfa4",
-          "response_id": "r_d2bcb3",
+          "question_id": "q_054ccf",
+          "response_id": "r_94adc7",
           "answer_score": 37
         },
         {
@@ -192,8 +193,8 @@
           "answer": "CSAT is measured from the post-interaction survey, as the percentage of 4 and 5 ratings out of all responses. I reviewed it in Zendesk every Monday against the reopen report.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_dfef69",
-          "response_id": "r_91b933",
+          "question_id": "q_d9dff4",
+          "response_id": "r_7ac011",
           "answer_score": 30
         },
         {
@@ -202,8 +203,8 @@
           "answer": "The worst month was when a billing system change went out unannounced and CSAT dropped nine points in a week. I had agents log every affected account so we could call them back before they escalated.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_bf2864",
-          "response_id": "r_8fba67",
+          "question_id": "q_aacda0",
+          "response_id": "r_e81a14",
           "answer_score": 18
         },
         {
@@ -212,8 +213,8 @@
           "answer": "Afterwards the reopen rate halved and we held CSAT above 90 for the next two quarters. Looking back I would have started the coaching cadence a month earlier because the retraining only paid off once calibration was consistent.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_426406",
-          "response_id": "r_6d28cc",
+          "question_id": "q_3c51b0",
+          "response_id": "r_f8c32c",
           "answer_score": 49
         },
         {
@@ -222,8 +223,8 @@
           "answer": "Afterwards the reopen rate halved and we held CSAT above 90 for the next two quarters. Looking back I would have started the coaching cadence a month earlier because the retraining only paid off once calibration was consistent.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_ece60a",
-          "response_id": "r_65d143",
+          "question_id": "q_9b9fae",
+          "response_id": "r_f2323d",
           "answer_score": 49
         }
       ],
@@ -267,7 +268,7 @@
       ]
     },
     {
-      "id": "cl_062a9a",
+      "id": "cl_40f0e3",
       "text": "Reduced AHT from 480 seconds to 430 seconds by rewriting the call opening scripts",
       "claim_type": "aht_control",
       "claim_type_label": "AHT / productivity control",
@@ -334,8 +335,8 @@
           "answer": "AHT came down a bit after the script rewrite but I don't have the exact numbers in front of me now.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_348ec1",
-          "response_id": "r_780fd2",
+          "question_id": "q_73e760",
+          "response_id": "r_8cba9a",
           "answer_score": 0
         },
         {
@@ -344,8 +345,8 @@
           "answer": "I don't remember the details of how we measured it.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_2db0eb",
-          "response_id": "r_434ff5",
+          "question_id": "q_d2905f",
+          "response_id": "r_0621f6",
           "answer_score": 6
         }
       ],
@@ -353,7 +354,7 @@
       "facts": []
     },
     {
-      "id": "cl_5ec74f",
+      "id": "cl_cda76d",
       "text": "Managed a team of 35 agents across 4 pods with 4 senior associates reporting to me",
       "claim_type": "team_handling",
       "claim_type_label": "Team handling",
@@ -437,8 +438,8 @@
           "answer": "I had 35 agents in four pods, and each pod had a senior associate reporting to me. I ran daily attendance tracking and a weekly calibration with the quality team.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_edd319",
-          "response_id": "r_22fa04",
+          "question_id": "q_978a3b",
+          "response_id": "r_881dc5",
           "answer_score": 41
         },
         {
@@ -447,8 +448,8 @@
           "answer": "Every morning I pulled the queue report, then ran a fifteen minute huddle, then reviewed the previous day's escalations with the two pod seniors before assigning coaching slots.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_76d738",
-          "response_id": "r_14750a",
+          "question_id": "q_826cfd",
+          "response_id": "r_61f7ad",
           "answer_score": 20
         },
         {
@@ -457,8 +458,8 @@
           "answer": "I remember the week before month-end when three agents resigned on the same day and the queue backed up to nine hours. I moved two people off email onto voice and personally handled the top twelve escalations that Saturday.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_928531",
-          "response_id": "r_4348fd",
+          "question_id": "q_63f458",
+          "response_id": "r_d17a9e",
           "answer_score": 30
         },
         {
@@ -467,8 +468,8 @@
           "answer": "I decided not to hire replacements immediately because onboarding takes six weeks, so instead I cross-trained four email agents onto voice, which meant we covered the gap without new headcount.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_0a3d17",
-          "response_id": "r_272a80",
+          "question_id": "q_da5cb5",
+          "response_id": "r_c36bb1",
           "answer_score": 18
         },
         {
@@ -477,8 +478,8 @@
           "answer": "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_a0ba27",
-          "response_id": "r_2d9840",
+          "question_id": "q_90f0ec",
+          "response_id": "r_47731f",
           "answer_score": 48
         }
       ],
@@ -494,5 +495,5 @@
       ]
     }
   ],
-  "computed_at": "2026-09-02T16:50:15.606360Z"
+  "computed_at": "2026-09-04T06:29:44.645200Z"
 }

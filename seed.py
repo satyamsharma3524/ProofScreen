@@ -56,6 +56,13 @@ JD_BPO = (
     "and report SLA attainment to operations leadership. Genesys, Zendesk, Excel."
 )
 
+JD_PRODUCT = (
+    "Product Manager for a self-serve SaaS product: own activation and retention, "
+    "run user research and discovery, define the north star metric, prioritise the "
+    "roadmap against it, run A/B tests, and ship launches with engineering and "
+    "design. Product analytics, experimentation, PRDs."
+)
+
 # Answers are keyed by CLAIM TYPE, not by question number, because the adaptive
 # policy decides which claim gets probed next — a flat list would attach a
 # people answer to an AHT question and the seed would be nonsense.
@@ -221,7 +228,102 @@ calibration, operations leadership reporting, Genesys, Zendesk, Excel
     },
 }
 
-SEEDS = [PRIYA, ARJUN, ROHIT]
+# P1-05a — a non-BPO persona.
+#
+# WHY THIS EXISTS. A single-family seed cannot demonstrate that the six rubrics
+# and the transfer probe are cohort-neutral, and that neutrality is the
+# product's central claim. docs/TRANSFER_DESIGN_AUDIT.md 6 PS-004 puts it
+# plainly: "the audit's whole point is undermined if the only demonstration is
+# a call centre."
+#
+# `product` was added to the taxonomy by A with zero Python edits -- the
+# "cohort #101" criterion. This persona is the first end-to-end exercise of it:
+# a different family, different claim types, different fact keys, and the same
+# engine, untouched.
+#
+# NOTE ON THE ANSWERS. Product dimension weights put CAUSAL_REASONING highest
+# (0.238) and TOOL_FAMILIARITY near zero (0.048), so this persona's score is
+# driven by cause-action-outcome chains and defined metrics. An answer set
+# written like an engineer's would score oddly here -- that is the weights
+# working, not a bug.
+#
+# And nothing below rewards presentation. A product persona invites "communicates
+# well"; that is forbidden everywhere, always. Every signal here is a quantity, a
+# process step, a causal chain, a remembered incident or a defined metric.
+MAYA = {
+    "name": "Maya Krishnan",
+    "role": "Product Manager",
+    "phone": "+919810000004",
+    "email": "maya.k@example.com",
+    "job_family": "product",
+    "jd": JD_PRODUCT,
+    "resume": """Maya Krishnan - Product Manager, Bengaluru
+
+EXPERIENCE
+Product Manager, Loomwork (self-serve SaaS)
+- Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow
+- Ran 40 user interviews to find the top three pain points before writing the PRD
+- Ran 18 experiments against a single north star metric, 5 of which shipped
+
+SKILLS
+Product analytics, roadmap, discovery, A/B testing, MVP scoping, SQL
+""",
+    "answers": {
+        "outcome_ownership": [
+            "Activation was 41% when I took it over and 63% two quarters later. We "
+            "measured activation as the percentage of new signups completing their "
+            "first project within seven days.",
+
+            "Every Monday I reviewed the funnel drop-off step by step, then picked "
+            "the single worst step for that week's build. We tracked each step's "
+            "completion rate in the product analytics dashboard.",
+
+            "I remember the week we shipped a new empty state and activation dropped "
+            "four points overnight. I rolled it back that same afternoon, and we found "
+            "the new copy had pushed the primary action below the fold.",
+
+            "Activation was stalling because new users never saw their own data, so we "
+            "pre-filled a sample project on first login and completion rose from 41% "
+            "to 63%.",
+
+            "Afterwards day-30 retention held at 58% for two quarters. I would have "
+            "instrumented the funnel before rebuilding it rather than after, because "
+            "we spent three weeks guessing at which step was losing people.",
+        ],
+        "discovery": [
+            "I ran 40 user interviews across three segments over six weeks. The top "
+            "pain point was that people could not tell whether their import had "
+            "actually worked.",
+
+            "First I recruited from the churned cohort rather than active users, then "
+            "I ran every interview myself, and I tagged each transcript against the "
+            "problem statement so we could count how often each pain point came up.",
+
+            "One interview changed the roadmap. An operations lead showed me she was "
+            "exporting to a spreadsheet every morning because our dashboard could not "
+            "show week-on-week change, so we built that view and her team stopped "
+            "exporting.",
+
+            "We validated it with a survey of 300 users before building anything, and "
+            "61% named the same problem unprompted.",
+        ],
+        "experimentation": [
+            "We ran 18 experiments that year and shipped 5 of them. Significance was "
+            "computed at 95% with a two-week minimum run, so a test that could not "
+            "reach the sample size never started.",
+
+            "The hypothesis was that the second step was where people dropped, so we "
+            "removed it entirely, and completion rose nine points.",
+
+            "I remember one test where the variant won on activation but lost on "
+            "day-30 retention, so we did not ship it. That was the month we added "
+            "retention as a guardrail metric on every experiment.",
+        ],
+    },
+}
+
+
+SEEDS = [PRIYA, ARJUN, ROHIT, MAYA]
 
 ROLE_PEOPLE_FIRST = {
     "title": "Team Lead — People First",
@@ -247,6 +349,18 @@ ROLE_OPS_EXCELLENCE = {
     },
 }
 
+ROLE_PRODUCT_OUTCOME = {
+    "title": "Product Manager — Outcome First",
+    "job_family": "product",
+    "claim_weights": {
+        "outcome_ownership": 40,
+        "experimentation": 25,
+        "discovery": 20,
+        "launch_delivery": 10,
+        "prioritisation": 5,
+    },
+}
+
 
 async def seed_person(db, person: dict) -> dict:
     """Run the real pipeline over hand-written answers."""
@@ -256,14 +370,17 @@ async def seed_person(db, person: dict) -> dict:
         role=person["role"],
         phone=person["phone"],
         email=person["email"],
-        job_family="bpo_operations",
+        # P1-05a: from the persona, defaulting to BPO so the three original
+        # personas are byte-identical after this change. That no-op is the
+        # strongest assertion in this task -- verified before anything was added.
+        job_family=person.get("job_family", "bpo_operations"),
     )
     resume = Resume(
         id=ids.resume_id(),
         candidate_id=candidate.id,
         raw_text=normalise(person["resume"]),
         filename=f"{person['name'].split()[0].lower()}_resume.pdf",
-        job_description=JD_BPO,
+        job_description=person.get("jd", JD_BPO),
     )
     db.add(candidate)
     db.add(resume)
@@ -325,7 +442,7 @@ async def main(reset: bool) -> None:
         print(f"seeding into {settings.database_url.split('@')[-1]}\n")
 
         roles = []
-        for spec in (ROLE_PEOPLE_FIRST, ROLE_OPS_EXCELLENCE):
+        for spec in (ROLE_PEOPLE_FIRST, ROLE_OPS_EXCELLENCE, ROLE_PRODUCT_OUTCOME):
             role = await graph_engine.create_role(
                 db,
                 title=spec["title"],
