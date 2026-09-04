@@ -39,12 +39,13 @@ developer contracts for what a row has to carry.
 | `e321265` | *(unplanned)* `product` family + `y → ies` matching | A | 136 → 137 | Family added with **zero Python edits** — the "cohort #101" criterion, first exercised end to end. Inert for existing routing: 0 family changes across 57 pre-existing golden resumes. `y → ies` measured at 0 family changes and 0.0000 confidence drift on all 64 |
 | `p1-08a` | **P1-08a** `GET /api/dev/detect` | A | 137 → 142 | Routing explainable — matched terms, per-family scores, margin and the family it is measured against — at **0 LLM calls** (verified before/after via `/api/dev/llm`). No `schemas.py` edit: returns a plain dict like the other dev GETs. **Completes Developer A's Phase 1 queue** |
 | `p1-09` | **P1-09** `candidate_outcomes` | B | 142 → 146 | 12 → 13 tables. The row that makes the objective falsifiable: until a human decision is stored, M4a has no second column. Append-only by shape (no unique key on `candidate_id`), `role_id` `SET NULL` so deleting a lens cannot delete a rejection. All 4 tests verified to fail against the pre-change file. **Measured, and raised under §9:** SQLite runs `PRAGMA foreign_keys=0`, so all **17** `ondelete` clauses in `models.py` (15 CASCADE, 2 SET NULL) are inert under the suite and enforced only on Postgres — the SET NULL test asserts the *declaration* via metadata instead. Pragma left off: `api/db.py` is in neither ownership list and re-arming 17 clauses at once is not a table task |
+| `p1-10` | **P1-10** outcome endpoints | B | 146 → 152 | Round trip verified: a decision recorded against a candidate **and a lens**, read back oldest-first, ordinal ladder intact. Unknown candidate and unknown `role_id` both 404 — an unknown lens is an error, not a null column, because "rejected under the Ops lens" and "rejected" group differently in M4a. **Circularity guard shipped:** `test_recording_an_outcome_changes_no_score` pins that recording a decision moves no score — an outcome endpoint that recomputed a profile would make M4a correlate the system with itself. All 6 tests verified to fail against the pre-change file; 2 initially passed both ways (a missing route also 404s, and a 404 spends no tokens) and were strengthened to assert the detail string and the 201 |
 
 **Current measured state**
 
 | | |
 |---|---|
-| Tests | **146 passing** |
+| Tests | **152 passing** |
 | Families | **9** (8 real + `general`) |
 | Golden set | 64 entries — 60 labelled, 4 ambiguous |
 | Routing accuracy | **98.3%** (M5b target 95%) |

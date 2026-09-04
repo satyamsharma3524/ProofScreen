@@ -787,3 +787,145 @@ def test_role_id_is_declared_set_null_and_the_outcome_survives():
 
     assert asyncio.run(scenario()), "deleting a lens destroyed the hiring decision"
 
+
+# ---------------------------------------------------------------------------
+# P1-10 — outcome endpoints
+# ---------------------------------------------------------------------------
+
+
+def _decided_candidate(client, name: str, phone: str) -> str:
+    """A candidate who has been through an interview, so their scores exist and
+    can be compared before and after an outcome is recorded."""
+    body = onboard(client, name=name, phone=phone)
+    run_interview(client, body["session_id"])
+    return body["candidate_id"]
+
+
+def test_outcome_can_be_recorded_and_retrieved(client):
+    """Round trip, against a candidate AND a role lens — the lens is what makes
+    a decision interpretable later."""
+    candidate_id = _decided_candidate(client, "Outcome Round Trip", "+919810020001")
+    role_id = client.post(
+        "/api/recruiter/roles",
+        json={"title": "Outcome Lens", "job_family": "bpo_operations",
+              "claim_weights": {"team_handling": 60, "csat_improvement": 40}},
+    ).json()["id"]
+
+    resp = client.post(
+        f"/api/recruiter/candidates/{candidate_id}/outcome",
+        json={"decision": "shortlisted", "stage": "phone screen",
+              "role_id": role_id, "decided_by": "recruiter@example.com",
+              "note": "strong on ownership"},
+    )
+    assert resp.status_code == 201, resp.text
+    written = resp.json()
+    assert written["id"].startswith("o_")
+    assert written["decision"] == "shortlisted"
+    assert written["role_id"] == role_id
+    assert written["decided_at"]
+
+    history = client.get(f"/api/recruiter/candidates/{candidate_id}/outcomes").json()
+    assert [o["id"] for o in history] == [written["id"]]
+    assert history[0]["note"] == "strong on ownership"
+
+
+def test_outcome_history_is_ordered_oldest_first(client):
+    """The validation report reads these as a progression, so chronological is
+    the order the data is consumed in."""
+    candidate_id = _decided_candidate(client, "Outcome Ordering", "+919810020002")
+    for decision in ("shortlisted", "interviewed", "offered"):
+        assert client.post(
+            f"/api/recruiter/candidates/{candidate_id}/outcome",
+            json={"decision": decision},
+        ).status_code == 201
+
+    history = client.get(f"/api/recruiter/candidates/{candidate_id}/outcomes").json()
+    assert [o["decision"] for o in history] == ["shortlisted", "interviewed", "offered"]
+
+    # And the ordinal the report depends on survives the round trip.
+    from api.schemas import OutcomeDecision
+
+    ladder = [d.value for d in OutcomeDecision]
+    positions = [ladder.index(o["decision"]) for o in history]
+    assert positions == sorted(positions), "the decision ladder inverted in storage"
+
+
+def test_invalid_decision_is_rejected(client):
+    """The ordinal scale is load-bearing for M4a, so an off-scale value must
+    never reach the table."""
+    candidate_id = _decided_candidate(client, "Bad Decision", "+919810020003")
+    resp = client.post(
+        f"/api/recruiter/candidates/{candidate_id}/outcome",
+        json={"decision": "vibes"},
+    )
+    assert resp.status_code == 422
+
+
+def test_outcome_against_an_unknown_candidate_or_role_is_404(client):
+    """An orphan outcome is invisible to ranking but would still inflate
+    n_decided, and an unknown lens must not degrade into a null column.
+
+    Asserts the DETAIL, not just the status. A missing route also returns 404,
+    so a bare status check here passed before the routes existed — recording
+    nothing. The detail string is what distinguishes "we looked and there is no
+    such candidate" from "there is no such endpoint".
+    """
+    missing = client.post(
+        "/api/recruiter/candidates/c_nope/outcome", json={"decision": "rejected"}
+    )
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "candidate not found"
+
+    history = client.get("/api/recruiter/candidates/c_nope/outcomes")
+    assert history.status_code == 404
+    assert history.json()["detail"] == "candidate not found"
+
+    candidate_id = _decided_candidate(client, "Unknown Lens", "+919810020004")
+    bad_lens = client.post(
+        f"/api/recruiter/candidates/{candidate_id}/outcome",
+        json={"decision": "rejected", "role_id": "jr_nope"},
+    )
+    assert bad_lens.status_code == 404
+    assert "jr_nope" in bad_lens.json()["detail"]
+
+
+def test_recording_an_outcome_changes_no_score(client):
+    """THE CIRCULARITY GUARD. A recruiter's decision is the independent
+    variable in M4a. If recording one fed back into any score, the headline
+    metric would correlate the system with itself and mean nothing."""
+    candidate_id = _decided_candidate(client, "No Feedback Loop", "+919810020005")
+    before = client.get(f"/api/recruiter/candidates/{candidate_id}").json()
+
+    assert client.post(
+        f"/api/recruiter/candidates/{candidate_id}/outcome",
+        json={"decision": "hired", "note": "should not move a number"},
+    ).status_code == 201
+
+    after = client.get(f"/api/recruiter/candidates/{candidate_id}").json()
+    for field in (
+        "resume_score", "weighted_evidence_score", "competence_score",
+        "badge", "role_coverage",
+    ):
+        assert before[field] == after[field], f"{field} moved when an outcome was recorded"
+    assert [c["claim_score"] for c in before["claims"]] == [
+        c["claim_score"] for c in after["claims"]
+    ]
+
+
+def test_recording_an_outcome_makes_no_model_call(client):
+    """Asserts the write SUCCEEDED before checking the counter. A 404 also
+    spends no tokens, so without the 201 assertion this test passed against a
+    repo with no outcome routes at all."""
+    candidate_id = _decided_candidate(client, "Outcome No LLM", "+919810020006")
+    before = client.get("/api/dev/llm").json()["calls"]
+
+    written = client.post(
+        f"/api/recruiter/candidates/{candidate_id}/outcome",
+        json={"decision": "rejected"},
+    )
+    assert written.status_code == 201, "nothing was written, so nothing is proven"
+    read_back = client.get(f"/api/recruiter/candidates/{candidate_id}/outcomes")
+    assert read_back.status_code == 200 and read_back.json()
+
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
