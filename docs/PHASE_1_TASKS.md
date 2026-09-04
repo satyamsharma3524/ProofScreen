@@ -51,10 +51,15 @@ developer contracts for what a row has to carry.
 | | |
 |---|---|
 | Tests | **180 passing** |
-| Families | **9** (8 real + `general`) |
+| Families | **10** (9 real + `general`) |
 | Golden set | 64 entries — 60 labelled, 4 ambiguous |
 | Routing accuracy | **98.3%** (M5b target 95%) |
+| Seeded cohorts | **2** — `bpo_operations` (3 personas) + `product` (1) |
+| Role lenses | **3** — two BPO, one product |
+| Developer A queue | **closed** through P1-08a |
+| Developer B queue | **closed** through P1-05 |
 | Known miss | `g21` — one keyword (`npa`) is below the two-term floor. Correct behaviour, generous label |
+
 
 **Open, logged, not fixed**
 
@@ -273,13 +278,78 @@ P1-09 ──▶ P1-10                  (independent)
 Reset procedure, run once when P1-09 lands:
 `docker compose down -v && docker compose up --build && docker compose exec api python seed.py && python scripts/dump_fixture.py && pytest -q`
 
-## Phase exit checklist
+## Phase exit checklist — measured 2026-09-04
 
-- [ ] 103 → **≥ 118** tests passing
-- [ ] M1b = 100% · M1a ≥ 80% · M1c ≥ 70%
-- [ ] M2b ≥ 2.0×
-- [ ] M3a ≥ 20 · M3b < 15% · M3c ≥ 40%
-- [ ] M5a ≥ 90% · M5b ≥ 95% · M5c ≤ 2%
-- [ ] **M4a published**, whichever direction it points
-- [ ] All guardrails green; no anti-bias test edited
-- [ ] `TRANSFER_PROBE=false` reproduces the pre-phase system exactly
+All fourteen tasks are merged. Six criteria are met, four are not, and the
+four are reported rather than worked around.
+
+| | Criterion | Measured | Verdict |
+|---|---|---|---|
+| ✅ | 103 → ≥ 118 tests | **180** | met |
+| ✅ | **M1b = 100%** *(correctness invariant)* | 100% on 3 stalled claims | met |
+| ❌ | M1a ≥ 80% | **25%** | **unreachable as specified** — see below |
+| ✅ | M1c ≥ 70% | 100% | met |
+| ❌ | M2a ≥ +15% | **0%** | see below |
+| ❌ | M2b ≥ 2.0× | **n/a** | no transfer probe reaches the top tercile |
+| ⚠️ | M3a ≥ 20 | **19.2 pts** | 0.8 short at n = 4 |
+| ✅ | M3b < 15% | 0% | met |
+| ✅ | M3c ≥ 40% | 50% | met |
+| ❌ | M5a ≥ 90% | **81.7%** | floor-based; no margin threshold exists |
+| ✅ | M5b ≥ 95% | 98.3% | met |
+| ✅ | M5c ≤ 2% | 0% | met |
+| ✅ | **M4a published** | `insufficient data (n < 30)` at n = 0 | **met** — published as the floor requires |
+| ✅ | Guardrails green, no anti-bias test edited | `test_scoring.py` diff = 0 lines | met |
+| ✅ | `TRANSFER_PROBE=false` reproduces the pre-phase system | 0 probes; competence 46 / 61 / 56 / 14 **identical** both ways; suite green | met |
+
+### The four that are not met, and why none of them is a code defect
+
+**M1a (25% vs ≥ 80%) — the target contradicts the mechanism.** TRANSFER fires
+*only* on a stalled claim; that is the activation rule D1 specified and
+acceptance criterion 1 pins. So M1a is bounded by the stall rate, and reaching
+80% would require 80% of candidates to stall — which on a healthy pipeline
+would be alarming rather than good. One of the two numbers is wrong, and it is
+not the code: **M1b (reach *on stalled claims*) is the metric that measures
+what the probe was built to do, and it is at 100%.** Recommend M1a be
+re-specified against stalled sessions, or dropped. Not changed here —
+`PHASE_1_SUCCESS_METRICS.md` is frozen and the activation rule is A's.
+
+**M2a (0%) and M2b (n/a) — correct behaviour, wrong population.** Only the
+fabricator is transfer-probed, and his three transfer answers score
+`signals_found = 0`. That is **C1 working exactly as written**: *"a fabricator
+should produce near-zero signals on a transfer probe."* M2a's +15% target and
+M2b's separation ratio both need a transfer-probed candidate who *does* have
+evidence, and the seed has none because the three honest personas never stall.
+Both become measurable with real candidates; neither is measurable on authored
+demo data by construction.
+
+**M5a (81.7% vs ≥ 90%) — the metric names a threshold that does not exist.**
+It is defined as "% routed above the margin threshold", but P1-06 ships no
+margin threshold: `match_family()` falls back on a two-term floor. Reported
+floor-based and labelled as such in the report output. Configuring a threshold
+is a change to A's `taxonomy.py` and belongs with the low-confidence *flag*
+that D2 describes and P1-06 did not ship.
+
+**M3a (19.2 vs ≥ 20) — an artifact of n = 4.** It was 21 pts on three personas
+and fell when Maya (competence 61) landed between Priya and Arjun, compressing
+the interquartile range. An IQR over four candidates moves several points per
+candidate added; the number is honest and the sample is too small for it to
+mean much either way.
+
+### What Phase 1 cannot exit on, and what would fix it
+
+**M4a needs 30 decided candidates per cohort and has 0.** The apparatus is
+built and tested end to end — table, endpoints, report, HTTP surface, the
+minimum-n guard — and it correctly reports `insufficient data`. No synthetic
+decisions were seeded, deliberately: the metrics document says *do not
+estimate*, and a correlation over four authored personas would look like
+evidence while being none.
+
+Two honest routes to the number, both already named in the plan's risk register:
+
+1. Record real decisions through
+   `POST /api/recruiter/candidates/{id}/outcome` as recruiters work.
+2. Run the **blind panel** — three reviewers rank candidates from resumes
+   alone, then from evidence graphs, and correlate.
+
+Until one of those produces n ≥ 30, M4a stays published as insufficient. That
+is the finding, and it is the honest one.
