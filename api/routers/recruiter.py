@@ -8,6 +8,7 @@ POST /api/recruiter/roles                    create one
 GET  /api/recruiter/taxonomy                 families, claim types, default weights
 POST /api/recruiter/candidates/{id}/outcome  record a hiring decision
 GET  /api/recruiter/candidates/{id}/outcomes decision history, oldest first
+GET  /api/recruiter/validation               M4 — score vs recruiter decision
 
 The `role_id` parameter is the product. Every dimension score is already
 stored, so passing a different role recomputes the ranking from rows we
@@ -37,6 +38,7 @@ from api.schemas import (
     RankedCandidates,
     RoleOut,
     RoleWeightsIn,
+    ValidationOut,
 )
 from api.taxonomy import (
     claim_types,
@@ -178,6 +180,41 @@ async def outcome_history(
         )
     ).scalars().all()
     return [OutcomeOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.get("/validation", response_model=ValidationOut)
+async def validation(
+    minimum_n: int = Query(
+        30,
+        ge=1,
+        le=10_000,
+        description=(
+            "Sample-size floor below which correlations are WITHHELD, never "
+            "estimated. The response echoes the value used."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> ValidationOut:
+    """M4 — score against recruiter decision. The metric Phase 1 exists to produce.
+
+    ONE IMPLEMENTATION, TWO SURFACES. This calls the same `build_report()` that
+    `scripts/validation_report.py` prints, so the number on a screen and the
+    number in a terminal cannot disagree. Re-implementing the maths here would
+    guarantee they eventually do.
+
+    `minimum_n` is adjustable so a reviewer can inspect the arithmetic on thin
+    data deliberately rather than by accident. The response carries the floor it
+    used, so a correlation computed under a lowered one can never be quoted as
+    the real M4a.
+
+    Below the floor: `sufficient=false`, both correlations `null`. A Spearman
+    coefficient over four candidates looks like evidence and is not.
+    """
+    # Imported here rather than at module scope: the report pulls in the whole
+    # engine, and this router is imported at app startup.
+    from scripts.validation_report import build_report, collect
+
+    return build_report(await collect(db), minimum_n)
 
 
 @router.get("/taxonomy")

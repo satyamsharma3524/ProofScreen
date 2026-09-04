@@ -1192,3 +1192,78 @@ def test_report_makes_no_model_calls(client):
     assert "ProofScreen" in asyncio.run(run())
     assert client.get("/api/dev/llm").json()["calls"] == before
 
+
+# ---------------------------------------------------------------------------
+# P1-12 — GET /api/recruiter/validation
+# ---------------------------------------------------------------------------
+
+
+def test_validation_endpoint_matches_the_script(client):
+    """One implementation, two surfaces. If these drift, one of them is lying."""
+    import asyncio
+
+    from api.db import SessionLocal
+    from scripts.validation_report import build_report, collect
+
+    body = onboard(client, name="Endpoint Parity", phone="+919810060001")
+    run_interview(client, body["session_id"])
+    client.post(
+        f"/api/recruiter/candidates/{body['candidate_id']}/outcome",
+        json={"decision": "shortlisted"},
+    )
+
+    served = client.get("/api/recruiter/validation").json()
+
+    async def run():
+        async with SessionLocal() as db:
+            return build_report(await collect(db))
+
+    direct = asyncio.run(run())
+
+    assert served["minimum_n"] == direct.minimum_n
+    assert served["overall"]["n_decided"] == direct.overall.n_decided
+    assert served["overall"]["sufficient"] is direct.overall.sufficient
+    assert served["overall"]["competence_correlation"] == direct.overall.competence_correlation
+    assert served["overall"]["resume_correlation"] == direct.overall.resume_correlation
+    assert served["overall"]["inversions_caught"] == direct.overall.inversions_caught
+    assert {c["job_family"] for c in served["cohorts"]} == {
+        c.job_family for c in direct.cohorts
+    }
+
+
+def test_validation_endpoint_withholds_below_the_floor(client):
+    """The default floor is 30 and it is echoed, so a number computed under a
+    lowered floor can never be mistaken for the real M4a."""
+    body = onboard(client, name="Endpoint Withhold", phone="+919810060002")
+    run_interview(client, body["session_id"])
+    client.post(
+        f"/api/recruiter/candidates/{body['candidate_id']}/outcome",
+        json={"decision": "hired"},
+    )
+
+    default = client.get("/api/recruiter/validation").json()
+    assert default["minimum_n"] == 30
+    assert default["overall"]["sufficient"] is False
+    assert default["overall"]["competence_correlation"] is None
+    assert default["overall"]["n_decided"] >= 1
+
+    lowered = client.get("/api/recruiter/validation?minimum_n=1").json()
+    assert lowered["minimum_n"] == 1, "the response must state the floor it used"
+    assert lowered["overall"]["sufficient"] is True
+
+
+def test_validation_out_is_now_published_in_openapi(client):
+    """P1-00's verification note: FastAPI publishes only schemas reachable from
+    a route, so ValidationOut was correctly absent until this endpoint landed."""
+    spec = client.get("/openapi.json").json()
+    assert "/api/recruiter/validation" in spec["paths"]
+    assert "ValidationOut" in spec["components"]["schemas"]
+    assert "ValidationCohort" in spec["components"]["schemas"]
+
+
+def test_validation_endpoint_makes_no_model_call(client):
+    before = client.get("/api/dev/llm").json()["calls"]
+    resp = client.get("/api/recruiter/validation")
+    assert resp.status_code == 200 and resp.json()["generated_at"]
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
