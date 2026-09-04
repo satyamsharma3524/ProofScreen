@@ -722,16 +722,27 @@ def test_outcome_rows_are_append_only():
     assert earlier_stage == "phone screen"
 
 
-def test_role_id_is_declared_set_null_and_the_outcome_survives():
+def test_role_id_is_declared_set_null_and_the_outcome_survives(client):
     """Deleting a scoring lens must not delete the record that someone was
     rejected.
 
-    Asserts the DECLARATION, not the runtime. Measured: SQLite runs with
-    `PRAGMA foreign_keys = 0`, so all 17 `ondelete` clauses in models.py (15
-    CASCADE, 2 SET NULL) are inert under this suite and enforced only on
-    Postgres. A test that asserted the nulling would be asserting SQLite's
-    default rather than our design, and would pass for the wrong reason if
-    somebody later changed the clause to CASCADE.
+    Takes `client` purely for the schema — it is what runs `init_models()`.
+    Without it this test passes only when some earlier test happened to create
+    the tables first, and fails under `pytest -k`.
+
+    Asserts the DECLARATION as well as the runtime. The declaration assertion
+    is the load-bearing one: it would catch somebody changing the clause to
+    CASCADE, which the runtime behaviour alone would not distinguish from a
+    disabled pragma.
+
+    HISTORY, because it explains the shape of this test. This used to assert
+    the declaration ONLY, on the measured grounds that SQLite runs with
+    `PRAGMA foreign_keys = 0` and all 17 `ondelete` clauses in models.py
+    (15 CASCADE, 2 SET NULL) were therefore inert under the suite and enforced
+    only on Postgres. `api/db.py` now arms the pragma on every SQLite
+    connection, measured at zero cost: the full suite is green with it on, so
+    the "arming 17 clauses at once is not a table task" deferral was cautious
+    rather than correct. See `test_sqlite_enforces_foreign_keys`.
     """
     import asyncio
 
@@ -786,6 +797,52 @@ def test_role_id_is_declared_set_null_and_the_outcome_survives():
             ).scalar_one_or_none() is not None
 
     assert asyncio.run(scenario()), "deleting a lens destroyed the hiring decision"
+
+
+def test_sqlite_enforces_foreign_keys(client):
+    """The pragma is ON and actually rejects a dangling reference.
+
+    Without this, `api/db.py` could stop arming the pragma and every ondelete
+    test in this file would keep passing while asserting nothing about the
+    runtime — the exact failure mode that left 17 clauses unverified until now.
+
+    Two assertions, deliberately: the pragma value, and a write that must be
+    refused. The value alone could be true while the clauses were wrong, and
+    the refusal alone could pass on Postgres semantics we are not running.
+    """
+    import asyncio
+
+    from sqlalchemy import text as sql_text
+    from sqlalchemy.exc import IntegrityError
+
+    from api import ids
+    from api.db import SessionLocal, _is_sqlite
+    from api.models import CandidateOutcome
+
+    if not _is_sqlite:  # pragma: no cover - the Postgres path enforces natively
+        pytest.skip("pragma is a SQLite concern")
+
+    async def scenario() -> tuple[int, bool]:
+        async with SessionLocal() as db:
+            value = (await db.execute(sql_text("PRAGMA foreign_keys"))).scalar()
+            refused = False
+            db.add(
+                CandidateOutcome(
+                    id=ids.outcome_id(),
+                    candidate_id="c_doesnotexist",
+                    decision="rejected",
+                )
+            )
+            try:
+                await db.commit()
+            except IntegrityError:
+                refused = True
+                await db.rollback()
+            return value, refused
+
+    pragma, refused = asyncio.run(scenario())
+    assert pragma == 1, "PRAGMA foreign_keys is off — every ondelete clause is inert"
+    assert refused, "an outcome was written against a candidate that does not exist"
 
 
 # ---------------------------------------------------------------------------
@@ -1296,13 +1353,23 @@ def test_routing_confidence_is_populated_in_the_graph(client):
 
 def test_routing_confidence_matches_match_family(client):
     """Parity with A's published contract. If these drift, the candidate record
-    is reporting a margin the router did not compute."""
-    from api.taxonomy import match_family
+    is reporting a margin the router did not compute.
+
+    Parity is with `family_margin(match, the candidate's family)`, NOT with
+    `match.confidence` — see the test below for why they are different
+    questions. On this resume, where no requisition family is supplied and the
+    detector's winner IS the candidate's family, the two happen to agree, which
+    is exactly why the original form of this assertion passed while the field
+    was wrong for half the seeded personas."""
+    from api.taxonomy import family_margin, match_family
 
     body = onboard(client, name="Routing Parity", phone="+919810070002")
     graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
-    assert graph["routing_confidence"] == match_family(RESUME).confidence
-    assert graph["job_family"] == match_family(RESUME).family
+    match = match_family(RESUME)
+    assert graph["job_family"] == match.family
+    assert graph["routing_confidence"] == family_margin(match, graph["job_family"])
+    # Only equal because detection was used here.
+    assert graph["routing_confidence"] == match.confidence
 
 
 def test_low_confidence_routing_is_visible_in_the_graph(client):
@@ -1327,9 +1394,76 @@ def test_low_confidence_routing_is_visible_in_the_graph(client):
     assert graph["routing_confidence"] == 0.0
 
 
+def test_routing_confidence_is_about_the_cohort_the_candidate_is_scored_in(client):
+    """P1-08c — the defect this replaces.
+
+    `schemas.py` documents the field as "a low value means the resume did not
+    clearly belong to THIS cohort". Since P1-07 a requisition family wins over
+    detection, so when the two disagree the detector's own margin describes a
+    decision that was never made.
+
+    RESUME reads as `customer_support` (support / escalation / Zendesk — the
+    CLAUDE.md gotcha that `tests/conftest.py` exists to pin). Filed against a
+    `bpo_operations` requisition, the OLD field reported how clearly the resume
+    read as customer_support — a high number beside a BPO record, which a
+    recruiter reads as "the BPO routing was confident". It has to report the
+    opposite.
+    """
+    from api.taxonomy import family_margin, match_family
+
+    # NOT the suite's RESUME — that one is deliberately pinned to
+    # `bpo_operations` with AHT/shrinkage/roster vocabulary, so it cannot
+    # disagree with a BPO requisition. This is the shape Priya's seeded resume
+    # has: support-flavoured, and filed under BPO by the requisition.
+    support_resume = """Divya Menon - Support Lead, Kochi
+
+EXPERIENCE
+Support Lead, Northwind Services
+- Handled escalation for the premium queue and closed 96% within SLA
+- Ran the Zendesk macro library and cut first-response time by a third
+- Coached six agents on ticket triage and quality review
+
+SKILLS
+Support, escalation, Zendesk, ticket triage, SLA reporting
+"""
+    detected = match_family(support_resume)
+    assert detected.family == "customer_support", (
+        "this test's premise is that the detector disagrees with the "
+        f"requisition; it now routes to {detected.family}"
+    )
+    assert detected.confidence > 0.35, "premise: the detector is confident"
+
+    body = client.post(
+        "/api/candidates/text",
+        json={
+            "resume_text": support_resume,
+            "name": "Requisition Wins",
+            "phone": "+919810070005",
+            "job_family": "bpo_operations",
+        },
+    )
+    assert body.status_code == 201, body.text
+    graph = client.get(
+        f"/api/recruiter/candidates/{body.json()['candidate_id']}"
+    ).json()
+
+    assert graph["job_family"] == "bpo_operations", "requisition precedence (P1-07)"
+    assert graph["routing_confidence"] != detected.confidence, (
+        "the field is reporting the detector's margin for a family the "
+        "candidate is not in"
+    )
+    assert graph["routing_confidence"] == family_margin(detected, "bpo_operations")
+    assert graph["routing_confidence"] == 0.0, (
+        "this resume points AWAY from the cohort it was filed under, which is "
+        "the strongest warning this field can carry"
+    )
+
+
 def test_routing_confidence_is_not_decorative(client):
     """B's contract: if every candidate reads 1.00 the field tells a recruiter
-    nothing. Measured on the seeded personas as 0.17 / 0.40 / 0.72."""
+    nothing. Re-measured after P1-08c — the seeded personas now read
+    0.0 / 0.0 / 0.397 / 0.774, where the two zeros are Priya and Arjun, both
+    filed under a `bpo_operations` requisition their resumes do not support."""
     for index, (name, resume) in enumerate(
         [("Discriminate BPO", RESUME), ("Discriminate None", UNROUTABLE_RESUME)]
     ):

@@ -43,7 +43,15 @@ from api.schemas import (
     SimulateIn,
     SimulateOut,
 )
-from api.taxonomy import GENERAL, MIN_TERMS, family_label, match_family, resolve_family
+from api.taxonomy import (
+    GENERAL,
+    MARGIN_FLOOR,
+    MIN_TERMS,
+    family_label,
+    is_low_confidence,
+    match_family,
+    resolve_family,
+)
 
 log = logging.getLogger("proofscreen.dev")
 
@@ -277,6 +285,12 @@ async def detect(text: str = Query(min_length=1, max_length=20_000)) -> dict:
             if routed
             else f"0.0 — no family reached the {MIN_TERMS}-term floor"
         ),
+        # D2's low-confidence surfacing. The recruiter-facing half of this is
+        # `CandidateGraph.routing_confidence` (B's P1-08b); this is the
+        # explainable half, and both read the same constant so they cannot
+        # disagree about where the line is.
+        "low_confidence": is_low_confidence(match),
+        "margin_floor": MARGIN_FLOOR,
         "runner_up": runner_up if routed else None,
         "rejected_leader": None if routed else runner_up,
         "matched_terms": list(match.matched_terms),

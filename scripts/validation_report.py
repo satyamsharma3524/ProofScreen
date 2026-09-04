@@ -63,7 +63,7 @@ from api.schemas import (  # noqa: E402
     ValidationCohort,
     ValidationOut,
 )
-from api.taxonomy import MIN_TERMS, match_family  # noqa: E402
+from api.taxonomy import MARGIN_FLOOR, MIN_TERMS, is_low_confidence, match_family  # noqa: E402
 
 MINIMUM_N = 30
 GOLDEN_PATH = Path(__file__).resolve().parents[1] / "tests" / "data" / "routing_golden.json"
@@ -479,13 +479,24 @@ def compute_m3(snap: Snapshot) -> dict:
 def compute_m5() -> dict:
     """Routing quality against A's labelled golden set. No model call.
 
-    NOTE ON M5a. The metrics document defines it as "% of resumes routed above
-    the margin threshold", but P1-06 ships no margin threshold — `match_family`
-    falls back to `general` on a two-TERM floor, not on a margin. So M5a is
-    reported here as the floor-based routed rate, and the margin distribution
-    is printed beside it so the number is not mistaken for something it is not.
-    Configuring a margin threshold is a change to A's `taxonomy.py` and is not
-    P1-11's to make.
+    M5a IS NOW MARGIN-BASED, as the metrics document always specified. P1-06
+    shipped the margin and no threshold, so this used to report the floor-based
+    routed rate with a note saying so. A's P1-06a landed `taxonomy.MARGIN_FLOOR`
+    (0.35, measured: confident routes bottom out at 0.397, deliberately
+    ambiguous ones top out at 0.321), so the metric can be computed as written.
+
+    TWO DENOMINATORS, BOTH REPORTED, AND THE DIFFERENCE MATTERS. 10 of the 60
+    labelled entries are labelled `general` — a human says they have no family,
+    so routing them to `general` is CORRECT. Measuring M5a over all 60 makes the
+    90% target arithmetically unreachable: the ceiling is 83.3%. The metric's
+    real question is "of the resumes that DO belong to a family, how many were
+    placed there confidently", and that denominator is 50.
+
+    M5c is also corrected here. It used to count any wrong route as "confident"
+    if it was merely routed, conflating "not general" with "high confidence".
+    The metrics document calls M5c "high-confidence routes that disagree with
+    the human label" and names it the dangerous quadrant, so it now requires the
+    margin to actually clear the floor.
     """
     if not GOLDEN_PATH.exists():
         return {"available": False}
@@ -494,44 +505,69 @@ def compute_m5() -> dict:
     entries = payload["resumes"] if isinstance(payload, dict) else payload
 
     routed = wrong = confident_wrong = labelled = 0
+    real_labelled = confident_real = confident_labelled = 0
+    ambiguous_flagged = ambiguous_total = 0
     margins: list[float] = []
     for entry in entries:
         label = entry.get("family")
         match = match_family(entry.get("text") or "")
         is_routed = match.family != "general"
+        confident = not is_low_confidence(match)
         if is_routed:
             routed += 1
             margins.append(match.confidence)
-        if not label or label == "ambiguous":
+
+        if entry.get("ambiguous"):
+            ambiguous_total += 1
+            # These SHOULD be uncertain. Counting them as routing failures made
+            # correct behaviour look like a defect, which is why P1-11
+            # disaggregated them in the first place.
+            if is_low_confidence(match):
+                ambiguous_flagged += 1
             continue
+        if not label:
+            continue
+
         labelled += 1
+        if confident:
+            confident_labelled += 1
+        if label != "general":
+            real_labelled += 1
+            if confident and match.family == label:
+                confident_real += 1
         if match.family != label:
             wrong += 1
-            if is_routed:
+            # M5c, corrected: the dangerous quadrant is confident AND wrong,
+            # not merely routed and wrong.
+            if confident:
                 confident_wrong += 1
 
     total = len(entries)
-    ambiguous = total - labelled
-    routed_labelled = 0
-    for entry in entries:
-        label = entry.get("family")
-        if not label or label == "ambiguous":
-            continue
-        if match_family(entry.get("text") or "").family != "general":
-            routed_labelled += 1
     return {
         "available": True,
         "entries": total,
         "labelled": labelled,
-        "ambiguous": ambiguous,
-        "m5a_routed_pct_labelled": (
-            round(100 * routed_labelled / labelled, 1) if labelled else None
+        "ambiguous": ambiguous_total,
+        "ambiguous_flagged": ambiguous_flagged,
+        # THE headline M5a: of the resumes a human says belong to a family, how
+        # many were placed there above the margin floor.
+        "m5a_high_confidence_pct": (
+            round(100 * confident_real / real_labelled, 1) if real_labelled else None
         ),
+        "m5a_denominator": real_labelled,
+        # Over every labelled entry, including the 10 correctly-general ones.
+        # Reported for continuity; its arithmetic ceiling is 83.3%.
+        "m5a_high_confidence_pct_all": (
+            round(100 * confident_labelled / labelled, 1) if labelled else None
+        ),
+        # The old floor-based number, kept as a diagnostic so the change in this
+        # metric's definition is visible rather than silent.
         "m5a_routed_pct": round(100 * routed / total, 1) if total else None,
         "m5b_accuracy_pct": round(100 * (labelled - wrong) / labelled, 1) if labelled else None,
         "m5c_confident_wrong_pct": round(100 * confident_wrong / labelled, 1) if labelled else None,
         "median_margin": median(margins),
         "min_terms_floor": MIN_TERMS,
+        "margin_floor": MARGIN_FLOOR,
     }
 
 
@@ -640,20 +676,26 @@ def render(snap: Snapshot, report: ValidationOut) -> str:
     else:
         add(f"    golden entries                      {m5['entries']} "
             f"({m5['labelled']} labelled, {m5['ambiguous']} deliberately ambiguous)")
-        add(f"{_verdict(m5['m5a_routed_pct_labelled'], 90)}M5a routed, labelled only           "
-            f"{_fmt(m5['m5a_routed_pct_labelled'], '%')}   target >= 90%")
-        add(f"     M5a routed, all entries            "
-            f"{_fmt(m5['m5a_routed_pct'], '%')}   (the ambiguous ones SHOULD fall back)")
+        add(f"{_verdict(m5['m5a_high_confidence_pct'], 90)}M5a high-confidence routing         "
+            f"{_fmt(m5['m5a_high_confidence_pct'], '%')}   target >= 90%  "
+            f"(n={m5['m5a_denominator']} with a real family)")
+        add(f"     M5a over all labelled entries      "
+            f"{_fmt(m5['m5a_high_confidence_pct_all'], '%')}   (ceiling 83.3% — 10 of 60 "
+            f"are correctly `general`)")
+        add(f"     routed above the term floor        "
+            f"{_fmt(m5['m5a_routed_pct'], '%')}   (the old floor-based number)")
         add(f"{_verdict(m5['m5b_accuracy_pct'], 95)}M5b accuracy vs human label         "
             f"{_fmt(m5['m5b_accuracy_pct'], '%')}   target >= 95%")
         add(f"{_verdict(m5['m5c_confident_wrong_pct'], 2, lambda a, t: a <= t)}"
             f"M5c confident and wrong             "
             f"{_fmt(m5['m5c_confident_wrong_pct'], '%')}   target <= 2%  (the dangerous quadrant)")
-        add(f"    median margin {_fmt(m5['median_margin'])} · "
-            f"floor {m5['min_terms_floor']} terms")
-        add("    M5a is FLOOR-based, not margin-based: match_family() falls back on a")
-        add("    two-term floor and no margin threshold is configured. Reported as it is")
-        add("    computed, not as the metrics doc assumes.")
+        add(f"     ambiguous entries flagged          "
+            f"{m5['ambiguous_flagged']}/{m5['ambiguous']}   (these SHOULD be uncertain)")
+        add(f"    median margin {_fmt(m5['median_margin'])} · margin floor "
+            f"{m5['margin_floor']} · term floor {m5['min_terms_floor']}")
+        add("    M5a is MARGIN-based, as the metrics doc specifies — A's P1-06a landed")
+        add("    taxonomy.MARGIN_FLOOR. Denominator is the 50 entries a human says have")
+        add("    a family; measuring over all 60 caps the metric at 83.3% by arithmetic.")
 
     add("")
     add("=" * 78)

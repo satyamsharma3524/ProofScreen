@@ -19,6 +19,23 @@ def _short(n: int = 6) -> str:
     return uuid.uuid4().hex[:n]
 
 
+# MEASURED, not guessed. 6 hex chars is 16.7M values, and the birthday bound
+# over a whole test-suite run is not small: at ~2,000 generated ids the chance
+# of at least one collision is 11.2%, and at 5,000 it is 52.5%. It fired for
+# real -- `UNIQUE constraint failed: session_facts.id` on an otherwise green
+# suite, once, and then not again on three re-runs. A flake that vanishes is
+# still a defect; the same collision mid-interview on demo day is an
+# IntegrityError in front of an audience.
+#
+# The split below is the fix, and it keeps the reason 6 chars was chosen in the
+# first place. Ids a human reads off a screen or types into a support chat stay
+# short. Ids that only ever appear in a foreign key go to 10 chars (1.1 trillion
+# values, 0.0002% at 2,000), because nobody has ever read an evidence id aloud.
+#
+# `session_id` was already 10 for the same reason.
+_MACHINE = 10
+
+
 def candidate_id() -> str:
     return f"c_{_short()}"
 
@@ -44,15 +61,18 @@ def response_id() -> str:
 
 
 def evidence_id() -> str:
-    return f"e_{_short()}"
+    # Machine-only: appears in foreign keys, never on a slide. See _MACHINE.
+    return f"e_{_short(_MACHINE)}"
 
 
 def fact_id() -> str:
-    return f"f_{_short()}"
+    # Machine-only: appears in foreign keys, never on a slide. See _MACHINE.
+    return f"f_{_short(_MACHINE)}"
 
 
 def contradiction_id() -> str:
-    return f"x_{_short()}"
+    # Machine-only: appears in foreign keys, never on a slide. See _MACHINE.
+    return f"x_{_short(_MACHINE)}"
 
 
 def role_id() -> str:
@@ -60,11 +80,13 @@ def role_id() -> str:
 
 
 def score_id() -> str:
-    return f"sc_{_short()}"
+    # Machine-only: appears in foreign keys, never on a slide. See _MACHINE.
+    return f"sc_{_short(_MACHINE)}"
 
 
 def profile_id() -> str:
-    return f"p_{_short()}"
+    # Machine-only: appears in foreign keys, never on a slide. See _MACHINE.
+    return f"p_{_short(_MACHINE)}"
 
 
 def outcome_id() -> str:

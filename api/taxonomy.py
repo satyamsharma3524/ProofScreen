@@ -221,6 +221,31 @@ def _hits(text: str, keywords: list[str]) -> int:
 # resume. Carried over unchanged from the hit-count router it replaced.
 MIN_TERMS = 2
 
+# Above this margin a recruiter is entitled to read the routing as settled;
+# below it, the call was close and the API says so.
+#
+# WHY 0.35, AND WHY IT DOES NOT DEMOTE. Measured over the 64-entry golden set:
+# every one of the 49 resumes that routes to a real family does so at a margin
+# of >= 0.397, and all four deliberately ambiguous entries land between 0.014
+# and 0.321. So the floor separates them with zero misclassification -- and it
+# is the value `test_taxonomy.py` had already been asserting locally since
+# P1-06, promoted here so the API, the tests and the validation report cannot
+# hold three different numbers.
+#
+# D2 specified "below margin threshold => general, flagged in the graph
+# response". The flag ships; the DEMOTION does not, and the reason is a
+# measurement rather than caution. The confident band bottoms out at 0.397 and
+# the ambiguous band tops out at 0.321 -- a 0.076-wide gap, on four ambiguous
+# entries. Rohit's seeded BPO resume sits at exactly 0.397, the floor of the
+# confident band. Demoting on a threshold that close to a genuine resume trades
+# a visible close call for a silent under-route to `general`, which strips every
+# claim type and weight the family carries -- the failure mode CLAUDE.md already
+# records as collapsing weight assertions across the suite. An under-route is
+# not the safe direction; it is the same error with no margin to show for it.
+#
+# So routing is unchanged by this constant. It classifies, and nothing else.
+MARGIN_FLOOR = 0.35
+
 
 class FamilyMatch(NamedTuple):
     """Why a resume routed where it did.
@@ -326,6 +351,55 @@ def detect_family(text: str) -> str:
     """Best job family for a resume. Signature preserved for existing callers;
     anything needing the reasoning calls `match_family()`."""
     return match_family(text).family
+
+
+def family_margin(match: FamilyMatch, family_key: str | None) -> float:
+    """How clearly the resume belongs to `family_key` — not to the winner.
+
+    WHY THIS EXISTS. `FamilyMatch.confidence` is the margin for the family the
+    DETECTOR chose. Since P1-07 the detector is only consulted when the
+    requisition supplied nothing, so a candidate can be scored as
+    `bpo_operations` while `confidence` describes how clearly the resume read as
+    `customer_support`. `CandidateGraph.routing_confidence` documents itself as
+    "a low value means the resume did not clearly belong to THIS cohort", and
+    only this function answers that question.
+
+    Measured on the seeded personas: Priya and Arjun are both scored as
+    `bpo_operations` while the detector prefers `customer_support` (by 0.719 and
+    0.171). Reporting those two numbers against a BPO record says the BPO
+    routing was confident, which is the opposite of true.
+
+    Signed margins are clamped at 0.0. A resume that points AWAY from its
+    assigned cohort and one that sits exactly on the fence both mean the same
+    thing to the person reading it -- do not trust this cohort assignment -- and
+    the frozen field documents itself as 0.0-1.0. `GET /api/dev/detect` carries
+    the unclamped detail for whoever is actually investigating.
+    """
+    if not family_key or family_key == GENERAL:
+        return 0.0
+    mine = match.per_family_scores.get(family_key, 0.0)
+    if mine <= 0.0:
+        return 0.0
+    best_other = max(
+        (v for k, v in match.per_family_scores.items() if k != family_key),
+        default=0.0,
+    )
+    return round(max(0.0, (mine - best_other) / mine), 6)
+
+
+def is_low_confidence(match: FamilyMatch) -> bool:
+    """Was this routing call too close to present as settled?
+
+    A predicate over an existing `FamilyMatch`, not a fifth field on it:
+    `FamilyMatch` is the cross-stream contract Developer B reads in `graph.py`,
+    and a derived boolean is not worth changing that shape for. Anyone with the
+    match can compute this, and everyone who does gets the same answer.
+
+    A GENERAL route is low confidence by construction -- it carries 0.0 -- which
+    is the correct reading: nothing reached the term floor, so there is nothing
+    to be confident about.
+    """
+    return match.confidence < MARGIN_FLOOR
 
 
 def classify_claim(text: str, family_key: str | None = None) -> str:

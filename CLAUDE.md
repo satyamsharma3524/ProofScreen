@@ -162,15 +162,14 @@ the tree and re-ranks live for any role profile.
 - **Resume heuristics**: a parenthesised year is a job-title heading, a
   comma-heavy line with no verb is a skills list, and bare `lead`/`design` are
   nouns on a resume as often as verbs. All three are excluded explicitly.
-- **OPEN BUG — `taxonomy._INFLECTION` has no y-to-ies plural.** It covers
-  `s|es|ed|ing|er|ers|or|ors|ion|ions|ment|ments`, so a consonant+y keyword
-  never matches its plural: **`query` misses "queries"**, `policy` misses
-  "policies", `user story` misses "user stories". 20 keywords end in `-y`
-  across 7 families (~14 are consonant+y), so an engineer writing "optimised
-  slow queries" earns nothing for `query`. Found while adding the `product`
-  family; **not fixed**, because it changes routing for six families and P1-06
-  already shipped a reviewed golden-set diff. Fixing it means re-running that
-  diff. Owner: A (`taxonomy.py`).
+- **`y -> ies` is handled in the STEM, not the suffix group** (`taxonomy.
+  _term_pattern`), because the plural replaces the y instead of following it —
+  `story` + `ies` is not a word. 20 taxonomy terms end in `-y` across seven
+  families, and before the fix each scored nothing for its own plural
+  (`query` missed "queries", `user story` missed "user stories"). Fixed in
+  `e321265`; the deferral that preceded it was measured at **0 family changes
+  and 0.0000 confidence drift over 64 golden entries**, which is why it was
+  cautious rather than correct. Do not re-add the suffix-group version.
 - **A family's keyword must be a compound wherever another family holds the
   bare word.** `hr_recruitment` carries `onboarding` and `interview`; a product
   resume saying "rebuilt user onboarding after twenty user interviews" fed HR
@@ -213,23 +212,59 @@ the tree and re-ranks live for any role profile.
 **Verify this section rather than trusting it** — it is the first thing to go
 stale. `git log --oneline -5` and `pytest -q` are the source of truth.
 
-Baseline: taxonomy (8 families), typed claim extraction, adaptive policy capped
-at 12, signal extraction with verbatim enforcement, six rubrics with gates,
-deterministic consistency, role weight profiles with live re-ranking, Meta
-Cloud API webhook (verify, HMAC, batching, retry de-dup, two-step media),
-Whisper voice with duration, `/api/dev/*` tooling, engine-generated fixture,
-seed showing the resume/competence inversion and the ranking flip, Docker.
+Baseline: taxonomy (8 families + `general`), typed claim extraction,
+deterministic family routing with requisition precedence, adaptive policy
+capped at 12, the TRANSFER probe for stalled claims, signal extraction with
+verbatim enforcement, six rubrics with gates, deterministic consistency, role
+weight profiles with live re-ranking, `why_ranked` on every ranked row, the
+`candidate_outcomes` loop and the M4 validation report, Meta Cloud API webhook
+(verify, HMAC, batching, retry de-dup, two-step media), Whisper voice with
+duration, `/api/dev/*` tooling, engine-generated fixture, seed showing the
+resume/competence inversion and the ranking flip across three lenses, Docker.
 
-Phase 1 (`docs/PHASE_1_TASKS.md`): **P1-00 … P1-04 complete — 126 tests
-passing.** D1, the TRANSFER probe, is built: one probe to a stalled claim,
-operator selected in pure Python with no `job_family` in the signature, both
-halves of the question taken from the candidate's own claims.
-`TRANSFER_PROBE=false` reproduces the pre-phase interview exactly.
+**Phase 1 is complete — 186 tests passing.** All fourteen tasks merged
+(`docs/PHASE_1_TASKS.md`). The exit condition is the one written in
+`PHASE_1_SUCCESS_METRICS.md` §Reporting, and all four parts hold: M1b = 100%,
+M5c = 0%, guardrails green, and M4a **published** as `insufficient data
+(n < 30)` at n = 0. Five *targets* are missed (M1a, M2a, M2b, M5a, M3a); none
+is an exit criterion and none is a code defect — the reasons are recorded in
+the exit checklist and summarised there as metric-definition problems or n = 4
+artifacts. **Do not "fix" a missed target by editing the metric or the
+scoring.**
 
-Next: A on P1-06 → P1-07 (deterministic family routing) and the `dev.py` half
-of P1-08; B on the order in `docs/DEVELOPER_B_CONTRACT.md`, starting at P1-09.
-**P1-05 goes last** — A's P1-06 and P1-07 both change what the fixture
-contains, so regenerating before they land means regenerating twice.
+`TRANSFER_PROBE=false` still reproduces the pre-phase interview exactly:
+0 probes, competence 46 / 61 / 56 / 14 identical both ways.
+
+Next: the conversation layer — claim extraction quality and question
+generation. Nothing in Phase 2 (`docs/PHASE_2_EXECUTION_PLAN.md`) starts
+before that is decided.
+
+`M5a` reads 98.0%, not the 81.7% an older revision of the checklist recorded:
+it is margin-based against `taxonomy.MARGIN_FLOOR`, over the 50 golden entries
+a human says have a family. The 10 entries labelled `general` are *correctly*
+routed to `general` and cap the metric at 83.3% if counted as failures.
+
+Known and deliberately not fixed:
+
+- **`extract._metric_of` has no seconds unit.** `_UNIT` covers `ms` and
+  `minutes` but not `s`/`sec`/`seconds`, so "from 480s to 310s" compresses to
+  `480` instead of `480s -> 310s` — and seconds is the unit BPO measures AHT
+  in. Fixing it needs the alternation ordered longest-first *and* a trailing
+  boundary, or "3 shifts" becomes `3 s`. Owner: A (`extract.py`).
+- **The generated fixture is not a pure function of the seed data — it varies
+  with id LENGTH.** Measured: `seed.py --reset && dump_fixture.py` is stable
+  across repeated runs (same content hash 3×), but widening the machine ids
+  from 6 to 10 hex chars changed exactly one field — the 4th entry of
+  `claims[2].dimensions[0].quotes`, right on the `[:4]` truncation boundary in
+  `signals.py:138`. The quote *set* is identical; only which four survive the
+  cut moved. No score changed (56 / 46 / 14 / 61 both ways) and no assertion
+  depends on it. Root cause not pinned — some ordering behind the merge is
+  reading an id. Repro is exact: flip `_MACHINE` in `ids.py` and re-dump.
+
+`api/db.py` **now arms `PRAGMA foreign_keys=ON`** for SQLite, so all 17
+`ondelete` clauses execute under test instead of only on Postgres. It is still
+in neither ownership list — that is a gap in the contracts, not a gap in the
+code.
 
 Not done: Next.js dashboard, Render/Railway deploy, auth (deliberately none),
 approved WhatsApp template for first contact (needs Meta approval), the

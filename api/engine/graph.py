@@ -58,6 +58,7 @@ from api.schemas import (
 )
 from api.taxonomy import (
     claim_type_label,
+    family_margin,
     match_family,
     default_claim_weights,
     dimension_weights,
@@ -379,24 +380,36 @@ async def build_candidate_graph(
         else 0
     )
 
-    # P1-08b — how close the routing call was.
+    # P1-08b — how clearly this resume belongs to the cohort it is SCORED IN.
     #
-    # THIS IS A MARGIN, NOT A PROBABILITY: (top1 - top2) / top1 over the
-    # per-family scores. It answers "was this close?", which is the question a
-    # recruiter looking at a mis-routed candidate actually has. It makes no
-    # claim about being right — a confidently wrong router would report 1.00.
+    # THIS IS A MARGIN, NOT A PROBABILITY: how far `family` is clear of the best
+    # other family, over the per-family scores. It answers "was this close?",
+    # which is the question a recruiter looking at a mis-routed candidate
+    # actually has. It makes no claim about being right — a confidently wrong
+    # router would report 1.00.
     #
-    # 0.0 has two causes, and `job_family` is what tells them apart: either no
-    # family cleared the two-term floor (family reads `general`), or two
-    # families tied exactly (family reads the winner). `CandidateGraph` has one
-    # float and `schemas.py` is frozen, so the disambiguation lives in the pair
-    # of fields rather than in a second one. `GET /api/dev/detect` renders the
-    # full explanation.
+    # CORRECTED (P1-08c). This used to be `match_family(...).confidence`, the
+    # margin for whichever family the DETECTOR preferred. Since P1-07 the
+    # detector is only consulted when the requisition supplied no family, so
+    # those are different questions whenever a requisition is present — and two
+    # of the four seeded personas are exactly that case: Priya and Arjun are
+    # scored as `bpo_operations` while the detector prefers `customer_support`.
+    # The old field reported 0.719 and 0.171 against their BPO records, which
+    # reads as "the BPO routing was confident" and is the opposite of true.
+    # `schemas.py` documents this field as "a low value means the resume did not
+    # clearly belong to THIS cohort", so the field was not matching its own
+    # frozen contract. `taxonomy.family_margin` answers the documented question.
+    #
+    # 0.0 now has three causes and they all mean the same thing to the person
+    # reading it — do not trust this cohort assignment: no family cleared the
+    # two-term floor (`job_family` reads `general`), an exact tie, or a resume
+    # that points away from the cohort the requisition put it in.
+    # `GET /api/dev/detect` renders the unclamped explanation.
     #
     # Reuses the resume already loaded above for `resume_score`, so this costs
     # no query and no model call — `match_family` is a pure function of the
     # text and the taxonomy file.
-    confidence = match_family(resume.raw_text).confidence if resume else None
+    confidence = family_margin(match_family(resume.raw_text), family) if resume else None
 
     return CandidateGraph(
         candidate=CandidateRef(

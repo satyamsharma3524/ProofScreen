@@ -43,21 +43,25 @@ developer contracts for what a row has to carry.
 | `p1-13` | **P1-13** `why_ranked` | B | 152 → 157 | **100%** of ranked rows now carry a reason (was 0% — the field existed since P1-00 and was always null). Cites evidence, never the score: *"51 evidence signals across 3 claims, 6 of 6 dimensions probed; strongest on concrete figures (100); no contradictions"* against *"0 evidence signals…; no concrete figures in any answer; 3 claims stalled"*. Changes with the lens — same candidate reads *Team handling (80%), scored 65* under one and *AHT (80%), scored 52* under the other. **Zero new queries**: derived from `dimensions_json`, already loaded by `rank_candidates`; counting quantities from `signals_json` instead would be ~12 JSON parses per candidate on the busiest endpoint. All 5 tests verified to fail against the pre-change file |
 | `p1-11` | **P1-11** `scripts/validation_report.py` | B | 157 → 164 | Every metric in `PHASE_1_SUCCESS_METRICS.md` computed from stored rows, **0 model calls**. Spearman, quantiles and precision@5 hand-rolled — scipy is not a dependency and one rank correlation does not earn one. On seeded data: **M1b = 100%** on 3 stalled claims, M1c 100%, M3a 21 pts, M3b 0%, M3c 66.7%, M5b 98.3%, M5c 0%. **M4a: `insufficient data (n < 30)` at n = 0** — published as the floor requires, not estimated. **Two bugs found in my own first cut and fixed before commit:** (1) I proxied *stalled* as `claim_scores.score == 0`, which reported 0 stalled while 3 TRANSFER probes had fired — a claim can earn signals early and stall later, so M1b, a correctness invariant, was unmeasurable; now uses the orchestrator's rule (≥2 answers, last one `signals_found == 0`) and reports 3. (2) M2b's tercile lookup silently returned n/a. Also disaggregated M5a: 4 of 64 golden entries are deliberately ambiguous and **should** fall back, so counting them as failures made correct behaviour look like an 82.8% defect. **Reported, not fixed:** M5a is defined in the metrics doc as margin-based, but P1-06 ships no margin threshold — `match_family` falls back on a two-term floor. Computed as floor-based and labelled as such; adding a threshold is a change to A's `taxonomy.py` |
 | `p1-12` | **P1-12** `GET /api/recruiter/validation` | B | 164 → 168 | One implementation, two surfaces: the endpoint calls the same `build_report()` the script prints, and a test compares them field for field. `minimum_n` defaults to **30** and is echoed in the payload, so a correlation computed under a lowered floor cannot be quoted as the real M4a. `ValidationOut` and `ValidationCohort` now appear in `/openapi.json` — correctly absent until a route referenced them, exactly as P1-00's verification note predicted. 0 model calls |
-| `p1-08b` | **P1-08b** `routing_confidence` | B | 168 → 173 | Populated from the resume `build_candidate_graph` already loads — **0 new queries, 0 model calls**. **Distribution measured, per contract: 0.171 / 0.397 / 0.719** across the three seeded personas, so the field discriminates rather than decorating — Arjun routes to `bpo_operations` on a margin of **0.17**, a near coin-flip that is nonetheless confidently placed, which is exactly the case the field exists to surface. A test fails if the values ever collapse to one. `0.0` is disambiguated by the `job_family` pair (`general` = never cleared the floor; a real family = exact tie) rather than by a second field, since `schemas.py` is frozen. All 5 tests verified to fail against the pre-change file |
+| `p1-08b` | **P1-08b** `routing_confidence` | B | 168 → 173 | Populated from the resume `build_candidate_graph` already loads — **0 new queries, 0 model calls**. **Distribution measured as 0.171 / 0.397 / 0.719** across the three seeded personas. **CORRECTED by P1-08c — two of those three numbers were margins for a family the candidate is not in.** Arjun does NOT route to `bpo_operations`: his resume detects as `customer_support`, and 0.171 is the margin in `customer_support`'s favour. He is scored as BPO only because the requisition says so (P1-07 precedence). Same for Priya at 0.719. The corrected distribution is **0.0 / 0.0 / 0.397 / 0.774**, and the two zeros are the real finding: both candidates are being scored against claim types their resumes do not support. A test fails if the values ever collapse to one. `0.0` is disambiguated by the `job_family` pair (`general` = never cleared the floor; a real family = exact tie) rather than by a second field, since `schemas.py` is frozen. All 5 tests verified to fail against the pre-change file |
 | `p1-05` | **P1-05 + P1-05a** fixture regen + non-BPO persona | B | 173 → 180 | **Step 1 verified a no-op before anything was added:** moving `job_family`/`jd` out of the literal at `seed.py:259` left the three BPO personas byte-identical — 56 / 46 / 14 competence, unchanged. `product` persona (Maya) added: routes to `product` at **0.774**, coverage 60%, competence **61** on outcome_ownership 71 / experimentation 59 / discovery 51 — the first end-to-end exercise of a cohort A added with zero Python edits. **TRANSFER INVARIANT RE-MEASURED AND UNCHANGED: 3 probes, all Rohit, all `signals_found = 0`** — the `seed.py:288` answer-repeat that stalls his claims is untouched. Resume/competence inversion holds (Rohit 1st of 4 by resume, 4th by competence). Two-lens flip holds, and the product lens gives a **third distinct order**: Maya > Arjun > Priya > Rohit. Fixture regenerated — now carries `routing_confidence` 0.719, previously null. 5 of 7 tests fail without the change; the other 2 are guards against future breakage and are labelled as such rather than claimed as proofs |
+| `p1-06a` | *(unplanned)* **P1-06a** low-confidence flag — the half of D2 that P1-06 did not ship | A | 180 → 184 | D2 specified *"below margin threshold ⇒ `general`, flagged in the graph response"*; P1-06 shipped the margin and no threshold, which is why B could only compute M5a floor-based. `taxonomy.MARGIN_FLOOR = 0.35` now exists in production code — **it was already the literal `AMBIGUITY_CEILING` in `test_taxonomy.py`, so the value is not new, only its location**; the tests, `/api/dev/detect` and the report can no longer hold three different numbers. **Measured over all 64 golden entries: confident routes bottom out at 0.397, the four deliberately ambiguous ones top out at 0.321** — a floor at 0.35 flags 4 of 4 ambiguous and 0 of 49 correct routes. **The DEMOTION is deliberately not shipped, and that is a measurement not caution:** the separating band is 0.076 wide on n = 4, and Rohit's seeded BPO resume sits at exactly 0.397, the bottom of the confident band. Demoting there trades a *visible* close call for a *silent* under-route to `general`, which strips every claim type and weight the family carries. **Routing is byte-identical: 98.3% accuracy, same single disagreement (g21), 0 golden diff.** The endpoint test was verified to fail with only the `dev.py` hunk reverted; the other three assert a predicate that cannot exist in the pre-change file, and are labelled as such rather than claimed as regression proofs |
+| `p1-08c` | *(unplanned)* **P1-08c** `routing_confidence` reports the cohort the candidate is SCORED IN | A (B's file, by agreement) | 184 → 185 | **The field did not match its own frozen contract.** `schemas.py` documents it as "a low value means the resume did not clearly belong to THIS cohort"; it returned `match_family(resume).confidence`, the margin for whichever family the DETECTOR preferred. Since P1-07 those are different questions whenever a requisition supplies a family. **Measured: 2 of 4 seeded personas were affected.** Priya and Arjun are scored as `bpo_operations` while the detector prefers `customer_support`, so the field reported 0.719 and 0.171 against their BPO records — read as "the BPO routing was confident", the exact opposite of true, and already committed into `fixtures/sample_graph.json`. Now `taxonomy.family_margin(match, family)`: the margin of the candidate's own family against the best other, clamped at 0.0. Distribution **0.719/0.171/0.397/0.774 → 0.0/0.0/0.397/0.774**. **B's 5 P1-08b tests all passed against the defect** because none supplied a requisition family; the new test does, and was verified to fail against the pre-change `graph.py`. Fixture regenerated. 0 new queries, 0 model calls |
+| `p1-06b` | *(unplanned)* **P1-06b** id collision + FK pragma + test isolation | A (B's files, by agreement) | 185 → 186 | Three defects the P1-08c work exposed. **(1) `UNIQUE constraint failed: session_facts.id` fired on an otherwise green suite.** `_short(6)` is 16.7M values; the birthday bound over a suite run is **11.2% at 2,000 ids and 52.5% at 5,000**. Machine-only ids (`e_ f_ x_ sc_ p_`) widened to 10 hex chars — **0.0002% at 2,000** — while every id a human reads aloud stays at 6, which is why 6 was chosen. **(2) The SQLite FK pragma is now armed** in `api/db.py`, the file in neither ownership list. B deferred this as "re-arming 17 clauses at once is not a table task"; **measured, the full suite is green with it on**, so the deferral was cautious rather than correct — all 17 `ondelete` clauses now execute under test instead of only on Postgres, pinned by `test_sqlite_enforces_foreign_keys` (asserts `PRAGMA foreign_keys = 1` **and** that a dangling write is refused). **(3) Two FK tests were order-dependent** — they never took the `client` fixture, so they only passed when an earlier test happened to create the schema, and failed under `pytest -k`. Suite green 3× consecutively |
 
 **Current measured state**
 
 | | |
 |---|---|
-| Tests | **180 passing** |
-| Families | **10** (9 real + `general`) |
+| Tests | **184 passing** |
+| Families | **9** — 8 real + `general`. *(Corrected: the row above said 10; `family_keys()` and `GET /api/health` both return 9.)* |
 | Golden set | 64 entries — 60 labelled, 4 ambiguous |
 | Routing accuracy | **98.3%** (M5b target 95%) |
 | Seeded cohorts | **2** — `bpo_operations` (3 personas) + `product` (1) |
 | Role lenses | **3** — two BPO, one product |
-| Developer A queue | **closed** through P1-08a |
+| Developer A queue | **closed** through P1-08a, plus P1-06a |
 | Developer B queue | **closed** through P1-05 |
+| Routing margin floor | **0.35** — `taxonomy.MARGIN_FLOOR`, flags only, never demotes |
 | Known miss | `g21` — one keyword (`npa`) is below the two-term floor. Correct behaviour, generous label |
 
 
@@ -280,12 +284,23 @@ Reset procedure, run once when P1-09 lands:
 
 ## Phase exit checklist — measured 2026-09-04
 
-All fourteen tasks are merged. Six criteria are met, four are not, and the
-four are reported rather than worked around.
+**PHASE 1 EXITS.** The exit condition is the one written in
+`PHASE_1_SUCCESS_METRICS.md` §Reporting — *"M1b = 100%, M5c <= 2%, all
+guardrails green, and M4a is **published** — whichever direction it points"* —
+and all four parts hold. Everything else in the table below is a TARGET, and a
+missed target is a finding, not a gate.
+
+**Re-measured 2026-09-05** after A's P1-06a, P1-08c and P1-06b. Eleven criteria
+are met, three are not, and the three are reported rather than worked around.
+*(The previous revision of this line said "Six criteria are met, four are not",
+which contradicted its own table — the table showed ten met — and the section
+below it said "What Phase 1 cannot exit on: M4a", while the same table
+correctly marked `M4a published` as met. Publishing `insufficient data (n < 30)`
+IS the exit condition being satisfied.)*
 
 | | Criterion | Measured | Verdict |
 |---|---|---|---|
-| ✅ | 103 → ≥ 118 tests | **180** | met |
+| ✅ | 103 → ≥ 118 tests | **186** | met |
 | ✅ | **M1b = 100%** *(correctness invariant)* | 100% on 3 stalled claims | met |
 | ❌ | M1a ≥ 80% | **25%** | **unreachable as specified** — see below |
 | ✅ | M1c ≥ 70% | 100% | met |
@@ -294,7 +309,7 @@ four are reported rather than worked around.
 | ⚠️ | M3a ≥ 20 | **19.2 pts** | 0.8 short at n = 4 |
 | ✅ | M3b < 15% | 0% | met |
 | ✅ | M3c ≥ 40% | 50% | met |
-| ❌ | M5a ≥ 90% | **81.7%** | floor-based; no margin threshold exists |
+| ✅ | M5a ≥ 90% | **98.0%** | met — margin-based, as the metric always said. P1-06a landed `taxonomy.MARGIN_FLOOR`; denominator is the 50 golden entries a human says have a family. Over all 60 it reads 81.7% against an arithmetic ceiling of 83.3%, because 10 are correctly `general` |
 | ✅ | M5b ≥ 95% | 98.3% | met |
 | ✅ | M5c ≤ 2% | 0% | met |
 | ✅ | **M4a published** | `insufficient data (n < 30)` at n = 0 | **met** — published as the floor requires |
@@ -322,12 +337,16 @@ evidence, and the seed has none because the three honest personas never stall.
 Both become measurable with real candidates; neither is measurable on authored
 demo data by construction.
 
-**M5a (81.7% vs ≥ 90%) — the metric names a threshold that does not exist.**
-It is defined as "% routed above the margin threshold", but P1-06 ships no
-margin threshold: `match_family()` falls back on a two-term floor. Reported
-floor-based and labelled as such in the report output. Configuring a threshold
-is a change to A's `taxonomy.py` and belongs with the low-confidence *flag*
-that D2 describes and P1-06 did not ship.
+**M5a — RESOLVED, and it was a missing threshold rather than a routing
+defect.** This previously read 81.7% and "the metric names a threshold that
+does not exist". A's P1-06a landed `taxonomy.MARGIN_FLOOR = 0.35` — the value
+`test_taxonomy.py` had already been asserting locally — so the metric is now
+computed as specified. It reads **98.0%** over the 50 golden entries a human
+says have a family. Two things had to be separated to see it: the metric is
+margin-based (not floor-based), and its denominator cannot include the 10
+entries labelled `general`, which are *correctly* routed to `general` and cap
+the metric at 83.3% by arithmetic if counted as failures. Both numbers are
+printed side by side in the report so the definition change is visible.
 
 **M3a (19.2 vs ≥ 20) — an artifact of n = 4.** It was 21 pts on three personas
 and fell when Maya (competence 61) landed between Priya and Arjun, compressing
@@ -335,7 +354,12 @@ the interquartile range. An IQR over four candidates moves several points per
 candidate added; the number is honest and the sample is too small for it to
 mean much either way.
 
-### What Phase 1 cannot exit on, and what would fix it
+### The one number Phase 1 could not produce, and what would produce it
+
+Phase 1 exits without it, because the metrics document requires M4a to be
+*published*, not to be favourable — and `insufficient data (n < 30)` is the
+honest publication. What follows is what it would take to get the number
+itself.
 
 **M4a needs 30 decided candidates per cohort and has 0.** The apparatus is
 built and tested end to end — table, endpoints, report, HTTP surface, the

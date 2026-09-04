@@ -123,6 +123,44 @@ falls, the scoring got friendlier and less useful.
 
 ---
 
+## A — Amendments, measured (added 2026-09-05, after Phase 1 exit)
+
+**Targets above are not edited.** The metrics document pre-commits to
+publishing whichever way a number points, and editing a target because it was
+missed is the exact failure this section exists to avoid. What follows is the
+measurement that says three of them ask the wrong question, recorded beside
+them so a reader sees both.
+
+**A1 — M1a's target contradicts the mechanism it measures.** M1a is reach:
+% of completed sessions containing ≥1 TRANSFER question. But D1 activates
+TRANSFER *only* on a stalled claim, and acceptance criterion 1 pins that rule.
+So M1a is bounded above by the stall rate, and reaching 80% would require 80%
+of candidates to stall — which on a healthy pipeline is alarming, not good.
+Measured: **25%**, from one stalled persona in four. **M1b, reach on stalled
+claims, is the metric that measures what the probe was built to do, and it is
+at 100%.** Recommend M1a be re-specified over *stalled sessions* rather than
+all sessions, or dropped in favour of M1b. Not changed above.
+
+**A2 — M2a and M2b are not measurable on authored demo data, by
+construction.** Both need a transfer-probed candidate who *does* produce
+evidence. Only the fabricator is transfer-probed, and his three transfer
+answers score `signals_found = 0` — which is **C1 working exactly as written**:
+*"a fabricator should produce near-zero signals on a transfer probe."* The
+three honest personas never stall, so they are never probed. Measured: M2a
+**0%**, M2b **n/a**. Both become measurable with real candidates. Do not seed a
+persona designed to make them move; that is optimising the counter-metric.
+
+**A3 — the TRANSFER probe is a situational question, and the literature says
+that matters.** VALIDATION / OPERATIONAL / INCIDENT / DECISION / OUTCOME are
+all *behaviour description* — they ask what the candidate actually did.
+TRANSFER asks about a problem they have not solved, which makes it
+*situational*. Meta-analytic evidence is that situational questions are
+considerably less predictive than behaviour-description questions for
+higher-level roles, and that the two formats yield different conclusions about
+the same construct. This does not argue for removing TRANSFER: it argues that
+its output should be read as a **fabrication signal**, which is what C1 already
+says, and never as a competence measure. M2's framing should follow that.
+
 ## Reporting
 
 `scripts/validation_report.py` prints all of M1–M5 plus guardrails, per cohort
@@ -130,3 +168,9 @@ and overall. Run it weekly from week 3, and at every phase gate.
 
 **Phase 1 is complete when:** M1b = 100%, M5c ≤ 2%, all guardrails green, and
 M4a is **published** — whichever direction it points.
+
+**Measured 2026-09-05: all four hold.** M1b = 100%, M5c = 0%, guardrails green
+(186 tests, anti-bias invariants unedited, `TRANSFER_PROBE=false` reproduces the
+pre-phase system exactly), and M4a published as `insufficient data (n < 30)` at
+n = 0. **Phase 1 exits.** The missed targets are M1a, M2a and M2b, all covered
+in §A above; M3a is 19.2 against ≥ 20 at n = 4. None is an exit criterion.

@@ -14,7 +14,14 @@ import pytest
 
 from api.engine import extract
 from api.schemas import ClaimExtraction, ExtractedClaim
-from api.taxonomy import GENERAL, FamilyMatch, detect_family, match_family
+from api.taxonomy import (
+    GENERAL,
+    MARGIN_FLOOR,
+    FamilyMatch,
+    detect_family,
+    is_low_confidence,
+    match_family,
+)
 
 GOLDEN = json.loads(
     (Path(__file__).parent / "data" / "routing_golden.json").read_text(encoding="utf-8")
@@ -26,8 +33,11 @@ AMBIGUOUS = [r for r in GOLDEN if r.get("ambiguous")]
 # M5b. Not 100%: a router that scores perfectly on its own golden set has
 # usually been tuned until it did.
 MIN_ACCURACY = 0.95
-# Above this a recruiter is entitled to read the routing as settled.
-AMBIGUITY_CEILING = 0.35
+# Above this a recruiter is entitled to read the routing as settled. It lived
+# here as a local literal until P1-06a promoted it into `taxonomy.py`; the tests
+# now assert against the same constant the API and the report read, so the three
+# cannot drift apart.
+AMBIGUITY_CEILING = MARGIN_FLOOR
 
 
 def test_routing_accuracy_on_golden_set():
@@ -290,3 +300,68 @@ def test_routing_never_scores_presentation():
     fluent = "I led a team of 42 agents in an inbound voice process, owning AHT and shrinkage."
     plain = "i led team 42 agent inbound voice process. aht and shrinkage was mine."
     assert match_family(fluent).family == match_family(plain).family
+
+
+# ---------------------------------------------------------------------------
+# P1-06a — the low-confidence flag D2 specified and P1-06 did not ship
+# ---------------------------------------------------------------------------
+
+
+def test_every_ambiguous_resume_is_flagged_low_confidence():
+    """The acceptance criterion in PHASE_1_EXECUTION_PLAN 5: an ambiguous resume
+    returns low confidence rather than a confident wrong answer, and the low
+    confidence is visible. Asserted over the whole ambiguous set, not one case,
+    because one is an anecdote."""
+    for r in AMBIGUOUS:
+        m = match_family(r["text"])
+        assert is_low_confidence(m), (
+            f"{r['id']} routed to {m.family} at {m.confidence:.3f} and was NOT "
+            f"flagged — a genuinely two-family resume presented as settled"
+        )
+
+
+def test_no_confident_route_is_flagged_low_confidence():
+    """The other half, and the one that makes the first meaningful: a floor set
+    too high would flag everything and pass the test above while destroying the
+    signal. Measured band on this set — confident routes bottom out at 0.397,
+    ambiguous ones top out at 0.321."""
+    misflagged = [
+        (r["id"], round(match_family(r["text"]).confidence, 3))
+        for r in LABELLED
+        if r["family"] != GENERAL
+        and match_family(r["text"]).family == r["family"]
+        and is_low_confidence(match_family(r["text"]))
+    ]
+    assert not misflagged, f"correct routes flagged as uncertain: {misflagged}"
+
+
+def test_the_flag_does_not_change_routing():
+    """P1-06a ships the FLAG, not the demotion D2 also described. Every labelled
+    resume must route exactly where it routed before the constant existed —
+    an under-route to GENERAL strips the family's claim types and weights, and
+    is not the safe direction."""
+    for r in LABELLED:
+        m = match_family(r["text"])
+        if is_low_confidence(m) and m.family != GENERAL:
+            assert m.family == r["family"], (
+                f"{r['id']} is flagged but still routed to {m.family}; if this "
+                f"ever becomes a demotion, this assertion is where it shows"
+            )
+    # The constant is a classifier over `confidence`, so it cannot move
+    # `family` at all. Pinned structurally rather than by inspection.
+    m = match_family("Worked on NPA recovery for a finance company.")
+    assert m.family == GENERAL and is_low_confidence(m)
+
+
+def test_detect_endpoint_surfaces_the_flag_and_the_floor(client):
+    """Visible in the API response, per the acceptance criterion — and it
+    publishes the floor beside the flag, so nobody has to guess which line a
+    0.30 fell on the wrong side of."""
+    ambiguous = next(r for r in AMBIGUOUS)
+    body = client.get("/api/dev/detect", params={"text": ambiguous["text"]}).json()
+    assert body["low_confidence"] is True
+    assert body["margin_floor"] == MARGIN_FLOOR
+
+    confident = client.get("/api/dev/detect", params={"text": PRODUCT_RESUME}).json()
+    assert confident["low_confidence"] is False
+

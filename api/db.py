@@ -29,6 +29,15 @@ else:
 
 engine = create_async_engine(settings.database_url, **_kwargs)
 
+if _is_sqlite:
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _arm_sqlite_foreign_keys(dbapi_connection, _record):  # pragma: no cover
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
