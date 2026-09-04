@@ -1013,3 +1013,182 @@ def test_why_ranked_makes_no_model_calls(client):
     assert any(r["why_ranked"] for r in rows), "nothing rendered, nothing proven"
     assert client.get("/api/dev/llm").json()["calls"] == before
 
+
+# ---------------------------------------------------------------------------
+# P1-11 — validation report
+# ---------------------------------------------------------------------------
+
+
+def test_spearman_and_quantiles_match_known_values():
+    """The stats are hand-rolled because scipy is not a dependency, so they
+    need pinning against values computable by hand."""
+    from scripts.validation_report import median, precision_at_k, quantile, spearman
+
+    assert spearman([1, 2, 3, 4, 5], [1, 2, 3, 4, 5]) == 1.0
+    assert spearman([1, 2, 3, 4, 5], [5, 4, 3, 2, 1]) == -1.0
+    # Ties averaged, not broken arbitrarily — competence scores cluster.
+    assert spearman([1, 1, 2], [1, 1, 2]) == 1.0
+    # Undefined, not zero: a flat variable has no correlation, and 0.0 would
+    # read as "no relationship found" when the truth is "not computable".
+    assert spearman([1, 1, 1], [1, 2, 3]) is None
+    assert spearman([1, 2], [1, 2]) is None
+
+    assert median([]) is None
+    assert median([3, 1, 2]) == 2
+    assert quantile([0, 10, 20, 30, 40], 0.25) == 10
+    assert precision_at_k(["a", "b", "c"], {"a"}, k=5) is None
+    assert precision_at_k(["a", "b", "c", "d", "e"], {"a", "c"}, k=5) == 0.4
+
+
+def test_stalled_claim_definition_matches_the_orchestrator():
+    """M1b's denominator. The orchestrator stalls a claim on >= 2 answers whose
+    LAST produced no signals; `claim_scores.score == 0` is a different thing —
+    a claim can earn signals early and stall later. Using the score proxy
+    reported 0 stalled while 3 transfer probes had fired, which made a
+    correctness invariant unmeasurable."""
+    from api.models import Question, Response
+    from scripts.validation_report import Snapshot
+
+    snap = Snapshot()
+    snap.questions = [
+        Question(id="q1", claim_id="cl_1", session_id="s", text="", probe_level="VALIDATION", order_index=0),
+        Question(id="q2", claim_id="cl_1", session_id="s", text="", probe_level="INCIDENT", order_index=1),
+        Question(id="q3", claim_id="cl_2", session_id="s", text="", probe_level="VALIDATION", order_index=2),
+    ]
+    snap.responses_by_question = {
+        # cl_1: earned signals, then produced none -> stalled
+        "q1": Response(id="r1", question_id="q1", session_id="s", signals_found=7),
+        "q2": Response(id="r2", question_id="q2", session_id="s", signals_found=0),
+        # cl_2: only one answer -> not stalled, however thin
+        "q3": Response(id="r3", question_id="q3", session_id="s", signals_found=0),
+    }
+    assert snap.stalled_claims() == {"cl_1"}
+
+
+def test_latest_decision_wins_not_the_best_one():
+    """Someone shortlisted and then rejected was rejected. Taking the maximum
+    would score the system against an outcome that got reversed."""
+    from datetime import datetime, timedelta, timezone
+
+    from api.models import CandidateOutcome
+    from scripts.validation_report import Snapshot
+
+    now = datetime.now(timezone.utc)
+    snap = Snapshot()
+    snap.outcomes_by_candidate = {
+        "c_1": [
+            CandidateOutcome(id="o1", candidate_id="c_1", decision="shortlisted", decided_at=now),
+            CandidateOutcome(
+                id="o2", candidate_id="c_1", decision="rejected",
+                decided_at=now + timedelta(hours=1),
+            ),
+        ]
+    }
+    assert snap.latest_decision("c_1") == "rejected"
+
+
+def test_validation_report_runs_and_prints_every_metric(client):
+    """Acceptance: runs clean and prints every metric in the metrics doc."""
+    import asyncio
+
+    from api.db import SessionLocal
+    from scripts.validation_report import build_report, collect, render
+
+    body = onboard(client, name="Report Runs", phone="+919810040001")
+    run_interview(client, body["session_id"])
+
+    async def run() -> str:
+        async with SessionLocal() as db:
+            snap = await collect(db)
+            return render(snap, build_report(snap))
+
+    text = asyncio.run(run())
+    for label in ("M1a", "M1b", "M1c", "M2a", "M2b", "M3a", "M3b", "M3c",
+                  "M4", "M5a", "M5b", "M5c"):
+        assert label in text, f"{label} missing from the report"
+    assert "No model was called" in text
+
+
+def test_report_withholds_below_minimum_n(client):
+    """Withhold, never estimate. A Spearman coefficient over four candidates
+    looks like evidence and is not."""
+    import asyncio
+
+    from api.db import SessionLocal
+    from scripts.validation_report import build_report, collect
+
+    body = onboard(client, name="Withhold Me", phone="+919810040002")
+    run_interview(client, body["session_id"])
+    client.post(
+        f"/api/recruiter/candidates/{body['candidate_id']}/outcome",
+        json={"decision": "hired"},
+    )
+
+    async def run():
+        async with SessionLocal() as db:
+            return build_report(await collect(db))
+
+    report = asyncio.run(run())
+    assert report.minimum_n == 30
+    assert report.overall.sufficient is False
+    assert report.overall.competence_correlation is None
+    assert report.overall.resume_correlation is None
+    assert report.overall.n_decided >= 1, "the decision was not counted"
+
+
+def test_report_computes_m4_once_n_is_met(client):
+    """The maths must work when data exists, proven with a LOWERED floor rather
+    than by seeding synthetic decisions into the real report. Asserts the
+    numbers are computed and in range — never their direction, because
+    asserting a direction would be asserting a finding."""
+    import asyncio
+
+    from api.db import SessionLocal
+    from scripts.validation_report import build_report, collect
+
+    decisions = ["rejected", "shortlisted", "interviewed", "offered"]
+    for index in range(4):
+        body = onboard(client, name=f"M4 Sample {index}", phone=f"+91981005{index:04d}")
+        run_interview(
+            client,
+            body["session_id"],
+            STRONG_ANSWERS if index % 2 else EVASIVE_ANSWERS,
+        )
+        client.post(
+            f"/api/recruiter/candidates/{body['candidate_id']}/outcome",
+            json={"decision": decisions[index]},
+        )
+
+    async def run():
+        async with SessionLocal() as db:
+            return build_report(await collect(db), minimum_n=3)
+
+    report = asyncio.run(run())
+    assert report.minimum_n == 3
+    assert report.overall.sufficient is True
+    assert report.overall.n_decided >= 4
+    for value in (report.overall.competence_correlation, report.overall.resume_correlation):
+        assert value is None or -1.0 <= value <= 1.0
+    assert report.overall.inversions_caught >= 0
+
+
+def test_report_makes_no_model_calls(client):
+    """Every number is arithmetic over stored rows."""
+    import asyncio
+
+    from api.db import SessionLocal
+    from scripts.validation_report import build_report, collect, render
+
+    body = onboard(client, name="Report No LLM", phone="+919810040003")
+    run_interview(client, body["session_id"])
+
+    before = client.get("/api/dev/llm").json()["calls"]
+
+    async def run() -> str:
+        async with SessionLocal() as db:
+            snap = await collect(db)
+            return render(snap, build_report(snap))
+
+    assert "ProofScreen" in asyncio.run(run())
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
