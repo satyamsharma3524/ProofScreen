@@ -537,6 +537,47 @@ def fallback_question(
     )
 
 
+# P2-04 — what to send when an answer was not an answer.
+#
+# NO MODEL CALL. There is nothing to word creatively: the candidate has just
+# said "ok", a model call costs latency against the +20% guardrail, and a fixed
+# line is easier to defend on stage than a generated one. Cohort-neutral by
+# construction — no family vocabulary, and the claim is prefixed by
+# `repair_question()` exactly as the fallbacks are.
+REPAIR_PROMPTS: dict[ProbeLevel, str] = {
+    ProbeLevel.VALIDATION: (
+        "I need a bit more to go on — what was your actual scope here, and what "
+        "were the numbers?"
+    ),
+    ProbeLevel.OPERATIONAL: (
+        "Could you give me the steps? What did you actually do, in what order?"
+    ),
+    ProbeLevel.INCIDENT: (
+        "Can you think of one specific occasion? What happened, and when?"
+    ),
+    ProbeLevel.DECISION: (
+        "What was the call you made, and what did you turn down to make it?"
+    ),
+    ProbeLevel.OUTCOME: (
+        "What happened in the end, and how did you know?"
+    ),
+    ProbeLevel.TRANSFER: (
+        "Take a guess — what would you look at first, and what would rule it out?"
+    ),
+}
+
+
+def repair_question(probe_level: ProbeLevel, claim_text: str | None = None) -> str:
+    """One more go at the SAME probe. Deterministic, no model call.
+
+    Anchored to the claim for the same reason the fallbacks are: a candidate
+    reading "could you give me the steps?" on WhatsApp has no idea which of
+    their three resume lines it refers to.
+    """
+    base = REPAIR_PROMPTS[probe_level]
+    return f'On "{_short(claim_text)}" — {base}' if claim_text else base
+
+
 def _retry_brief(violations: tuple[str, ...]) -> str:
     """What to tell the model on the second attempt.
 

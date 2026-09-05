@@ -381,12 +381,28 @@ def test_a_stalled_claim_produces_a_transfer_question_about_another_claim(client
     asked = [t["probe_level"] for c in claims for t in c["qa"]]
     assert transfers, f"no transfer probe was ever asked: {asked}"
 
-    # Exactly one per claim, never more — the stall exemption is spent, not a
-    # licence to keep asking.
-    probed_ids = [claim["id"] for claim, _ in transfers]
-    assert len(probed_ids) == len(set(probed_ids))
+    # Exactly one PROBE per claim, never more — the stall exemption is spent,
+    # not a licence to keep asking.
+    #
+    # P2-04: a repair turn sits at the same probe level as the question it
+    # repairs, so a transfer probe that drew a non-answer now shows TWO
+    # TRANSFER turns on the claim. That is one probe asked twice, not two
+    # probes: `levels_used` still records TRANSFER once, so `transfer_used`
+    # still spends the exemption exactly once. Repairs are excluded here for
+    # that reason, rather than the invariant being weakened.
+    from api.engine.question import REPAIR_PROMPTS
 
-    probed_claim, turn = transfers[0]
+    def is_repair_turn(turn) -> bool:
+        return any(base in turn["question"] for base in REPAIR_PROMPTS.values())
+
+    probes = [(c, t) for c, t in transfers if not is_repair_turn(t)]
+    assert probes, "every transfer turn was a repair, so no probe was ever asked"
+    probed_ids = [claim["id"] for claim, _ in probes]
+    assert len(probed_ids) == len(set(probed_ids)), (
+        f"a claim received more than one transfer PROBE: {probed_ids}"
+    )
+
+    probed_claim, turn = probes[0]
     question = turn["question"]
     assert "Suppose" in question
 

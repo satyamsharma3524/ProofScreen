@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # reproduces the Phase 1 question path exactly, question for question.
     question_validation: bool = True
 
+    # A non-answer ("ok", "yes") earns ONE more attempt at the same probe, and
+    # that attempt does not consume the interview budget. false => Phase 1.
+    repair_turn: bool = True
+
     # Voice's share of a claim's score, applied only to voice-answered claims.
     # Set to 0 to remove the text/voice asymmetry entirely.
     voice_weight: float = 0.10

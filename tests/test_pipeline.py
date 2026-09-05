@@ -178,14 +178,36 @@ def test_no_question_is_asked_twice(client):
     assert len(asked) == len(set(asked))
 
 
-def test_evasive_candidate_gets_a_shorter_interview(client):
+def test_evasive_candidate_gets_a_shorter_interview(client, monkeypatch):
     """The adaptive stop: no point asking a twelfth question of someone who has
     said nothing for three."""
+    from api.config import settings as _settings
+
+    # Set explicitly rather than inherited: the convention TRANSFER_PROBE
+    # established is that the suite stays green with a behaviour flag off, so a
+    # test asserting repair behaviour turns repairs on itself.
+    monkeypatch.setattr(_settings, "repair_turn", True)
     strong = onboard(client, name="Strong Answers", phone="+919810006666")
     weak = onboard(client, name="Evasive Answers", phone="+919810007777")
     strong_turns = run_interview(client, strong["session_id"], STRONG_ANSWERS)
     weak_turns = run_interview(client, weak["session_id"], EVASIVE_ANSWERS)
-    assert len(weak_turns) < len(strong_turns)
+
+    # P2-04 CHANGED WHAT "SHORTER" MEANS, and this assertion moved with it.
+    # The invariant was always about BUDGET — "no point asking a twelfth
+    # question of someone who has said nothing for three" — and `len(turns)`
+    # was a proxy for it that stopped being one. A non-answer now earns an
+    # off-budget repair, so the evasive candidate has MORE turns (14 vs 12)
+    # while using FEWER budgeted questions (9 vs 12). Measured, both ways.
+    strong_asked = client.get(f"/api/sessions/{strong['session_id']}").json()["questions_asked"]
+    weak_asked = client.get(f"/api/sessions/{weak['session_id']}").json()["questions_asked"]
+    assert weak_asked < strong_asked, (
+        f"the adaptive stop no longer shortens an evasive interview: "
+        f"{weak_asked} vs {strong_asked} budgeted questions"
+    )
+    assert len(weak_turns) > len(strong_turns), (
+        "the evasive candidate should get MORE turns than the strong one — one "
+        "repair per non-answer. If this flips, repairs stopped firing."
+    )
 
 
 def test_evasive_candidate_scores_zero_not_an_error(client):
