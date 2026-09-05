@@ -332,3 +332,24 @@ def test_an_unmatched_question_returns_none_rather_than_the_wrong_generation():
     study._consumed.clear()
     study._generations.append(_generation([("q", True, [])], "q", "model"))
     assert study._take_generation("On \"x\" — could you give me the steps?") is None
+
+
+def test_m7e_is_a_proportion_of_the_same_thing_on_both_sides():
+    """It reported 90.0% where the truth was 93.6%, by de-duplicating the
+    numerator and not the denominator. M7e has a 90% acceptance floor, so a
+    couple more repeated fallback strings would have failed the phase on a
+    number that was never actually computed."""
+    rows = [
+        {"validator_ran": True}, {"validator_ran": True},
+        {"validator_ran": False}, {"validator_ran": True},
+    ]
+    assert study.m7e(rows) == 75.0
+    assert study.m7e([]) == 0.0
+    assert study.m7e([{"validator_ran": True}]) == 100.0
+
+
+def test_repeated_question_text_does_not_deflate_m7e():
+    """The actual failure: two claims drawing the same fallback string collapsed
+    to one in the numerator while both counted in the denominator."""
+    rows = [{"validator_ran": True} for _ in range(4)]
+    assert study.m7e(rows) == 100.0

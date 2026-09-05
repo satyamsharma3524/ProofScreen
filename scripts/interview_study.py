@@ -693,13 +693,30 @@ def _truthy(value) -> bool:
     return str(value).strip().lower() in ("true", "1", "yes")
 
 
+def m7e(rows: list[dict]) -> float:
+    """% of generated questions that received a validator decision.
+
+    Both sides are ROWS. See the note in `_summarise` for the version that was
+    not, and what it cost."""
+    if not rows:
+        return 0.0
+    return 100.0 * sum(1 for r in rows if _truthy(r["validator_ran"])) / len(rows)
+
+
 def _summarise(rows: list[dict]) -> None:
     """The numbers acceptance criteria 5 and 7 are read off."""
     if not rows:
         return
     ran = [r for r in rows if _truthy(r["validator_ran"])]
     final = [r for r in rows if _truthy(r["is_final"])]
-    coverage = 100.0 * len({r["generated_question"] for r in ran}) / max(1, len(rows))
+    # M7e = generated questions that got a validator DECISION, over generated
+    # questions. Rows both sides. An earlier version put DISTINCT question texts
+    # over ALL rows, which is not a proportion of anything — the numerator
+    # de-duplicated and the denominator did not, so repeated fallback text
+    # silently deflated it. It read 90.0% where the real figure was 93.6%, and
+    # M7e has a 90% acceptance floor, so the bug was one repeated string away
+    # from failing the phase on a number that was never computed.
+    coverage = 100.0 * len(ran) / max(1, len(rows))
     print(f"\n  rows {len(rows)}  |  validator ran on {len(ran)}  |  M7e coverage {coverage:.1f}%")
     print(f"  families {len({r['family'] for r in rows})}  "
           f"probe levels {sorted({r['probe_level'] for r in rows})}")
