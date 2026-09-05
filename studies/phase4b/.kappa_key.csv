@@ -1,0 +1,25 @@
+item_id,source,source_id,reviewer1_verdict,reviewer1_note
+k01,P4,s_9d7b65f9c0:0:1,,
+k02,P4,s_ea661c1af7:4:2,,
+k03,P3,r0087,accept,Valid transfer question applying the claimed method to a larger team.
+k04,P4,s_12d13a9554:2:1,,
+k05,P4,s_3d00bb1d81:2:2,,
+k06,P4,s_4065e611a6:3:1,,
+k07,P3,r0032,reject,Assumes a marketing plan absent from the claim.
+k08,P3,r0100,reject,Introduces a two-hour resolution threshold absent from the claim.
+k09,P4,s_65b7dc8f69:3:1,,
+k10,P4,s_720058fcce:6:1,,
+k11,P3,r0025,reject,Introduces a temporary vendor-delay solution not stated in the claim.
+k12,P3,r0061,accept,Relevant decision probe for prioritization under pressure.
+k13,P3,r0010,accept,Specific incident probe aligned with the onboarding rebuild.
+k14,P3,r0017,accept,Relevant operational probe about the recruiting workflow.
+k15,P3,r0055,accept,Good outcome probe for the event-pipeline work.
+k16,P3,r0031,accept,Specific incident probe directly tied to the escalation redesign.
+k17,P3,r0036,reject,Assumes macros that the claim never mentions.
+k18,P4,s_cf35ada00d:3:2,,
+k19,P3,r0096,accept,Good decision probe tied to process re-engineering.
+k20,P3,r0012,reject,Invents team-performance metrics as the outcome of campus hiring.
+k21,P4,s_ec0f59f9ed:4:1,,
+k22,P4,s_d0ae84b7da:6:1,,
+k23,P3,r0093,reject,Assumes a system for attrition management that the claim never names.
+k24,P3,r0041,reject,Assumes a conversion-rate increase that the claim never states.
