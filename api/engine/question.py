@@ -15,13 +15,15 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from enum import Enum
 from string import Template
+from typing import NamedTuple, Sequence
 
 from api.config import settings
 from api.llm import complete_json, load_prompt
 from api.schemas import Dimension, GeneratedQuestion, ProbeLevel
-from api.taxonomy import claim_type_label, family_label
+from api.taxonomy import claim_type_label, fact_keys, family_label
 
 log = logging.getLogger("proofscreen.question")
 
@@ -203,6 +205,290 @@ GAP_HINTS: dict[Dimension, str] = {
         "so they have to say what they actually did inside the system."
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# P2-02 — question validation
+#
+# The same pattern as `evidence.enforce_verbatim()`: the model produces, Python
+# decides whether to accept it. NO LLM CALL IN THIS SECTION, ever — a validator
+# that asked a model whether a question was good would make question quality the
+# model's opinion, which is the thing rule 1 of CLAUDE.md exists to prevent.
+#
+# Seven rules. Each names ONE defect: two rules firing on the same defect would
+# corrupt the per-rule reject counts that M6 is computed from.
+#
+# The corpus at tests/data/question_golden.json was authored BEFORE this code
+# and is what these thresholds are measured against.
+# ---------------------------------------------------------------------------
+
+
+class QuestionValidation(NamedTuple):
+    """Why a generated question was accepted or rejected.
+
+    A NamedTuple here rather than in `api/schemas.py`, which is frozen — the
+    same call `FamilyMatch` made in P1-06. `violations` names are STABLE
+    STRINGS: from P2-03 they are persisted in `questions.violations_json` and
+    counted per-rule in M6, so renaming one invalidates stored history.
+    """
+
+    accepted: bool
+    violations: tuple[str, ...]
+
+
+# Rule 2 only. MEASURED over the authored ladder in the corpus, and the
+# measurement inverted the obvious choice: an aggressive stopword list — one
+# that also strips did/do/you/how/what/about — collapses the duplicate band into
+# the distinct band (-0.083 overlap, no separating threshold exists at all).
+# The interrogative FRAME is the duplication signal: "what did you decide to do
+# about X" reasked with a different X is precisely the defect. A minimal list
+# separates at +0.169 (distinct <= 0.231, duplicate >= 0.400).
+_STOP_PHRASING = frozenset(
+    "the a an and or of to in on at for with by from as is was were be been it "
+    "its that this these those me my your".split()
+)
+
+# Rules 6 and 7 use a BROADER list, and the difference is semantic rather than a
+# fudge. Rule 2 asks "is this the same question rephrased", where the frame is
+# the evidence. Rules 6 and 7 ask "does this name the right subject", where the
+# frame is noise — a question sharing only "did" and "you" with a claim has not
+# named anything.
+_STOP_SUBJECT = _STOP_PHRASING | frozenset(
+    "what how why who when where which do does did you yours i we our us they "
+    "them but so if then than about into out up down over there here more most "
+    "much many other another some any all each been have has had can could "
+    "would should will shall may might must not no nor own same such only just "
+    "very get got make made take took give gave go went come came look looked "
+    "tell told say said work worked run ran use used".split()
+)
+
+# Duplicate threshold, measured. Midpoint of the usable gap between the highest
+# BORDERLINE pair (0.333) and the lowest duplicate pair (0.400).
+DUPLICATE_JACCARD = 0.37
+
+# `agar` is Hindi for "if" and is how a code-switched conditional is actually
+# posed on WhatsApp. Including it is completing an existing rule's marker list
+# for the language this product operates in — NOT a judgement about register,
+# which no rule here may make. Found by the golden set: q73 ("Agar activation
+# gir jaata to aap kya karte?") is a textbook hypothetical and an English-only
+# pattern list missed it entirely.
+_HYPOTHETICAL = re.compile(
+    r"(?<!\w)(suppose|imagine|hypothetically|what would you|"
+    r"if you were|if you had to|had you been|agar)(?!\w)",
+    re.IGNORECASE,
+)
+_NUMERAL = re.compile(r"\d+(?:[.,]\d+)?")
+_TOKEN = re.compile(r"[a-z0-9]+")
+
+# Unit suffixes stripped when deriving a fact key's stem: `aht_seconds` -> `aht`,
+# `csat_pct` -> `csat`. Kept as data rather than a regex so a PM editing the
+# taxonomy can see what the resolver will do with a new key.
+_UNIT_SUFFIXES = ("_pct", "_seconds", "_ms", "_count", "_per_day",
+                  "_per_second", "_per_week", "_managed", "_months")
+
+# Leading modifiers dropped from a fact-key LABEL so "Average handle time" also
+# resolves from "handle time", which is what a question actually says.
+# Percentile and statistical prefixes count as modifiers too: a question says
+# "latency", not "p95 latency". Without this, `p95_latency_ms` resolved from
+# neither and rule 3 missed a two-metric question on the golden set.
+_LABEL_MODIFIERS = ("average", "total", "overall", "median", "mean", "monthly",
+                    "weekly", "p50", "p95", "p99")
+
+
+def _stem(word: str) -> str:
+    """Crude, auditable, and deliberately not a stemmer library.
+
+    Rules 6 and 7 intersect word SETS, so `users` vs `user` and `interviewed`
+    vs `interviews` must not read as different subjects — that is the same
+    defect class `taxonomy._INFLECTION` exists for, and it cost 9 false
+    rejections on the golden set before this existed. A real stemmer is a
+    dependency and a source of surprises; this list is readable by whoever
+    edits the taxonomy.
+    """
+    for suffix, keep in (("ies", 3), ("ers", 4), ("ing", 4), ("ed", 3),
+                         ("es", 3), ("er", 4), ("s", 3)):
+        if word.endswith(suffix) and len(word) - len(suffix) >= keep - len(suffix) + 1:
+            trimmed = word[: -len(suffix)]
+            if len(trimmed) >= 3:
+                return trimmed + ("y" if suffix == "ies" else "")
+    return word
+
+
+def _words(text: str, stop: frozenset[str], stem: bool = False) -> set[str]:
+    """Content words. Numerals are dropped — they are rules 1 and 5's business,
+    and letting them count as shared content would make a question that only
+    echoes a figure look properly anchored."""
+    out = {
+        w for w in _TOKEN.findall((text or "").lower())
+        if w not in stop and not w.isdigit()
+    }
+    return {_stem(w) for w in out} if stem else out
+
+
+def _jaccard(a: str, b: str) -> float:
+    wa, wb = _words(a, _STOP_PHRASING), _words(b, _STOP_PHRASING)
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def _numerals(text: str) -> set[str]:
+    return {m.group(0).replace(",", "") for m in _NUMERAL.finditer(text or "")}
+
+
+@lru_cache(maxsize=32)
+def _fact_aliases(family_key: str | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Surface forms that resolve to each fact key, derived from the taxonomy.
+
+    Derived, never hand-listed: the vocabulary is config, so a new cohort costs
+    one taxonomy entry and zero Python edits. That is the criterion the whole
+    architecture is judged on.
+    """
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for key, spec in fact_keys(family_key).items():
+        aliases = {key.replace("_", " ")}
+        stem = key
+        for suffix in _UNIT_SUFFIXES:
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        aliases.add(stem.replace("_", " "))
+        label = (spec.get("label") or "").lower().strip()
+        if label:
+            aliases.add(label)
+            head, _, rest = label.partition(" ")
+            if head in _LABEL_MODIFIERS and rest:
+                aliases.add(rest)
+            # "Uptime / availability" carries two names for one key.
+            for part in re.split(r"[/,]", label):
+                part = part.strip()
+                if part:
+                    aliases.add(part)
+        out.append((key, tuple(sorted(a for a in aliases if len(a) >= 3))))
+    return tuple(out)
+
+
+def _named_fact_keys(text: str, family_key: str | None) -> set[str]:
+    """Which fact keys this question names, however it spells them.
+
+    Word-boundary matched with an optional plural, NOT substring — naked
+    substring matching is the defect P1-06 measured out of `taxonomy.py`, where
+    `hr` inside *through* gave every resume an HR point. `sla` must not fire on
+    "slap", while `incident` must still fire on "incidents".
+    """
+    low = (text or "").lower()
+    found: set[str] = set()
+    for key, aliases in _fact_aliases(family_key):
+        for alias in aliases:
+            pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in alias.split())
+            if re.search(pattern + r"(?:s|es)?(?!\w)", low):
+                found.add(key)
+                break
+    return found
+
+
+def validate(
+    question: str,
+    *,
+    claim_text: str,
+    probe_level: ProbeLevel,
+    claim_type: str | None = None,
+    claim_metric: str | None = None,
+    job_family: str | None = None,
+    prior_questions: "Sequence[str]" = (),
+    prior_answers: "Sequence[str]" = (),
+    other_claims: "Sequence[str]" = (),
+    target_claim_text: str | None = None,
+) -> QuestionValidation:
+    """Is this a question worth asking? Pure, deterministic, no model call.
+
+    EVERY RULE RUNS. `violations` collects all of them rather than returning the
+    first: M6 counts violations per rule, and short-circuiting would bias every
+    rule after the first toward zero and make the histogram lie about which rule
+    is miscalibrated.
+
+    NOTHING HERE READS PRESENTATION. No fluency, grammar, spelling, register,
+    politeness or length-as-quality — those are bias vectors, and their absence
+    is a product decision rather than an oversight (CLAUDE.md rule 6). The
+    corpus carries Hinglish entries on BOTH sides to keep it that way.
+    """
+    text = (question or "").strip()
+    violations: list[str] = []
+
+    claim_numerals = _numerals(claim_text) | _numerals(claim_metric or "")
+    answer_numerals = set()
+    for answer in prior_answers:
+        answer_numerals |= _numerals(answer)
+    question_numerals = _numerals(text)
+
+    # 1 — answer leakage. A figure the claim already states is a figure the
+    # candidate no longer has to produce, and producing it is the evidence.
+    if question_numerals & claim_numerals:
+        violations.append("answer_leakage")
+
+    # 5 — unsupported metric. The other half of the same idea: a numeral from
+    # neither the claim nor the candidate's own words was invented here.
+    if question_numerals - claim_numerals - answer_numerals:
+        violations.append("unsupported_metric")
+
+    # 2 — duplicate content.
+    if any(_jaccard(text, prior) >= DUPLICATE_JACCARD for prior in prior_questions):
+        violations.append("duplicate_content")
+
+    # 3 — multiple fact targets. NOT EVALUATED ON TRANSFER: a valid T1 probe
+    # pairs the method from one claim with the problem from another, so when
+    # both subjects are metrics it names two fact targets BY CONSTRUCTION
+    # (corpus q63). Rule 6 already constrains which second subject is allowed,
+    # and two rules on one boundary corrupts the reject-rate metric.
+    if probe_level is not ProbeLevel.TRANSFER:
+        if len(_named_fact_keys(text, job_family)) >= 2:
+            violations.append("multiple_fact_targets")
+
+    # 4 — hypothetical misuse. TRANSFER is the one probe level that is
+    # deliberately situational; everywhere else the ladder asks what they DID.
+    if probe_level is not ProbeLevel.TRANSFER and _HYPOTHETICAL.search(text):
+        violations.append("hypothetical_misuse")
+
+    subject = _words(text, _STOP_SUBJECT, stem=True)
+    claim_subject = _words(claim_text, _STOP_SUBJECT, stem=True)
+    label_subject = (
+        _words(claim_type_label(job_family, claim_type), _STOP_SUBJECT, stem=True)
+        if claim_type
+        else set()
+    )
+
+    # What a question is allowed to anchor to. The claim and its type label are
+    # the obvious two. The LAST ANSWER is the third and it is not a loophole:
+    # this is a WhatsApp thread, and "you mentioned it jumped to 520 seconds —
+    # what did you do?" is anchored by any reasonable reading. Scope is rule 6's
+    # job, not rule 7's.
+    anchors = claim_subject | label_subject
+    if prior_answers:
+        anchors |= _words(prior_answers[-1], _STOP_SUBJECT, stem=True)
+    if probe_level is ProbeLevel.TRANSFER and target_claim_text:
+        # A transfer probe legitimately spans two claims, so naming either one
+        # anchors it. Which second claim is permitted stays rule 6's business.
+        anchors |= _words(target_claim_text, _STOP_SUBJECT, stem=True)
+
+    # 6 — scope drift.
+    if probe_level is ProbeLevel.TRANSFER:
+        # A transfer probe is SUPPOSED to leave the claim; what it may not do is
+        # leave it for a claim the planner did not choose.
+        if target_claim_text and not (subject & _words(target_claim_text, _STOP_SUBJECT, stem=True)):
+            violations.append("scope_drift")
+    else:
+        if not (subject & claim_subject):
+            for other in other_claims:
+                if len(subject & _words(other, _STOP_SUBJECT, stem=True)) >= 2:
+                    violations.append("scope_drift")
+                    break
+
+    # 7 — no claim anchor. The candidate has to know which of their three
+    # resume lines "this" refers to.
+    if not (subject & anchors):
+        violations.append("no_claim_anchor")
+
+    return QuestionValidation(not violations, tuple(violations))
 
 
 def _short(text: str, limit: int = 90) -> str:

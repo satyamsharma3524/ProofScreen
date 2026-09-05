@@ -1923,6 +1923,90 @@
       "naive_reject_risk": "no_claim_anchor",
       "is_fallback": false,
       "why": "shares no word with the claim TEXT; anchors on the claim-type label 'Experimentation and measurement', which is the second R7 boundary case"
+    },
+    {
+      "id": "q74",
+      "family": "bpo_operations",
+      "context": {
+        "claim": "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process",
+        "claim_type": "aht_control",
+        "claim_metric": "480s -> 310s",
+        "probe_level": "OPERATIONAL",
+        "target_dimension": "PROCESS",
+        "prior_questions": [
+          "How did the handle time work run day to day, and which systems did you use?"
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "How did the handle time work run day to day, and what systems did you use?",
+      "verdict": "reject",
+      "primary_rule": "duplicate_content",
+      "rules": [
+        "duplicate_content"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "anchored on the claim and still a near-verbatim repeat of the prior question — isolates rule 2, which the unanchored duplicates never did"
+    },
+    {
+      "id": "q75",
+      "family": "product",
+      "context": {
+        "claim": "Grew activation from 41% to 63% over two quarters by rebuilding the first-run flow",
+        "claim_type": "outcome_ownership",
+        "claim_metric": "41% -> 63%",
+        "probe_level": "OUTCOME",
+        "target_dimension": "METRIC_OWNERSHIP",
+        "prior_questions": [
+          "Afterwards, how did you know it was the rebuild that moved activation?"
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Afterwards, how do you know the rebuild is what moved activation?",
+      "verdict": "reject",
+      "primary_rule": "duplicate_content",
+      "rules": [
+        "duplicate_content"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "same question in a different tense, properly anchored, so only rule 2 can catch it"
+    },
+    {
+      "id": "q76",
+      "family": "software_engineering",
+      "context": {
+        "claim": "Owned the on-call rotation for four services and cut incidents from 12 to 3 a quarter",
+        "claim_type": "reliability",
+        "claim_metric": "12 -> 3",
+        "probe_level": "INCIDENT",
+        "target_dimension": "AUTHENTICITY",
+        "prior_questions": [
+          "Tell me about the worst incident you were paged for on that rotation."
+        ],
+        "prior_answers": [],
+        "other_claims": [],
+        "transfer_target_claim": null,
+        "transfer_operator": null
+      },
+      "question": "Tell me about the worst incident on that rotation that you were paged for.",
+      "verdict": "reject",
+      "primary_rule": "duplicate_content",
+      "rules": [
+        "duplicate_content"
+      ],
+      "hinglish": false,
+      "naive_reject_risk": null,
+      "is_fallback": false,
+      "why": "the same sentence reordered; anchored, so rule 2 is the only rule that fires"
     }
   ],
   "jaccard_ladder": [
