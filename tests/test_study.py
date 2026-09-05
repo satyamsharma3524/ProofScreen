@@ -353,3 +353,32 @@ def test_repeated_question_text_does_not_deflate_m7e():
     to one in the numerator while both counted in the denominator."""
     rows = [{"validator_ran": True} for _ in range(4)]
     assert study.m7e(rows) == 100.0
+
+
+def test_a_dataset_row_needs_order_index_to_be_addressed_uniquely():
+    """Measured on the Phase 3 dataset: (interview_id, attempt_index) gave 136
+    distinct keys across 519 rows.
+
+    `attempt_index` counts attempts within ONE planner slot and restarts at 1 for
+    every question, so every row of a 12-question interview collided. The
+    confusion matrix keys on `row_id` and never touched this index, so no
+    published number moved — but the auto-generated disagreement listing looked
+    rows up this way and would have quoted the wrong question against the right
+    verdict.
+    """
+    rows = [
+        {"interview_id": "s_1", "order_index": "0", "attempt_index": "1"},
+        {"interview_id": "s_1", "order_index": "1", "attempt_index": "1"},
+        {"interview_id": "s_1", "order_index": "1", "attempt_index": "2"},
+    ]
+    collides = {(r["interview_id"], r["attempt_index"]) for r in rows}
+    unique = {(r["interview_id"], r["order_index"], r["attempt_index"]) for r in rows}
+    assert len(collides) == 2 and len(unique) == 3
+
+
+def test_the_sealed_key_carries_order_index():
+    """Without it the key cannot address the dataset row it came from, and the
+    disagreement analysis has nothing to quote."""
+    import inspect
+    source = inspect.getsource(study.cmd_sample)
+    assert '"order_index": row["order_index"]' in source

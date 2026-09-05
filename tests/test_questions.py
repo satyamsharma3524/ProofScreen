@@ -25,6 +25,8 @@ import pytest
 from tests.conftest import onboard, run_interview
 from api.engine.question import (
     DUPLICATE_JACCARD,
+    _jaccard,
+    _numerals,
     FALLBACK_QUESTIONS,
     TRANSFER_FALLBACKS,
     QuestionValidation,
@@ -1124,3 +1126,146 @@ def test_m6_does_not_disturb_m1_to_m5():
 def test_m6_reports_the_regeneration_cap():
     m6 = compute_m6(_snapshot([_Q(attempts=1), _Q(attempts=2)]))
     assert m6["max_attempts"] == 2, "the cap must be visible in the report"
+
+
+# ---------------------------------------------------------------------------
+# PHASE 4A — two validator changes, each justified by a Phase 3 finding
+#
+# Both are pinned to the ACTUAL study rows that motivated them, by row id, so a
+# future reader can go from a test back to the evidence. Neither adds a corpus
+# entry (counter-metric C6) and neither moves a threshold (C7).
+# ---------------------------------------------------------------------------
+
+
+def test_a_severity_label_is_not_a_leaked_figure():
+    """Phase 3 finding 3, study rows r0023 and r0067.
+
+    `_NUMERAL` matched the 1 in `P1`, so a question about P1 issues on a claim
+    about P1 issues was blocked for handing back a figure. The figure was a
+    severity label. The blind reviewer accepted both questions.
+    """
+    result = validate(
+        "Describe a specific P1 issue that was hardest to resolve and what you did.",
+        claim_text="Owned resolution time for P1 issues.",
+        probe_level=ProbeLevel.INCIDENT,
+    )
+    assert "answer_leakage" not in result.violations
+    assert result.accepted
+
+
+def test_a_percentile_prefix_is_not_a_leaked_figure():
+    """Same bug, other half: `p95` yielded 95.
+
+    The file already disagreed with itself about this — `_LABEL_MODIFIERS`
+    strips `p95` from a fact-key label as a statistical modifier, while
+    `_NUMERAL` was reading it as a number.
+    """
+    assert _numerals("Cut p95 latency from 900ms to 180ms.") == {"900", "180"}
+    assert _numerals("Owned resolution time for P1 issues.") == set()
+
+
+def test_figures_with_units_and_symbols_still_count():
+    """The boundary is on the LEFT only. Excluding a trailing letter as well
+    would drop every real figure this product measures."""
+    assert _numerals("from 480s to 310s") == {"480", "310"}
+    assert _numerals("900ms to 240ms") == {"900", "240"}
+    assert _numerals("a quota of $1.2M ARR") == {"1.2"}
+    assert _numerals("CSAT from 78% to 92%") == {"78", "92"}
+
+
+def test_leakage_still_fires_when_the_figure_really_is_the_answer():
+    """The rule that earned 79.2% precision in the study must not be weakened.
+    Study row r0006 — the reviewer agreed with this rejection."""
+    result = validate(
+        "How long did you maintain the 110% target achievement?",
+        claim_text="Consistently at 110% of target with a conversion rate of 22%.",
+        probe_level=ProbeLevel.VALIDATION,
+    )
+    assert "answer_leakage" in result.violations
+
+
+# --- rule 2, discounting the claim's own words --------------------------
+
+_MEASURE = "How did you measure the success of {}?"
+
+
+def test_a_question_is_not_a_duplicate_for_repeating_the_claim_it_must_anchor_to():
+    """Phase 3 finding 2, re-diagnosed. Study rows r0029, r0045, r0055, r0080,
+    r0091, r0014, r0053, r0096 — all eight false rejects.
+
+    Rule 7 REQUIRES a question to share subject words with its claim. Rule 2 then
+    counted those same words as duplication. The ladder walks one claim through
+    five levels, so every question after the first is compared against a sibling
+    that must repeat the claim's vocabulary — and the better anchored it is, the
+    more likely rule 2 called it a repeat.
+
+    This is study row r0045 exactly, at a measured 0.385.
+    """
+    result = validate(
+        "How did you measure success in managing the chat support queue?",
+        claim_text="Ran the chat support queue.",
+        probe_level=ProbeLevel.OUTCOME,
+        prior_questions=["How many chat support tickets did you handle daily?"],
+    )
+    assert "duplicate_content" not in result.violations
+
+
+def test_the_same_question_reasked_is_still_a_duplicate():
+    """The defect the rule exists for. Shares the frame AND the ask, so what is
+    left after discounting the claim is still overwhelmingly common. If this
+    passes, the redesign became a deletion."""
+    result = validate(
+        "How did you measure the success of the rollout, and what did you look at?",
+        claim_text="Ran the rollout across four regions.",
+        probe_level=ProbeLevel.OUTCOME,
+        prior_questions=["How did you measure the success of it, and what did you look at?"],
+    )
+    assert "duplicate_content" in result.violations
+
+
+def test_discounting_is_rule_2_only_and_jaccard_is_unchanged_without_it():
+    """The measured jaccard ladder in the corpus is calibrated on the undiscounted
+    function. Absence of a discount must mean exactly the old number."""
+    a, b = "How did you measure the rollout?", "How did you measure the launch?"
+    assert _jaccard(a, b) == _jaccard(a, b, discount=set())
+    assert _jaccard(a, b, discount={"measure"}) < _jaccard(a, b)
+
+
+def test_the_discount_can_never_raise_the_score():
+    """The first version subtracted the claim's words from both SETS, and when
+    those words were what distinguished the two questions the remainder collapsed
+    to near-identity and the score went UP — measured, three accepts became
+    rejects on the study data.
+
+    Subtracting from the shared set alone is monotone. For a rule already at
+    38.5% precision, "cannot create a new false reject" is the property worth
+    having, and this is the test that keeps it.
+    """
+    pairs = [
+        ("How did you handle the CSAT drop?", "How did you handle the AHT spike?", {"csat", "aht"}),
+        ("What did you do about queue times?", "What did you do about hold times?", {"queue", "hold"}),
+        ("How many agents?", "How many pods?", {"agents", "pods"}),
+    ]
+    for a, b, claim_words in pairs:
+        assert _jaccard(a, b, discount=claim_words) <= _jaccard(a, b)
+
+
+def test_claim_id_gating_was_measured_and_rejected_not_forgotten():
+    """The first Phase 4A design compared only priors belonging to the same claim.
+
+    Measured over all 519 study rows, EVERY trigger was same-claim and not one
+    was cross-claim — the eight look-alike questions sat in eight different
+    interviews and were never compared to each other. Claim-id gating changed no
+    verdict anywhere in the dataset and cost two true rejects, so it is not in the
+    signature. This test exists so nobody re-adds it as an obvious improvement.
+    """
+    import inspect
+    signature = inspect.signature(validate)
+    assert "claim_id" not in signature.parameters
+    assert "prior_claim_ids" not in signature.parameters
+
+
+def test_the_duplicate_threshold_was_not_touched():
+    """C7. The redesign changes WHAT is compared, not where the line sits.
+    Moving 0.37 against the sample that measured it is fitting to the test set."""
+    assert DUPLICATE_JACCARD == 0.37

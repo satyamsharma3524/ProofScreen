@@ -298,7 +298,21 @@ _HYPOTHETICAL = re.compile(
     r"if you were|if you had to|had you been|agar)(?!\w)",
     re.IGNORECASE,
 )
-_NUMERAL = re.compile(r"\d+(?:[.,]\d+)?")
+# PHASE 4A, from Phase 3 finding 3. A run of digits is a FIGURE only when a
+# letter does not run straight into it. Without the lookbehind, `P1` yields 1 and
+# `p95` yields 95, so `answer_leakage` blocked a question for "leaking" a
+# severity label the claim also used — measured on the study's r0023 and r0067,
+# and `p95` was already being stripped as a modifier in `_LABEL_MODIFIERS` two
+# screens down, so the file disagreed with itself.
+#
+# The boundary is on the LEFT ONLY. `480s`, `900ms`, `1.2M` and `78%` are real
+# figures with a unit or a symbol attached, and excluding a trailing letter would
+# drop every one of them.
+# The lookbehind excludes a preceding DIGIT as well as a letter, and the digit
+# is not redundant: with a letters-only guard, `p95` merely fails to match at the
+# 9 and the engine advances one character and matches the 5. Measured — the first
+# version of this fix turned `p95` into {'5'} instead of {}.
+_NUMERAL = re.compile(r"(?<![A-Za-z0-9])\d+(?:[.,]\d+)?")
 _TOKEN = re.compile(r"[a-z0-9]+")
 
 # Unit suffixes stripped when deriving a fact key's stem: `aht_seconds` -> `aht`,
@@ -346,11 +360,32 @@ def _words(text: str, stop: frozenset[str], stem: bool = False) -> set[str]:
     return {_stem(w) for w in out} if stem else out
 
 
-def _jaccard(a: str, b: str) -> float:
+def _jaccard(a: str, b: str, discount: "set[str] | None" = None) -> float:
+    """Overlap between two questions, optionally ignoring a shared vocabulary.
+
+    `discount` is rule 2's business: the claim's own words are words BOTH
+    questions are required to contain (rule 7), so counting them as duplication
+    evidence penalises the anchoring the validator elsewhere demands. Absent, the
+    behaviour is unchanged — which is what the corpus and the measured jaccard
+    ladder are calibrated against.
+    """
     wa, wb = _words(a, _STOP_PHRASING), _words(b, _STOP_PHRASING)
     if not wa or not wb:
         return 0.0
-    return len(wa & wb) / len(wa | wb)
+    shared = wa & wb
+    if discount:
+        # DISCOUNT THE NUMERATOR ONLY. Removing the claim's words from both SETS
+        # is the obvious version and it is wrong: when the claim words are what
+        # DISTINGUISHES two questions, stripping them collapses the remainder to
+        # near-identity and the score goes UP. Measured — that version turned
+        # three accepts into rejects on the study data.
+        #
+        # Subtracting from the shared set alone is monotone non-increasing, so
+        # this can only ever forgive a pair, never newly condemn one. For a rule
+        # already sitting at 38.5% precision, "cannot create a new false reject"
+        # is the property worth having.
+        shared = shared - discount
+    return len(shared) / len(wa | wb)
 
 
 def _numerals(text: str) -> set[str]:
@@ -452,8 +487,45 @@ def validate(
     if question_numerals - claim_numerals - answer_numerals:
         violations.append("unsupported_metric")
 
-    # 2 — duplicate content.
-    if any(_jaccard(text, prior) >= DUPLICATE_JACCARD for prior in prior_questions):
+    # 2 — duplicate content, DISCOUNTING THE CLAIM'S OWN WORDS.
+    #
+    # PHASE 4A, and the first design of this fix was wrong, so both are recorded.
+    #
+    # Phase 3 finding 2 read eight false rejects — all the shape "How did you
+    # measure the success of X?" — and concluded the rule was penalising a reused
+    # interrogative frame ACROSS DIFFERENT CLAIMS. So the first fix compared only
+    # priors belonging to the same claim. It fixed nothing and cost two true
+    # rejects, because the diagnosis was wrong: measured over all 519 study rows,
+    # **every one of the eight triggers was SAME-CLAIM and not one was
+    # cross-claim.** The eight questions sat in eight different interviews and
+    # were never compared to each other at all — they only looked alike to a human
+    # reading the sample. Claim-id gating never changed a single verdict in the
+    # whole dataset, so it is not here.
+    #
+    # What is actually happening is a CONFLICT BETWEEN TWO RULES. Rule 7 requires
+    # a question to share subject words with its claim — that is what being
+    # anchored means. Rule 2 then counts those same shared words as evidence of
+    # duplication. The probe ladder walks one claim through five levels, so every
+    # question after the first is compared against a sibling that must, by rule 7,
+    # repeat the claim's vocabulary. **The better anchored a question is, the more
+    # likely rule 2 calls it a repeat.**
+    #
+    #   "How many chat support tickets did you handle daily?"          (prior)
+    #   "How did you measure success in managing the chat support queue?"
+    #   claim: "Ran the chat support queue."          -> 0.385, tripped
+    #
+    # Not counting the claim's own words AS SHARED EVIDENCE leaves the frame and
+    # the specific ask, which is what rule 2 was always trying to compare:
+    # 0.385 -> 0.231, passes. A genuine reask shares the frame AND the ask, so it
+    # still trips at 0.875. See `_jaccard` for why the discount applies to the
+    # numerator only.
+    #
+    # THE THRESHOLD IS UNCHANGED at 0.37. Moving it against the sample that
+    # measured it is counter-metric C7; this changes what is compared, not where
+    # the line sits.
+    claim_words = _words(claim_text, _STOP_PHRASING)
+    if any(_jaccard(text, prior, discount=claim_words) >= DUPLICATE_JACCARD
+           for prior in prior_questions):
         violations.append("duplicate_content")
 
     # 3 — multiple fact targets. NOT EVALUATED ON TRANSFER: a valid T1 probe

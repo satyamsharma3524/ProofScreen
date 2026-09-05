@@ -784,6 +784,9 @@ async def cmd_sample(args: argparse.Namespace) -> int:
         key.append({
             "row_id": row_id,
             "interview_id": row["interview_id"],
+            # Required to address a dataset row uniquely — see the note in
+            # `cmd_score`. Without it the key cannot join back at all.
+            "order_index": row["order_index"],
             "attempt_index": row["attempt_index"],
             "stratum": "accept" if _truthy(row["accepted_by_validator"]) else "reject",
             "validation_result": row["validation_result"],
@@ -907,7 +910,15 @@ async def cmd_score(args: argparse.Namespace) -> int:
         key = {r["row_id"]: r for r in csv.DictReader(fh)}
     population = json.loads((OUT_DIR / ".population.json").read_text())
     with DATASET.open(newline="", encoding="utf-8") as fh:
-        dataset = {(r["interview_id"], r["attempt_index"]): r for r in csv.DictReader(fh)}
+        # (interview_id, attempt_index) IS NOT UNIQUE — measured, 136 distinct
+        # keys across 519 rows. `attempt_index` counts attempts within ONE
+        # planner slot and restarts at 1 for every question, so every row of a
+        # 12-question interview collided. `order_index` is what makes it unique.
+        # The confusion matrix never used this index (it keys on `row_id`), so no
+        # published number moved; the auto-generated disagreement listing did,
+        # and would have quoted the wrong question against the right verdict.
+        dataset = {(r["interview_id"], r["order_index"], r["attempt_index"]): r
+                   for r in csv.DictReader(fh)}
 
     labels: dict[str, str] = {}
     for row in rows:
@@ -1054,7 +1065,9 @@ def _write_disagreements(labels, key, dataset) -> None:
         validator = "reject" if entry["stratum"] == "reject" else "accept"
         if validator == human:
             continue
-        row = dataset.get((entry["interview_id"], entry["attempt_index"]), {})
+        row = dataset.get(
+            (entry["interview_id"], entry["order_index"], entry["attempt_index"]), {}
+        )
         cause = entry["primary_rule"] if validator == "reject" else "unclassified"
         groups[cause or "unclassified"].append((row_id, entry, row, validator, human))
 
