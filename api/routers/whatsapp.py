@@ -31,7 +31,15 @@ from api.db import SessionLocal
 from api.engine import orchestrator
 from api.engine.orchestrator import SessionClosed
 from api.engine.voice import analyse
-from api.models import Candidate, Response as ResponseRow, utcnow
+from api.ingest.parse import UnsupportedResume, extract_text
+from api.models import (
+    DEVELOPMENT_TENANT_ID,
+    Candidate,
+    ChatSession,
+    Response as ResponseRow,
+    utcnow,
+)
+from api.routers.candidates import _onboard
 from api.schemas import Channel, InboundMessage, SessionState
 from api.stt import transcribe_media_id
 from api.tenancy import TenantScope
@@ -54,6 +62,21 @@ ALREADY_DONE_MESSAGE = "This verification is already complete — nothing more t
 VOICE_FAILED_MESSAGE = (
     "I couldn't make out that voice note. Could you type your answer instead?"
 )
+UNSUPPORTED_FILE_MESSAGE = (
+    "I can read PDF, Word or plain-text resumes. Could you send one of those?"
+)
+
+# G3 — mime -> the suffix `ingest.parse.extract_text` dispatches on. Meta gives
+# us a mime; `extract_text` keys on the file suffix, so one of them has to
+# translate and it is not going to be the frozen parser. `application/msword`
+# is deliberately absent: python-docx cannot read legacy .doc, and a mapped
+# entry would turn a clear "send another format" into a confusing parse error.
+_RESUME_SUFFIX = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "text/plain": ".txt",
+    "text/markdown": ".md",
+}
 
 
 @router.get("/whatsapp", response_class=PlainTextResponse)
@@ -143,6 +166,132 @@ _INBOUND_SCOPE = TenantScope.system(
 )
 
 
+# G8 — `_already_processed` above queries `responses`, and a resume upload
+# writes NO Response row, so that guard is structurally blind to this path.
+# Meta retries anything it thinks was slow, and onboarding is the slowest path
+# in the product (it blocks on claim extraction), so the retry is likely rather
+# than theoretical. Without this, one retry is a second candidate, a second
+# session, and two interleaved interviews in one chat.
+#
+# An in-process set, deliberately. One process, one demo — and it says so
+# rather than pretending to be durable. It does not survive a restart; that
+# case is covered by `_resume_open_question` below, which is why both exist.
+_CLAIMED_DOCS: set[str] = set()
+
+
+def _claim_once(provider_message_id: str | None) -> bool:
+    """True if this delivery is ours to process, False if already claimed."""
+    if not provider_message_id:
+        return True                 # nothing to key on; never collapse two uploads
+    if provider_message_id in _CLAIMED_DOCS:
+        log.info("ignoring retried document delivery of %s", provider_message_id)
+        return False
+    _CLAIMED_DOCS.add(provider_message_id)
+    return True
+
+
+async def _resume_open_question(db, phone: str) -> bool:
+    """G8b — a resume arriving over a LIVE session must not start a second
+    interview. Re-send the open question instead. True if handled here.
+
+    Covers the three duplicate routes `_claim_once` cannot: a second upload
+    with a different message id, a rehearsal that left a session open on the
+    demo handset, and a process restart between two deliveries.
+    """
+    live = await orchestrator.find_active_session_by_phone(db, phone, _INBOUND_SCOPE)
+    if live is None:
+        return False
+    # `ask_next` and not `_open_question`: it is idempotent by contract — an
+    # already-open question comes back as-is and no budget is spent — and it
+    # takes the RESOLVED SESSION, which is the invariant that lets the
+    # orchestrator query without a tenant filter at all
+    # (`test_the_orchestrator_is_entered_with_resolved_rows_not_ids`).
+    open_q = await orchestrator.ask_next(db, live)
+    await whatsapp_channel.send_text(
+        phone,
+        f"You already have an interview in progress — here's where we left "
+        f"off:\n\n{open_q.text}" if open_q else ALREADY_DONE_MESSAGE,
+    )
+    return True
+
+
+async def _try_resume_intake(db, phone: str, message: InboundMessage) -> bool:
+    """A media message that turns out not to be audio is a resume.
+
+    Returns True if this message was handled here; False to let the caller fall
+    through to the voice/answer path.
+    """
+    if not _claim_once(message.provider_message_id):
+        return True
+
+    data, mime = await whatsapp_channel.download_media(message.media_id)
+
+    # ORDER MATTERS, and this is the one trap in the whole path. In dry-run
+    # `media_url()` returns (None, None) and `download_media()` then DEFAULTS
+    # the mime to "audio/ogg" — so a nil body must be tested before the mime,
+    # or every document looks like a voice note and the branch never runs.
+    if data is None:
+        _CLAIMED_DOCS.discard(message.provider_message_id or "")
+        return False
+
+    kind = (mime or "").split(";")[0].strip().lower()
+    if kind.startswith("audio/"):
+        _CLAIMED_DOCS.discard(message.provider_message_id or "")
+        return False                                  # genuinely a voice note
+
+    suffix = _RESUME_SUFFIX.get(kind)
+    if not suffix:
+        await whatsapp_channel.send_text(phone, UNSUPPORTED_FILE_MESSAGE)
+        return True
+
+    if await _resume_open_question(db, phone):        # G8b
+        return True
+
+    try:
+        resume_text = extract_text(f"resume{suffix}", data)
+    except UnsupportedResume as exc:
+        await whatsapp_channel.send_text(phone, f"I couldn't read that file — {exc}")
+        return True
+
+    result = await _onboard(
+        db,
+        # G3 — `_INBOUND_SCOPE` is a system scope and `require()` raises on it
+        # by design, so it cannot be used for a WRITE. A WhatsApp-originated
+        # candidate belongs to the NAMED development tenant. A second customer
+        # needs a number-to-tenant resolver, and this line is where it goes.
+        scope=TenantScope.of(DEVELOPMENT_TENANT_ID),
+        name=message.profile_name or "WhatsApp candidate",
+        phone=phone,
+        resume_text=resume_text,
+        filename=f"resume{suffix}",
+    )
+
+    session = await db.get(ChatSession, result.session_id)
+    if session is None:
+        return True
+
+    # The candidate messaged US, unprompted, with their resume. The 24-hour
+    # window is open and the upload is a stronger consent signal than a code,
+    # so the opt-in gate does not apply. Same eight lines as the opt-in branch
+    # below, duplicated on purpose: that branch is the demo's fallback path and
+    # is not being touched this week.
+    session.channel = Channel.whatsapp.value
+    session.last_inbound_at = utcnow()
+    if session.state == SessionState.AWAITING_OPT_IN.value:
+        session.state = SessionState.CLAIMS_READY.value
+    await db.commit()
+
+    question = await orchestrator.ask_next(db, session)
+    if question is None:
+        await whatsapp_channel.send_text(phone, ALREADY_DONE_MESSAGE)
+        return True
+
+    await whatsapp_channel.send_text(phone, question.text)
+    session.last_outbound_at = utcnow()
+    await db.commit()
+    return True
+
+
 async def _handle(db, message: InboundMessage) -> None:
     phone = normalise_phone(message.external_id)
     if not phone:
@@ -188,7 +337,11 @@ async def _handle(db, message: InboundMessage) -> None:
         await db.commit()
         return
 
-    # --- 2. otherwise this is an answer to an open question ----------------
+    # --- 2. a document is a resume: onboard and start the interview --------
+    if message.media_id and await _try_resume_intake(db, phone, message):
+        return
+
+    # --- 3. otherwise this is an answer to an open question ----------------
     session = await orchestrator.find_active_session_by_phone(db, phone, _INBOUND_SCOPE)
     if session is None:
         await whatsapp_channel.send_text(phone, NO_SESSION_MESSAGE)

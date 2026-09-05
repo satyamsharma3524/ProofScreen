@@ -13,6 +13,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from api.engine import scoring, signals
 from api.schemas import Dimension, DimensionScore
 from tests.conftest import EVASIVE_ANSWERS, RESUME, STRONG_ANSWERS, onboard, run_interview
@@ -428,16 +430,28 @@ def test_taxonomy_endpoint_feeds_the_weight_editor(client):
 # ---------------------------------------------------------------------------
 
 
-def _delivery(phone: str, *, text: str | None = None, wamid: str = "wamid.TEST") -> dict:
+def _delivery(
+    phone: str,
+    *,
+    text: str | None = None,
+    document_id: str | None = None,
+    wamid: str = "wamid.TEST",
+    profile_name: str = "Test Candidate",
+) -> dict:
     message: dict = {"from": phone.lstrip("+"), "id": wamid, "timestamp": "1757000000"}
     if text is not None:
         message |= {"type": "text", "text": {"body": text}}
+    if document_id is not None:
+        message |= {
+            "type": "document",
+            "document": {"id": document_id, "filename": "resume.pdf"},
+        }
     return {
         "object": "whatsapp_business_account",
         "entry": [{"id": "WABA", "changes": [{"field": "messages", "value": {
             "messaging_product": "whatsapp",
             "metadata": {"display_phone_number": "911234567890", "phone_number_id": "PNID"},
-            "contacts": [{"profile": {"name": "Test Candidate"}, "wa_id": phone.lstrip("+")}],
+            "contacts": [{"profile": {"name": profile_name}, "wa_id": phone.lstrip("+")}],
             "messages": [message],
         }}]}],
     }
@@ -523,6 +537,149 @@ def test_a_webhook_retry_does_not_become_a_second_answer(client):
     after_retry = client.get(f"/api/sessions/{body['session_id']}").json()["questions_asked"]
 
     assert after_retry == after_first
+
+
+@pytest.fixture
+def sent_resume(monkeypatch):
+    """Stub the two-step Meta media download with a real resume.
+
+    `download_media` is the only thing between a `document` webhook and the
+    existing parser, and it needs a live token — so it is the seam the whole
+    G3 path is tested through.
+    """
+    from api.channels.whatsapp_cloud import whatsapp_channel
+
+    def _stub(payload: bytes, mime: str):
+        async def _download(media_id: str):
+            return payload, mime
+        monkeypatch.setattr(whatsapp_channel, "download_media", _download)
+
+    return _stub
+
+
+def _candidates_named(client, name: str) -> list[dict]:
+    rows = client.get("/api/recruiter/candidates").json()["candidates"]
+    return [row for row in rows if row["name"] == name]
+
+
+def test_a_document_is_parsed_into_a_candidate_and_starts_the_interview(
+    client, sent_resume
+):
+    """G3. Before this, `parse_inbound` dropped documents and `_handle` was
+    never called at all — a resume sent on WhatsApp did nothing, silently."""
+    sent_resume(RESUME.encode(), "text/plain")
+    phone = "+919810016000"
+
+    resp = client.post(
+        "/api/webhooks/whatsapp",
+        json=_delivery(phone, document_id="media.G3A", wamid="wamid.G3A",
+                       profile_name="Doc Intake"),
+    )
+    assert resp.status_code == 200
+
+    rows = _candidates_named(client, "Doc Intake")
+    assert len(rows) == 1, "the document should have onboarded exactly one candidate"
+
+    graph = client.get(f"/api/recruiter/candidates/{rows[0]['id']}").json()
+    assert graph["state"] == "ASKING", "the interview must start without an opt-in code"
+    assert graph["claims"], "claims should have been extracted from the resume"
+
+
+def test_a_retried_document_delivery_does_not_onboard_twice(client, sent_resume):
+    """G8. `_already_processed` queries `responses`, and a resume upload writes
+    no Response row — so without `_claim_once` a Meta retry is a second
+    candidate, a second session, and two interviews in one chat."""
+    sent_resume(RESUME.encode(), "text/plain")
+    phone = "+919810017000"
+    payload = _delivery(phone, document_id="media.G8A", wamid="wamid.G8A",
+                        profile_name="Doc Retry")
+
+    client.post("/api/webhooks/whatsapp", json=payload)
+    after_first = len(_candidates_named(client, "Doc Retry"))
+
+    client.post("/api/webhooks/whatsapp", json=payload)      # the retry
+    after_retry = len(_candidates_named(client, "Doc Retry"))
+
+    assert after_retry == after_first
+
+
+def test_a_delivery_with_no_provider_id_is_never_suppressed():
+    """G8. A missing message id must not collapse two genuine uploads into one."""
+    from api.routers.whatsapp import _claim_once
+
+    assert _claim_once(None) is True
+    assert _claim_once(None) is True
+    assert _claim_once("wamid.G8B") is True
+    assert _claim_once("wamid.G8B") is False
+
+
+def test_a_resume_over_a_live_session_resumes_it_instead_of_starting_a_second(
+    client, sent_resume
+):
+    """G8b. Covers what `_claim_once` cannot: a second upload with a DIFFERENT
+    message id, which is what a nervous candidate and a half-finished rehearsal
+    both look like."""
+    sent_resume(RESUME.encode(), "text/plain")
+    phone = "+919810018000"
+
+    client.post("/api/webhooks/whatsapp",
+                json=_delivery(phone, document_id="media.G8C", wamid="wamid.G8C",
+                              profile_name="Doc Live"))
+    before = _candidates_named(client, "Doc Live")
+    session_before = client.get(
+        f"/api/recruiter/candidates/{before[-1]['id']}"
+    ).json()["questions_asked"]
+
+    # a second upload, new message id, while the first interview is live
+    client.post("/api/webhooks/whatsapp",
+                json=_delivery(phone, document_id="media.G8D", wamid="wamid.G8D",
+                              profile_name="Doc Live"))
+
+    after = _candidates_named(client, "Doc Live")
+    assert len(after) == len(before), "a live session must not be joined by a second"
+    session_after = client.get(
+        f"/api/recruiter/candidates/{before[-1]['id']}"
+    ).json()["questions_asked"]
+    assert session_after == session_before, "re-sending must not burn a question"
+
+
+def test_an_unreadable_file_type_is_refused_without_onboarding(client, sent_resume):
+    """G3. An image is not a resume. It must not reach the parser, and it must
+    not leave the candidate wondering."""
+    sent_resume(b"\x89PNG\r\n\x1a\n" + b"0" * 400, "image/png")
+    phone = "+919810019000"
+
+    before = len(_candidates_named(client, "Doc Image"))
+    resp = client.post(
+        "/api/webhooks/whatsapp",
+        json=_delivery(phone, document_id="media.G3B", wamid="wamid.G3B",
+                       profile_name="Doc Image"),
+    )
+    assert resp.status_code == 200
+    assert len(_candidates_named(client, "Doc Image")) == before
+
+
+def test_a_voice_note_is_still_transcribed_not_treated_as_a_resume(
+    client, sent_resume
+):
+    """G3 regression. The document branch sits in front of the voice path, and
+    an audio mime must fall straight through it."""
+    phone = "+919810020000"
+    body = onboard(client, name="Voice Not Resume", phone=phone)
+    client.post("/api/webhooks/whatsapp",
+                json=_delivery(phone, text=body["opt_in_code"], wamid="wamid.G3VO"))
+
+    sent_resume(b"OggS-not-really-audio", "audio/ogg")
+    before = len(_candidates_named(client, "Doc Audio"))
+    resp = client.post(
+        "/api/webhooks/whatsapp",
+        json=_delivery(phone, document_id="media.G3V", wamid="wamid.G3V",
+                       profile_name="Doc Audio"),
+    )
+    assert resp.status_code == 200
+    assert len(_candidates_named(client, "Doc Audio")) == before, (
+        "an audio mime must never onboard a candidate"
+    )
 
 
 def test_unknown_number_is_handled_quietly(client):

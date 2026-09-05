@@ -114,6 +114,13 @@ class WhatsAppCloudChannel(BaseChannel):
                         text = ((message.get("text") or {}).get("body") or "").strip() or None
                     elif kind in ("audio", "voice"):
                         media_id = (message.get(kind) or {}).get("id")
+                    elif kind == "document":
+                        # G3. Emit it; WHAT it is gets decided after download,
+                        # from the mime download_media() already returns.
+                        # InboundMessage is frozen and carries no type — and
+                        # does not need to, because the mime is authoritative
+                        # and a document can also arrive mid-interview.
+                        media_id = (message.get("document") or {}).get("id")
                     elif kind == "button":
                         text = ((message.get("button") or {}).get("text") or "").strip() or None
                     elif kind == "interactive":
