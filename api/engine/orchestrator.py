@@ -757,6 +757,14 @@ async def create_session(
         if channel is Channel.whatsapp
         else SessionState.CLAIMS_READY.value
     )
+    # D6 — the draft evaluation is opened WITH the interview, not after it.
+    # An assessment that only exists once it succeeds cannot answer "what
+    # happened to the one that did not", and the row costs nothing until
+    # finalization fills it in.
+    from api.engine import evaluation as evaluation_engine
+
+    await evaluation_engine.open_evaluation(db, session, candidate)
+
     await db.commit()
     log.info(
         "session %s ready: %s, %d claims", session.id, job_family, len(claims)
@@ -1164,9 +1172,17 @@ async def finalize(db: AsyncSession, session: ChatSession) -> None:
     session.completed_at = utcnow()
     await db.commit()
 
-    await graph_engine.recompute_profile(
-        db, session.candidate_id, TenantScope.of(session.tenant_id)
-    )
+    scope = TenantScope.of(session.tenant_id)
+    await graph_engine.recompute_profile(db, session.candidate_id, scope)
+
+    # D6 — the profile is recomputed FIRST, deliberately. The evaluation reads
+    # the same graph the profile just cached and then points the profile at
+    # itself, so the mutable cache and the immutable record can never disagree
+    # about what this interview concluded.
+    from api.engine import evaluation as evaluation_engine
+
+    await evaluation_engine.finalize_evaluation(db, session, scope)
+
     log.info("session %s complete after %d questions", session.id, session.questions_asked)
 
 

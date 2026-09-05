@@ -42,6 +42,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy import event, inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -419,6 +420,117 @@ class Profile(Base):
     scored_role_id: Mapped[str | None] = mapped_column(String(32), default=None)
     dimension_profile_json: Mapped[str] = mapped_column(Text, default="[]")
     computed_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
+    # D6 — the pointer. This row stays a MUTABLE CACHE for the fast list view;
+    # the immutable record is `evaluations`. The plan's "Profile becomes a pure
+    # pointer" is deliberately NOT done here: `rank_candidates` reads these
+    # cached scores, and rewriting that is a scoring rewrite. Recorded as
+    # deferred in docs/PHASE_4_TASKS.md 7.
+    latest_evaluation_id: Mapped[str | None] = mapped_column(String(32), default=None)
+
+
+class Evaluation(Base):
+    """D6 — ONE COMPLETED ASSESSMENT. Immutable once finalized.
+
+    Until Phase 4 an evaluation was implicit: `build_candidate_graph()`
+    computed it on demand and threw it away, with `profiles` caching one
+    variant and overwriting it in place. "Why did this candidate score 82 in
+    March and 71 today?" had no answer, because March was never written down.
+
+    WHAT IS IN HERE AND WHAT IS NOT
+
+    In: the RESULT (the aggregate numbers), the CONFIGURATION it was produced
+    under (weights, versions, flags), and POINTERS to the evidence.
+
+    Not in: the evidence. There is no signals blob, no copied quotes and no
+    `evidence_nodes` table. `session_id` and `candidate_id` address the graph
+    that already exists, and the drill-down endpoint is unchanged. Copying
+    evidence in would create a second source of truth for the one thing this
+    product cannot afford to have two answers about.
+
+    The weights ARE copied, and that is not a contradiction: `role_id` is
+    SET NULL on delete (correctly — deleting a lens must not delete the
+    record), so without the snapshot a deleted role would make a finalized
+    evaluation unexplainable.
+
+    LIFECYCLE: draft -> finalized. Two states, both observed.
+
+      draft      the interview is in flight. The live detail is
+                 `sessions.state`; duplicating it here would recreate exactly
+                 the `profiles.status` / `sessions.state` confusion D6 exists
+                 to resolve.
+      finalized  the record. Nothing about it changes again.
+
+    There is no `abandoned` and no `failed`. `SessionState.ABANDONED` is
+    declared in schemas.py and assigned NOWHERE in this codebase — three
+    reads, zero writes — so an abandoned evaluation would be an unreachable
+    state with an untestable transition. Add it the day something abandons a
+    session, and not before.
+
+    ONE EVALUATION PER SESSION, enforced by the unique constraint below. A
+    re-interview is a new session and therefore a distinct `ev_` id, which is
+    what makes "creating another assessment for the same candidate produces a
+    distinct evaluation" true by construction rather than by convention.
+
+    IMMUTABILITY is enforced twice: `evaluation.finalize_evaluation()` refuses
+    a second finalization, and the `before_update` listener at the bottom of
+    this file raises on ANY update to an already-finalized row. The listener is
+    the one that matters — it catches a future callsite that never heard of the
+    service function.
+    """
+
+    __tablename__ = "evaluations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), index=True
+    )
+    # UNIQUE: one assessment per interview. See the class docstring.
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    # SET NULL for the same reason as CandidateOutcome.role_id: the assessment
+    # happened; the lens it was viewed through is only context. `role_title`
+    # and `claim_weights_json` survive the deletion so the row stays readable.
+    role_id: Mapped[str | None] = mapped_column(
+        ForeignKey("job_roles.id", ondelete="SET NULL"), default=None
+    )
+    role_title: Mapped[str | None] = mapped_column(String(200), default=None)
+    job_family: Mapped[str] = mapped_column(String(60), default="general", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    created_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
+    finalized_at: Mapped[datetime | None] = mapped_column(_TS, default=None)
+
+    # --- the result, as it stood at finalization ---------------------------
+    resume_score: Mapped[int] = mapped_column(Integer, default=0)
+    weighted_evidence_score: Mapped[int] = mapped_column(Integer, default=0)
+    competence_score: Mapped[int] = mapped_column(Integer, default=0)
+    badge: Mapped[str] = mapped_column(String(20), default="unverified")
+    consistency_score: Mapped[int] = mapped_column(Integer, default=100)
+    contradiction_count: Mapped[int] = mapped_column(Integer, default=0)
+    role_coverage: Mapped[int] = mapped_column(Integer, default=0)
+    claims_scored: Mapped[int] = mapped_column(Integer, default=0)
+    questions_asked: Mapped[int] = mapped_column(Integer, default=0)
+    dimension_profile_json: Mapped[str] = mapped_column(Text, default="[]")
+
+    # --- the configuration it was produced under ---------------------------
+    claim_weights_json: Mapped[str] = mapped_column(Text, default="{}")
+    dimension_weights_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    # --- D7 provenance. Typed fields; two dicts with genuinely varying keys.
+    taxonomy_version: Mapped[str] = mapped_column(String(40), default="")
+    taxonomy_hash: Mapped[str] = mapped_column(String(40), default="")
+    rubric_version: Mapped[str] = mapped_column(String(40), default="")
+    scoring_version: Mapped[str] = mapped_column(String(40), default="")
+    question_policy_version: Mapped[str] = mapped_column(String(40), default="")
+    prompt_versions_json: Mapped[str] = mapped_column(Text, default="{}")
+    code_version: Mapped[str] = mapped_column(String(64), default="unknown")
+    app_version: Mapped[str] = mapped_column(String(40), default="")
+    llm_mode: Mapped[str] = mapped_column(String(16), default="fixture")
+    model_requested: Mapped[str | None] = mapped_column(String(80), default=None)
+    model_returned: Mapped[str | None] = mapped_column(String(80), default=None)
+    feature_flags_json: Mapped[str] = mapped_column(Text, default="{}")
+    evaluation_version: Mapped[str] = mapped_column(String(40), default="", index=True)
 
 
 class CandidateOutcome(Base):
@@ -472,6 +584,38 @@ class CandidateOutcome(Base):
     decided_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
 
 
+class EvaluationFinalized(RuntimeError):
+    """An attempt to change an evaluation after it was finalized."""
+
+
+@event.listens_for(Evaluation, "before_update", propagate=True)
+def _finalized_evaluations_are_immutable(mapper, connection, target) -> None:
+    """D6 — immutability at the ORM layer, not only in the service function.
+
+    A service-level guard protects the one path that goes through it. This
+    protects every path: a future endpoint, a script, a migration helper, a
+    well-meaning `row.badge = ...` in a debugging session. SQLAlchemy only
+    emits an UPDATE when something actually changed, so this never fires on a
+    no-op flush.
+
+    The test is the OLD value of `finalized_at`, not the current one — the
+    flush that performs the finalization is itself an update, and reading the
+    new value would make finalization impossible.
+
+    `create_all()` cannot express a trigger, so this is where the guarantee
+    lives, and `test_a_finalized_evaluation_cannot_be_mutated_by_any_path`
+    is what stops it from becoming a comment.
+    """
+    history = inspect(target).attrs.finalized_at.history
+    previously = tuple(history.unchanged or ()) + tuple(history.deleted or ())
+    if any(value is not None for value in previously):
+        raise EvaluationFinalized(
+            f"evaluation {target.id} was finalized at "
+            f"{next(v for v in previously if v is not None)} and cannot be changed. "
+            f"A new assessment is a new interview and a new evaluation row."
+        )
+
+
 Index("ix_questions_session_order", Question.session_id, Question.order_index)
 Index("ix_evidence_claim_dimension", Evidence.claim_id, Evidence.dimension)
 Index("ix_session_facts_session_key", SessionFact.session_id, SessionFact.key)
@@ -482,3 +626,11 @@ Index(
     CandidateOutcome.candidate_id,
     CandidateOutcome.decided_at,
 )
+# The two queries D6 adds: a candidate's evaluation history, newest first, and
+# every evaluation a tenant owns.
+Index(
+    "ix_evaluations_candidate_created",
+    Evaluation.candidate_id,
+    Evaluation.created_at,
+)
+Index("ix_evaluations_tenant_status", Evaluation.tenant_id, Evaluation.status)

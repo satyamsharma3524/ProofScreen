@@ -9,6 +9,8 @@ GET  /api/recruiter/taxonomy                 families, claim types, default weig
 POST /api/recruiter/candidates/{id}/outcome  record a hiring decision
 GET  /api/recruiter/candidates/{id}/outcomes decision history, oldest first
 GET  /api/recruiter/validation               M4 — score vs recruiter decision
+GET  /api/recruiter/candidates/{id}/evaluations  assessment history, newest first
+GET  /api/recruiter/evaluations/{id}         one finalized assessment + provenance
 
 The `role_id` parameter is the product. Every dimension score is already
 stored, so passing a different role recomputes the ranking from rows we
@@ -27,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
+from api.engine import evaluation as evaluation_engine
 from api.engine.graph import (
     build_candidate_graph,
     create_role,
@@ -37,6 +40,8 @@ from api import ids
 from api.models import Candidate, CandidateOutcome, JobRole
 from api.schemas import (
     CandidateGraph,
+    EvaluationOut,
+    EvaluationSummary,
     OutcomeIn,
     OutcomeOut,
     RankedCandidates,
@@ -207,6 +212,58 @@ async def outcome_history(
         )
     ).scalars().all()
     return [OutcomeOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Evaluations — D6
+#
+# The difference between these routes and `/candidates/{id}` is the whole
+# point of the deliverable. `/candidates/{id}` recomputes the graph live from
+# whatever the rows say right now, under whatever lens you pass. An evaluation
+# is what the system concluded at one moment, under one configuration, and it
+# never changes again.
+#
+# The drill-down is unchanged: an evaluation names its candidate and its
+# session, and the evidence is read where it has always been read.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/candidates/{candidate_id}/evaluations", response_model=list[EvaluationSummary]
+)
+async def candidate_evaluations(
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
+) -> list[EvaluationSummary]:
+    """A candidate's assessment history, NEWEST FIRST.
+
+    Newest first, unlike `/outcomes`, and the difference is not an
+    inconsistency: outcomes are read as a progression by the validation report,
+    while this is a feed a human scrolls.
+    """
+    if await get_owned(db, Candidate, candidate_id, scope) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "candidate not found")
+    rows = await evaluation_engine.list_for_candidate(db, candidate_id, scope)
+    return [evaluation_engine.to_summary(r) for r in rows]
+
+
+@router.get("/evaluations/{evaluation_id}", response_model=EvaluationOut)
+async def evaluation_detail(
+    evaluation_id: str,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
+) -> EvaluationOut:
+    """One assessment, retrievable independently of the live interview.
+
+    Carries its provenance. Nothing here is a secret: the stamp is eight
+    allowlisted flag names and a set of version strings, by construction.
+    """
+    evaluation = await evaluation_engine.get_evaluation(db, evaluation_id, scope)
+    if evaluation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "evaluation not found")
+    candidate = await get_owned(db, Candidate, evaluation.candidate_id, scope)
+    return evaluation_engine.to_out(evaluation, candidate.name if candidate else "")
 
 
 @router.get("/validation", response_model=ValidationOut)

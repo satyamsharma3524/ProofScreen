@@ -180,14 +180,25 @@ class Provenance:
             "evaluation_version": self.fingerprint(),
         }
 
-    def to_out(self) -> ProvenanceOut:
+    def to_out(self, stored_fingerprint: str | None = None) -> ProvenanceOut:
+        """`stored_fingerprint` wins when given, and callers reading a row give
+        it.
+
+        A stamp read back from an evaluation must report the identity that was
+        WRITTEN, not one recomputed from the columns. The two agree for a
+        finalized row and differ for a draft, whose columns are empty — and a
+        recomputed hash there would give an unfinished assessment a confident
+        identity derived from nothing.
+        """
         return ProvenanceOut(
             **{
                 k: v
                 for k, v in self.__dict__.items()
                 if k in ProvenanceOut.model_fields
             },
-            evaluation_version=self.fingerprint(),
+            evaluation_version=(
+                self.fingerprint() if stored_fingerprint is None else stored_fingerprint
+            ),
         )
 
 
