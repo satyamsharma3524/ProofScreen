@@ -11,6 +11,7 @@ GET  /api/recruiter/candidates/{id}/outcomes decision history, oldest first
 GET  /api/recruiter/validation               M4 — score vs recruiter decision
 GET  /api/recruiter/candidates/{id}/evaluations  assessment history, newest first
 GET  /api/recruiter/evaluations/{id}         one finalized assessment + provenance
+GET  /api/recruiter/evaluations/{id}/history what it concluded, and what a human did
 
 The `role_id` parameter is the product. Every dimension score is already
 stored, so passing a different role recomputes the ranking from rows we
@@ -40,6 +41,7 @@ from api import ids
 from api.models import Candidate, CandidateOutcome, JobRole
 from api.schemas import (
     CandidateGraph,
+    EvaluationHistoryOut,
     EvaluationOut,
     EvaluationSummary,
     OutcomeIn,
@@ -169,12 +171,64 @@ async def record_outcome(
                 status.HTTP_404_NOT_FOUND, f"role_id {payload.role_id!r} not found"
             )
 
+    # D10 — which assessment was the recruiter looking at? The latest FINALIZED
+    # one. Attaching a decision to a draft would tie it to numbers that were
+    # still moving. None when the candidate has never completed an interview,
+    # which is a real case and stays a null rather than an error.
+    evaluation = await evaluation_engine.latest_finalized_for_candidate(
+        db, candidate_id, scope
+    )
+
+    previous = (
+        await db.execute(
+            scoped(
+                select(CandidateOutcome)
+                .where(CandidateOutcome.candidate_id == candidate_id)
+                .order_by(
+                    CandidateOutcome.decided_at.desc(), CandidateOutcome.id.desc()
+                )
+                .limit(1),
+                CandidateOutcome,
+                scope,
+            )
+        )
+    ).scalars().first()
+
+    # D10 — an IDENTICAL repeat of the immediately preceding decision returns
+    # that row instead of appending a second one. Idempotence, not an audit
+    # gap: a genuine progression (shortlisted -> interviewed -> offered) always
+    # appends, because those rows differ. A double-clicked button does not.
+    #
+    # Every field is compared, so "rejected, note: budget" following "rejected,
+    # note: weak on ownership" is still two rows — the reason changed, and the
+    # reason is what a later reader needs.
+    if previous is not None and (
+        previous.decision,
+        previous.stage,
+        previous.note,
+        previous.decided_by,
+        previous.role_id,
+        previous.evaluation_id,
+    ) == (
+        payload.decision.value,
+        payload.stage,
+        payload.note,
+        payload.decided_by,
+        payload.role_id,
+        evaluation.id if evaluation else None,
+    ):
+        return OutcomeOut.model_validate(previous, from_attributes=True)
+
     outcome = CandidateOutcome(
         id=ids.outcome_id(),
         tenant_id=scope.require(),
         candidate_id=candidate_id,
         role_id=payload.role_id,
+        evaluation_id=evaluation.id if evaluation else None,
         decision=payload.decision.value,
+        # Denormalised so "was this changed, and from what?" needs no join and
+        # no re-derived ordering. Null on the first decision.
+        previous_decision=previous.decision if previous is not None else None,
         stage=payload.stage,
         decided_by=payload.decided_by,
         note=payload.note,
@@ -264,6 +318,35 @@ async def evaluation_detail(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "evaluation not found")
     candidate = await get_owned(db, Candidate, evaluation.candidate_id, scope)
     return evaluation_engine.to_out(evaluation, candidate.name if candidate else "")
+
+
+@router.get(
+    "/evaluations/{evaluation_id}/history", response_model=EvaluationHistoryOut
+)
+async def evaluation_history(
+    evaluation_id: str,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
+) -> EvaluationHistoryOut:
+    """D10 — the audit trail for one assessment.
+
+    Answers, in one call: what the evaluation concluded, when it was finalized,
+    what decision was made, when, whether it was later changed, and what it was
+    changed from.
+
+    Assembled from the evaluation's own lifecycle columns and the append-only
+    `candidate_outcomes` rows — there is no events table, because its content
+    would duplicate both. Ordered deterministically down to the row id.
+
+    The two kinds of entry stay visibly separate. A later decision never
+    restates, revises or overrides the assessment: `competence_score` and
+    `badge` on this response come from the finalized evaluation and from
+    nowhere else.
+    """
+    evaluation = await evaluation_engine.get_evaluation(db, evaluation_id, scope)
+    if evaluation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "evaluation not found")
+    return await evaluation_engine.build_history(db, evaluation, scope)
 
 
 @router.get("/validation", response_model=ValidationOut)

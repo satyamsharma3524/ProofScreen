@@ -40,6 +40,7 @@ from api import ids
 from api.engine import provenance as provenance_engine
 from api.models import (
     Candidate,
+    CandidateOutcome,
     ChatSession,
     ClaimScore,
     Evaluation,
@@ -50,9 +51,13 @@ from api.models import (
 from api.schemas import (
     Badge,
     DimensionScore,
+    EvaluationHistoryEntry,
+    EvaluationHistoryOut,
     EvaluationOut,
     EvaluationStatus,
     EvaluationSummary,
+    HistoryEntryKind,
+    OutcomeDecision,
 )
 from api.taxonomy import family_label
 from api.tenancy import TenantScope, get_owned, scoped
@@ -61,6 +66,8 @@ log = logging.getLogger("proofscreen.evaluation")
 
 __all__ = [
     "EvaluationFinalized",
+    "build_history",
+    "decisions_for_evaluation",
     "finalize_evaluation",
     "get_evaluation",
     "latest_finalized_for_candidate",
@@ -252,6 +259,122 @@ async def latest_finalized_for_candidate(
             )
         )
     ).scalars().first()
+
+
+# ---------------------------------------------------------------------------
+# D10 — history
+#
+# THERE IS NO EVENTS TABLE, AND THAT IS THE DESIGN.
+#
+# An `evaluation_events` table was considered and rejected. Its entire content
+# would have been a `created` row and a `finalized` row duplicating
+# `evaluations.created_at` and `evaluations.finalized_at`, plus a pointer row
+# per decision duplicating `candidate_outcomes` — which has been append-only by
+# shape since P1-09 and is already correct. `PRODUCTION_READINESS.md` 5 argues
+# exactly this: every question the event model would answer is answerable from
+# timestamped rows, so derive the events and keep the write path thin.
+#
+# So the timeline is ASSEMBLED from the two sources that already hold the
+# facts, ordered deterministically, with each entry naming its evaluation.
+# ---------------------------------------------------------------------------
+
+
+async def decisions_for_evaluation(
+    db: AsyncSession, evaluation: Evaluation, scope: TenantScope
+) -> list[CandidateOutcome]:
+    """Every decision recorded against this evaluation, oldest first.
+
+    Ordered by `(decided_at, id)`. The id tiebreaker is not decoration: two
+    decisions can land in the same commit and therefore the same timestamp,
+    and an audit trail whose order changes between reads is not an audit trail.
+    """
+    return list(
+        (
+            await db.execute(
+                scoped(
+                    select(CandidateOutcome)
+                    .where(CandidateOutcome.evaluation_id == evaluation.id)
+                    .order_by(CandidateOutcome.decided_at, CandidateOutcome.id),
+                    CandidateOutcome,
+                    scope,
+                )
+            )
+        ).scalars().all()
+    )
+
+
+def _decision(value: str | None) -> OutcomeDecision | None:
+    try:
+        return OutcomeDecision(value) if value else None
+    except ValueError:                                       # pragma: no cover
+        return None
+
+
+async def build_history(
+    db: AsyncSession, evaluation: Evaluation, scope: TenantScope
+) -> EvaluationHistoryOut:
+    """What the evaluation concluded, and what a human then did about it.
+
+    The two are kept visibly separate. Lifecycle entries carry the score;
+    decision entries carry the decision and what it replaced. Nothing here
+    lets a later decision restate, revise or overwrite the assessment — which
+    is requirement 6, and the reason `why_ranked` still reads only evidence.
+    """
+    decisions = await decisions_for_evaluation(db, evaluation, scope)
+
+    entries: list[EvaluationHistoryEntry] = [
+        EvaluationHistoryEntry(
+            kind=HistoryEntryKind.evaluation_created,
+            at=evaluation.created_at,
+            evaluation_id=evaluation.id,
+        )
+    ]
+    if evaluation.finalized_at is not None:
+        entries.append(
+            EvaluationHistoryEntry(
+                kind=HistoryEntryKind.evaluation_finalized,
+                at=evaluation.finalized_at,
+                evaluation_id=evaluation.id,
+                competence_score=evaluation.competence_score,
+                badge=Badge(evaluation.badge),
+            )
+        )
+    for row in decisions:
+        entries.append(
+            EvaluationHistoryEntry(
+                kind=HistoryEntryKind.decision,
+                at=row.decided_at,
+                evaluation_id=evaluation.id,
+                outcome_id=row.id,
+                decision=_decision(row.decision),
+                previous_decision=_decision(row.previous_decision),
+                decided_by=row.decided_by,
+                stage=row.stage,
+                note=row.note,
+            )
+        )
+
+    # Deterministic to the last tiebreaker. `at` first; then lifecycle before
+    # decisions when they share a timestamp (a decision cannot precede the
+    # finalization it was made against); then the id, which is unique.
+    rank = {
+        HistoryEntryKind.evaluation_created: 0,
+        HistoryEntryKind.evaluation_finalized: 1,
+        HistoryEntryKind.decision: 2,
+    }
+    entries.sort(key=lambda e: (e.at, rank[e.kind], e.outcome_id or ""))
+
+    return EvaluationHistoryOut(
+        evaluation_id=evaluation.id,
+        candidate_id=evaluation.candidate_id,
+        status=EvaluationStatus(evaluation.status),
+        finalized_at=evaluation.finalized_at,
+        competence_score=evaluation.competence_score,
+        badge=Badge(evaluation.badge),
+        current_decision=_decision(decisions[-1].decision) if decisions else None,
+        decisions_recorded=len(decisions),
+        entries=entries,
+    )
 
 
 # ---------------------------------------------------------------------------

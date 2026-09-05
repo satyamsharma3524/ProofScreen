@@ -575,6 +575,23 @@ class CandidateOutcome(Base):
     # string like every other enum column here, so a new value needs no
     # migration.
     decision: Mapped[str] = mapped_column(String(20), index=True)
+    # --- D10 ---------------------------------------------------------------
+    #
+    # WHICH ASSESSMENT THIS DECISION WAS MADE AGAINST. Nullable, and both
+    # reasons matter: rows written before Phase 4 have no evaluation, and a
+    # decision can legitimately be recorded for a candidate who never finished
+    # an interview. SET NULL rather than CASCADE, for the third time in this
+    # file and the same reason each time — the decision happened; deleting its
+    # context must not delete the record of it.
+    evaluation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("evaluations.id", ondelete="SET NULL"), index=True, default=None
+    )
+    # What this decision REPLACED, denormalised at write time. The previous row
+    # is right there in the table, so this is redundant by one join — and it is
+    # kept anyway, because "was the decision later changed, and from what?" is
+    # the audit question, and answering it should not depend on the reader
+    # reconstructing an ordering correctly. Null on the first decision.
+    previous_decision: Mapped[str | None] = mapped_column(String(20), default=None)
     # The recruiter's own pipeline naming ("phone screen", "panel 2"). Free
     # text, never read by scoring -- it must not become a second, contradictory
     # status alongside `decision`.

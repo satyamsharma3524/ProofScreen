@@ -73,6 +73,7 @@ _REQUIRED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("responses", "tenant_id"),
     ("candidate_outcomes", "tenant_id"),
     ("profiles", "latest_evaluation_id"),
+    ("candidate_outcomes", "evaluation_id"),
 )
 
 
