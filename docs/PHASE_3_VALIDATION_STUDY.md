@@ -459,8 +459,11 @@ the step most likely to contain an arithmetic error nobody catches.
 6. Every row has a non-empty `generated_question` and an `interview_id` that
    joins to a real `sessions.id`.
 7. M7e ≥ 90%.
-8. `human_review_sample.csv` contains **exactly** `claim, probe_level,
-   question` (plus an opaque `row_id`) — asserted by a test, not by eye.
+8. `human_review_sample.csv` contains **exactly** `row_id, claim, probe_level,
+   question, human_verdict, human_note` — the last two empty, for the reviewer
+   to fill. Asserted by a test, not by eye. Note what is absent besides the
+   verdict: `family` and `source`, because `no_claim_anchor` on an HR question
+   would be a tell and a reviewer who can guess the stratum is not blind.
 9. `score` **refuses to run** on a reviewed file containing any validator
    column, and its refusal is asserted by a test.
 10. `confusion_matrix.md` carries **both** the raw-sample and reweighted tables,
@@ -614,3 +617,57 @@ owner A as separate, evidenced changes.
    have passed under test and failed only on Postgres. Not yet reproduced in
    isolation, and it may be an artifact of the shared session rather than a
    production defect — **stated as unexplained rather than explained away.**
+
+
+---
+
+## 12. How to do the review (P3-03)
+
+The instructions matter as much as the sample. Told the rules, the reviewer
+re-runs the validator in their head and the study measures nothing; told
+nothing, they invent a private standard and the study measures that instead.
+
+**What the reviewer sees:** the claim, the probe level, the question. Nothing
+else — no verdict, no rules, no family, no attempt number.
+
+**The question to answer, and it is deliberately the recruiter's question, not
+the engineer's:**
+
+> Given that claim, is this a good question to put to this candidate — one whose
+> answer would be evidence about whether they actually did the work?
+>
+> `accept` — yes, I would send this.
+> `reject` — no. It is unanswerable, it asks the wrong thing, it gives away its
+> own answer, it repeats an earlier question, or the candidate would not know
+> which part of their resume it refers to.
+
+**What each probe level is trying to get** (paraphrased from
+`question.PROBE_BRIEFS`, which the generator was given — the reviewer needs the
+same intent or they are grading against a different target):
+
+| Level | Should elicit |
+|---|---|
+| VALIDATION | The shape of the scope — how many, how long, what the numbers were |
+| OPERATIONAL | How the work ran day to day; steps, cadence, systems |
+| INCIDENT | One specific episode, not a generality |
+| DECISION | A judgement — what they chose and what they rejected |
+| OUTCOME | What happened after, how they knew, which number moved |
+| TRANSFER | Reasoning about a problem they have **not** solved. A hypothetical is correct here and only here |
+
+**Three things the reviewer should be told outright, because they are product
+decisions and not matters of taste:**
+
+1. **Never judge presentation.** Not fluency, grammar, politeness, register or
+   length. Hinglish is not a defect. CLAUDE.md rule 6; the whole product exists
+   partly to remove those from hiring.
+2. **A question that hands the candidate a figure from their own claim is a
+   reject**, because producing that figure was the evidence.
+3. **On TRANSFER, a hypothetical is the mechanism, not a flaw.** Everywhere
+   else it is asking what they *would* do instead of what they *did*.
+
+**Cost:** ~100 items plus a 20-item overlap, at 30–45 seconds each ≈ **1.5
+hours**. It is the critical path and no code shortens it.
+
+**`human_note` is optional but is where the value is.** One line on a reject —
+*"asks two things at once"* — is what turns a disagreement row into a finding
+in D6. Blank notes still count; the verdict is what the matrix needs.
