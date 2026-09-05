@@ -46,6 +46,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -82,6 +83,13 @@ CANNED = [
 ]
 
 _OUTBOUND: list[str] = []
+
+# Message ids must be unique across RUNS, not just within one. `_already_processed`
+# queries the whole `responses` table -- correctly, since a real wamid is globally
+# unique -- so a fixed id like "wamid.LOCALA1" is seen as a retry of the previous
+# run's first answer and silently dropped. Which is the de-duplication working;
+# it just makes a fixed id a bad idea in a harness.
+_RUN = uuid.uuid4().hex[:8]
 
 
 def _install_stubs(data: bytes, mime: str) -> None:
@@ -233,8 +241,13 @@ async def _final_report(candidate_id: str, tenant_id: str) -> None:
           f"multiplier {consistency.multiplier:.2f}, "
           f"{consistency.facts_tracked} facts tracked")
     if consistency.contradictions:
-        for contradiction in consistency.contradictions:
-            print(f"    \033[31m✗\033[0m {contradiction.summary}")
+        for c in consistency.contradictions:
+            delta = f"  ({c.delta_pct:+.0f}%)" if c.delta_pct is not None else ""
+            print(f"    \033[31m✗\033[0m [{c.severity.value}] "
+                  f"{c.fact_label or c.fact_key}: "
+                  f"{c.earlier_value!r} → {c.later_value!r}{delta}")
+            if c.note:
+                print(f"        {c.note}")
     else:
         print("    none")
     print("=" * 68)
@@ -268,10 +281,10 @@ async def run(args: argparse.Namespace) -> int:
     await _deliver(
         InboundMessage(
             channel=Channel.whatsapp,
-            media_id="media.LOCAL1",
+            media_id=f"media.{_RUN}",
             external_id=args.phone.lstrip("+"),
             profile_name=args.name,
-            provider_message_id="wamid.LOCAL1",
+            provider_message_id=f"wamid.{_RUN}.doc",
         )
     )
 
@@ -310,7 +323,7 @@ async def run(args: argparse.Namespace) -> int:
                 text=answer,
                 external_id=args.phone.lstrip("+"),
                 profile_name=args.name,
-                provider_message_id=f"wamid.LOCALA{turn}",
+                provider_message_id=f"wamid.{_RUN}.a{turn}",
             )
         )
         _, session = await _session_for(args.phone)
