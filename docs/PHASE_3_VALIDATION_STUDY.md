@@ -671,3 +671,96 @@ hours**. It is the critical path and no code shortens it.
 **`human_note` is optional but is where the value is.** One line on a reject —
 *"asks two things at once"* — is what turns a disagreement row into a finding
 in D6. Blank notes still count; the verdict is what the matrix needs.
+
+### The full run — 2026-09-05
+
+`generate --repeats 2` — 8 Tier A + 60 Tier B. **68 interviews, 0 failures.**
+
+| | |
+|---|---|
+| Attempt rows | **519** (target band 300–1000, low end as planned) |
+| Interviews | 68 (Tier A 132 rows, Tier B 387) |
+| Families | **9** — all 8 plus `general` |
+| Probe levels | all 6 |
+| **M7e coverage** | **93.6%** (floor 90%) |
+| Validator accepts / rejects | 362 / 124 |
+| **M7h live reject rate** | **25.5%** |
+| Regenerated attempts | 124 |
+| Repairs | **0** |
+| Cost | **$3.67** — `gpt-4o` $3.64, simulator $0.03 (0.8%) |
+| Wall clock | ~55 min, serial |
+
+**Total spend for the whole phase, pilots included: about $4.70.**
+
+### What the corpus could not have told us
+
+Three results that are not visible from `question_golden.json`, stated before
+any human has labelled anything — so they are distributional facts, not
+verdicts. The verdicts come from P3-03.
+
+**1. One generated question in four fails validation on the first attempt.**
+The corpus reads 100% on M6a/M6b/M6c/M6h; the live reject rate is 25.5%. These
+are not in conflict — they are different questions about different populations,
+and this is the first time the second one has a number at all.
+
+**2. `duplicate_content` is the second most common rule in the wild, at 40
+fires.** It is the exact rule P2-01's ablation found was worth **zero recall**
+on the corpus: every entry authored for it was an unanchored string that rule 7
+caught anyway. The ablation said the corpus under-represented that defect class
+and could not say which way the truth ran. It runs this way. **The ablation
+test earned its place**, and so did the three anchored duplicates added to fix
+it.
+
+**3. `hypothetical_misuse` fired zero times in 486 decisions.** That is not
+evidence the rule is wrong. It is evidence `gpt-4o` at temperature 0.4, given
+`PROBE_BRIEFS`, does not make that mistake. **Recorded, not acted on:** deleting
+a rule because a study failed to provoke it is a Phase 3 *output* at best, and
+only with the disagreement analysis in hand. A rule that costs nothing and
+guards against a cheaper model or a prompt regression is not obviously dead.
+
+**Reject rate climbs with probe depth**, which is the shape you would expect if
+deeper probes are harder to word well:
+
+| Probe level | rejects / judged | rate |
+|---|---|---|
+| DECISION | 7 / 67 | 10.4% |
+| INCIDENT | 15 / 96 | 15.6% |
+| OPERATIONAL | 27 / 100 | 27.0% |
+| VALIDATION | 36 / 123 | 29.3% |
+| OUTCOME | 32 / 86 | 37.2% |
+| TRANSFER | 7 / 14 | 50.0% (n = 14) |
+
+VALIDATION breaking the monotonic pattern is `answer_leakage` doing its job: a
+VALIDATION probe is the one most tempted to quote the claim's own figures back
+at the candidate.
+
+### Acceptance criteria — status at P3-02
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `git diff --stat api/` empty | **PASS** — 0 lines against `c3d5d0f` |
+| 2 | Suite green, no existing test edited | **PASS** — 307 → 332 |
+| 3 | Corpus byte-identical | **PASS** — 0 lines |
+| 4 | Validator constants byte-identical | **PASS** — `DUPLICATE_JACCARD` 0.37, stopwords 29 / 115 |
+| 5 | ≥ 300 rows · ≥ 8 families · 6 probe levels · ≥ 1 `attempt_index=2` | **PASS** (519 · 9 · 6 · 124) |
+| 5 | …≥ 1 `is_repair` | **FAIL — 0, and deliberately not fixed** (below) |
+| 6 | Non-empty questions, `interview_id` joins to `sessions.id` | **PASS** — 0 empty, all 68 join |
+| 7 | M7e ≥ 90% | **PASS** — 93.6% |
+| 8 | Blind file carries only the four fields plus two empty ones | **PASS**, asserted by test |
+| 9 | `score` refuses a leaked reviewed file | **PASS**, asserted by test |
+| 10–13 | Matrix, disagreements, κ, reproducibility | **Pending P3-03** |
+
+**Criterion 5's `is_repair` clause fails and is being reported as a failure
+rather than engineered around.** `evidence.is_non_answer()` matches a canned
+phrase or a string under 12 characters. Neither the authored personas nor a
+competent simulator writes either — Rohit's *"I don't remember the details, it
+was a while ago."* reads as a real answer to it. Authoring a persona that
+replies "ok" would make the criterion pass and would be fitting the data to the
+test (C7).
+
+**The finding is worth more than the criterion:** the repair turn shipped in
+P2-04 and did not fire once in 68 interviews. Either real candidates produce
+non-answers that these personas do not, or `is_non_answer()` is too narrow to
+catch a real evasion. **That is a measurement, not a fix**, and it belongs to
+the E-series (`interview → evaluation`) rather than here.
+
