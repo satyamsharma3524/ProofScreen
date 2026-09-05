@@ -99,6 +99,30 @@ curl -s localhost:8000/api/recruiter/validation | python -m json.tool
 python scripts/validation_report.py > /tmp/after.txt && diff <(sed -n '/^M1/,/^M6/p' /tmp/before.txt) <(sed -n '/^M1/,/^M6/p' /tmp/after.txt)
 ```
 
+## As built — 2026-09-05
+
+| | Result |
+|---|---|
+| Tests | 298 → **307** |
+| Model calls | **0** |
+| M6a / M6b / M6c / M6h | 100% / 100% / 100% / 100% |
+| M1–M5 | **every number unchanged** |
+| Suite under six behaviour flags | 307 green |
+
+**Acceptance criterion 10 in the phase plan was wrong and is corrected.** It
+said M6 must appear *"in `scripts/validation_report.py` output and in
+`GET /api/recruiter/validation`, from one implementation"*. `ValidationOut`
+lives in the frozen `api/schemas.py`, and **M1, M2, M3 and M5 are not on the
+endpoint either** — only M4 ever flowed through the Pydantic model, exactly as
+§2 of this spec records. Putting M6 on the endpoint would mean editing the
+frozen file for a metric that has no dashboard consumer. M6 is script-side, like
+its four siblings; the criterion has been amended rather than the schema.
+
+**Fixture mode withholds M6d/M6e/M6g rather than printing 0%.** Every question
+in fixture mode comes from `FALLBACK_QUESTIONS`, so a live reject rate would
+describe the fallback path and not the model. M6f survives, because a repair is
+a repair whatever produced the question.
+
 ## 7. Risks
 
 | Risk | Mitigation |
