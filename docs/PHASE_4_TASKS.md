@@ -553,3 +553,30 @@ artifact. No threshold was tuned, no corpus entry was added (C6), and
 
 `TRANSFER_PROBE=false` still reproduces the pre-Phase-1 interview, and the four
 seeded personas still score 56 / 46 / 14 / 61.
+
+## I. Commit-attribution note — read before `git blame`
+
+Two agent sessions committed to `main` concurrently on 2026-09-05, and the
+history does not read the way it happened.
+
+- `761959e` and `2c68669` are the parallel **P4A** stream (validator changes
+  and an out-of-distribution study run).
+- The Phase 4 deliverables are `6fe2177` (D9), `a627d08` (D7), `a37960b` (D6),
+  `873ea60` (D8), `ff9979c` (D10).
+- **The integration review's own changes are inside `2c68669`, not in a commit
+  of their own.** The other session ran `git commit` against a shared index
+  while this session's review changes were staged, so its message covers them:
+  the `taxonomy.py` `_load()` fix, the `orchestrator.py` aggregate-root note,
+  the `question.py` `qpol_2` correction, the `tests/test_tenancy.py` additions,
+  §A–§H of this document, and the CLAUDE.md and README.md updates.
+
+History was **not** rewritten to separate them. Rebasing under a peer that is
+still committing risks destroying their work, and a wrong commit message is a
+smaller problem than a lost one. Everything was verified intact afterwards:
+457 tests green, all four seeded evaluations replay MATCH with zero model
+calls.
+
+**The operational lesson outranks the tidying.** `CLAUDE.md`'s hourly-push
+discipline assumes humans who notice each other. Two agents sharing one working
+tree and one index do not. Before the next parallel phase, either give each
+session its own worktree or serialise the commits.
