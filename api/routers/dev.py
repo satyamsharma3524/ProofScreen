@@ -354,6 +354,33 @@ async def provision_tenant(
     )
 
 
+@router.get("/provenance")
+async def provenance_stamp() -> dict:
+    """The full version stamp, human-readable. Internal/debug surface.
+
+    Everything an evaluation carries plus the material set the fingerprint is
+    computed over, so "why do these two evaluations have different hashes?" is
+    a diff rather than an investigation.
+
+    Recruiter-facing responses carry `ProvenanceOut`, which is this MINUS
+    nothing — there is no secret in here to withhold. That is by construction:
+    `FEATURE_FLAGS` is an allowlist of eight setting names, so no credential
+    can reach this endpoint by someone adding a config field.
+    """
+    _guard()
+    from api.engine import provenance as provenance_engine
+
+    stamp = provenance_engine.current()
+    return {
+        **stamp.to_out().model_dump(mode="json"),
+        "fingerprint_material": stamp.material(),
+        "fingerprint_excludes": [
+            "model_returned — a per-process observation, not a per-evaluation fact",
+            "timestamps and candidate identity — an unchanged system stays comparable",
+        ],
+    }
+
+
 @router.get("/llm")
 async def llm_diagnostics() -> dict:
     """Cache hits, call count, fallbacks used. Check after every rehearsal."""

@@ -285,6 +285,16 @@ _STOP_SUBJECT = _STOP_PHRASING | frozenset(
 
 # Duplicate threshold, measured. Midpoint of the usable gap between the highest
 # BORDERLINE pair (0.333) and the lowest duplicate pair (0.400).
+# D7 — the question policy, versioned. `qpol_2` because Phase 2 replaced
+# `planner -> model -> ask` with `planner -> model -> validate -> one
+# regeneration -> fallback`, which changes which questions a candidate is
+# actually asked and therefore what evidence exists to score.
+#
+# It is stamped on evaluations and it is NOT an invitation to tune the
+# constant below during Phase 3's study — that is counter-metric C7, and it is
+# the one move that makes the study worthless while making it look successful.
+QUESTION_POLICY_VERSION = "qpol_2"
+
 DUPLICATE_JACCARD = 0.37
 
 # `agar` is Hindi for "if" and is how a code-switched conditional is actually

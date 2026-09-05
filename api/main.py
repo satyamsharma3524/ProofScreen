@@ -32,6 +32,7 @@ from sqlalchemy import text as sql_text
 
 from api.config import settings
 from api.db import engine, init_models
+from api.engine import provenance
 from api.llm import LLMContractError
 from api.routers import candidates, dev, recruiter, sessions, whatsapp
 from api.schemas import HealthOut
@@ -47,10 +48,17 @@ log = logging.getLogger("proofscreen")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_models()          # no Alembic by design
+    stamp = provenance.current()
     log.info(
         "ProofScreen up — llm=%s model=%s whatsapp=%s max_questions=%d families=%d",
         settings.llm_mode, settings.openai_model, settings.whatsapp_mode,
         settings.max_questions, len(family_keys()),
+    )
+    log.info(
+        "version set — %s@%s %s %s %s code=%s -> %s",
+        stamp.taxonomy_version, stamp.taxonomy_hash, stamp.rubric_version,
+        stamp.scoring_version, stamp.question_policy_version,
+        stamp.code_version, stamp.fingerprint(),
     )
     if not settings.llm_enabled:
         log.warning(
@@ -132,6 +140,12 @@ async def health() -> HealthOut:
     except Exception as exc:  # noqa: BLE001
         database = f"error: {type(exc).__name__}"
 
+    # D7 — the active version set, so "which build produced this?" is
+    # answerable from outside the container. Every field here is consumed by
+    # replay or by this endpoint; the plan's rule is that a version nothing
+    # reads gets deleted.
+    stamp = provenance.current()
+
     return HealthOut(
         status="ok" if database == "ok" else "degraded",
         database=database,
@@ -140,4 +154,10 @@ async def health() -> HealthOut:
         whatsapp=settings.whatsapp_mode,
         max_questions=settings.max_questions,
         job_families=len(family_keys()),
+        taxonomy_version=f"{stamp.taxonomy_version}@{stamp.taxonomy_hash}",
+        rubric_version=stamp.rubric_version,
+        scoring_version=stamp.scoring_version,
+        question_policy_version=stamp.question_policy_version,
+        code_version=stamp.code_version,
+        evaluation_version=stamp.fingerprint(),
     )

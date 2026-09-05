@@ -1,4 +1,5 @@
 {
+  "version": "tax_1",
   "_note": "ARTIFACT 1 of 5 — the Claim Taxonomy. Data, not code, so a PM can tune weights without a deploy. Every family's claim weights sum to 100. `fact_keys` is the controlled vocabulary the consistency engine tracks: only these keys are compared across answers, which is what keeps contradiction detection deterministic instead of a second LLM opinion.",
   "dimension_weights": {
     "_note": "Global defaults. A family may override any subset; the merge is per-key and renormalised to 1.0.",

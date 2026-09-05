@@ -32,6 +32,16 @@ from api.schemas import (
 )
 from api.taxonomy import family_vocabulary
 
+# D7 — the published rubrics, versioned.
+#
+# BUMP THIS WHENEVER A TARGET, A WEIGHT OR A GATE IN THIS FILE MOVES. Those
+# three are the entire mapping from counts to a 0-100 dimension score, so a
+# change to any of them makes yesterday's evaluation and today's incomparable
+# even though every stored signal is identical. A version nobody bumps is worse
+# than no version, so the test suite pins the constant against the structure it
+# describes: `test_rubric_version_covers_targets_gates_and_weights`.
+RUBRIC_VERSION = "rub_1"
+
 # ---------------------------------------------------------------------------
 # which dimensions each probe level is designed to elicit
 #

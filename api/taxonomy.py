@@ -15,6 +15,7 @@ Weights live in data, not code, so the PM can retune "team handling is worth
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -39,6 +40,38 @@ def _clean(mapping: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # families
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# D7 — the taxonomy as a VERSIONED ARTIFACT
+#
+# Two numbers, and they answer different questions.
+#
+#   taxonomy_version   what the file SAYS it is. Hand-maintained, and the place
+#                      to express intent: bump the minor part for an additive
+#                      change (a new fact key, a new claim type — history stays
+#                      valid), the major part for a weight or claim-type change
+#                      (scores are not comparable across it).
+#   taxonomy_hash      what the file ACTUALLY is. Content, not intent. It moves
+#                      whether or not anybody remembered to bump the version,
+#                      which is the whole point of having both.
+#
+# `PM tunes a weight without a deploy` is the documented reason this lives in
+# data rather than code. It is also exactly the change most likely to move a
+# score with nothing in the git history to show for it — so provenance records
+# both, and the fingerprint hashes both.
+# ---------------------------------------------------------------------------
+
+
+def taxonomy_version() -> str:
+    """The DECLARED version. `tax_0` if the file predates the field."""
+    return str(_raw().get("version") or "tax_0")
+
+
+@lru_cache(maxsize=1)
+def taxonomy_hash() -> str:
+    """sha256 of the file's bytes, first 12 hex. The MEASURED version."""
+    return hashlib.sha256(TAXONOMY_PATH.read_bytes()).hexdigest()[:12]
 
 
 def families() -> dict[str, dict[str, Any]]:

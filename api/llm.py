@@ -21,6 +21,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from string import Template
 from typing import TypeVar
@@ -47,6 +48,20 @@ _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 _cache: dict[str, str] = {}
 _stats = {"hits": 0, "calls": 0, "fallbacks": 0, "failures": 0}
 
+# D7 — what the provider ACTUALLY answered with, most recently.
+#
+# Providers alias model names. "the model we asked for" and "the model that
+# replied" diverge, and the divergence is precisely what you need when
+# explaining why a score moved with no code change.
+#
+# HONEST ABOUT WHAT THIS IS: a per-PROCESS observation, not a per-call record.
+# The wrapper is shared, the cache is shared, and threading a returned model
+# name back through three engines to an evaluation would be a plumbing change
+# across four owned files for a field nothing scores on. So provenance RECORDS
+# it and the fingerprint EXCLUDES it — see engine/provenance.py, which says the
+# same thing where a reader of the stamp will see it.
+_last_model_returned: str | None = None
+
 
 class LLMContractError(RuntimeError):
     """The model could not produce output matching the schema."""
@@ -55,6 +70,40 @@ class LLMContractError(RuntimeError):
 # ---------------------------------------------------------------------------
 # prompt loading
 # ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=32)
+def prompt_hash(name: str) -> str:
+    """sha256 of a prompt template's bytes, first 12 hex.
+
+    D7, and PRODUCTION_READINESS.md 1 argues the case: *prompts are product,
+    not implementation.* This project proved it empirically — three templates
+    carried BPO-only worked examples and biased extraction for every other
+    cohort. A prompt edit can move scores as much as a rubric change, so it is
+    versioned as tightly, by content rather than by anyone remembering.
+
+    Cached: the file is read once per process, like the prompt itself.
+    """
+    return hashlib.sha256(
+        (PROMPT_DIR / f"{name}.txt").read_bytes()
+    ).hexdigest()[:12]
+
+
+def prompt_versions() -> dict[str, str]:
+    """{prompt name: content hash} for every template on disk, sorted.
+
+    Discovered rather than listed, so a new prompt is versioned the moment it
+    exists instead of the moment somebody remembers to add it here.
+    """
+    return {
+        path.stem: prompt_hash(path.stem)
+        for path in sorted(PROMPT_DIR.glob("*.txt"))
+    }
+
+
+def model_returned() -> str | None:
+    """The model name the provider last answered with. None in fixture mode."""
+    return _last_model_returned
 
 
 def load_prompt(name: str, /, **values: object) -> str:
@@ -138,6 +187,9 @@ async def _raw_completion(prompt: str, temperature: float) -> str:
             resp = await client.chat.completions.create(**kwargs)
         else:
             raise
+    # D7 — record what actually answered, before touching the content.
+    global _last_model_returned
+    _last_model_returned = getattr(resp, "model", None) or None
     return resp.choices[0].message.content or ""
 
 

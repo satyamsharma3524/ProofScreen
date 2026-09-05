@@ -35,6 +35,11 @@ from api.schemas import (
 )
 from api.taxonomy import dimension_weights
 
+# D7 — the arithmetic in this file, versioned. Bump on any change to the badge
+# thresholds, the claim/weighted/competence formulas, or DIMENSION_ORDER. Not
+# on a comment, and not on a new helper nothing calls.
+SCORING_VERSION = "score_1"
+
 BADGE_VERIFIED_AT = 70
 BADGE_PARTIAL_AT = 40
 
