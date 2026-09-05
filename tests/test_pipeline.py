@@ -712,6 +712,59 @@ def test_a_voice_note_is_still_transcribed_not_treated_as_a_resume(
     )
 
 
+def test_the_last_message_carries_the_score_the_recruiter_will_see(
+    client, monkeypatch
+):
+    """G6. The interview used to end on one flat sentence. Everything in the
+    summary is already computed by then — `finalize()` recomputes the profile
+    before `submit_answer` returns — so this is a read, not a second pass."""
+    from api.channels.whatsapp_cloud import whatsapp_channel
+
+    sent: list[str] = []
+    original = whatsapp_channel.send_text
+
+    async def _record(to: str, text: str):
+        sent.append(text)
+        return await original(to, text)
+
+    monkeypatch.setattr(whatsapp_channel, "send_text", _record)
+
+    phone = "+919810022000"
+    body = onboard(client, name="Summary Flow", phone=phone)
+    client.post("/api/webhooks/whatsapp",
+                json=_delivery(phone, text=body["opt_in_code"], wamid="wamid.G6OI"))
+
+    for turn in range(24):
+        state = client.get(f"/api/sessions/{body['session_id']}").json()
+        if state["state"] == "COMPLETE":
+            break
+        client.post(
+            "/api/webhooks/whatsapp",
+            json=_delivery(
+                phone,
+                text=STRONG_ANSWERS[turn % len(STRONG_ANSWERS)],
+                wamid=f"wamid.G6A{turn}",
+            ),
+        )
+    else:                                     # pragma: no cover - budget is 12
+        raise AssertionError("the interview never completed")
+
+    graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
+    final = sent[-1]
+
+    assert f"{graph['competence_score']}/100" in final, final
+    assert "Competence score" in final
+    # the badge word must be the DASHBOARD's word, not the enum value
+    assert {"verified": "Verified", "partial": "Partially verified",
+            "unverified": "Unverified"}[graph["badge"]] in final, final
+    assert "dimensions across" in final
+    # the inversion is the recruiter's reveal, not the candidate's
+    assert str(graph["resume_score"]) not in final.replace(
+        str(graph["competence_score"]), ""
+    ) or graph["resume_score"] == graph["competence_score"]
+    assert "onsistency" not in final, final
+
+
 def test_unknown_number_is_handled_quietly(client):
     resp = client.post(
         "/api/webhooks/whatsapp",

@@ -40,7 +40,7 @@ from api.models import (
     utcnow,
 )
 from api.routers.candidates import _onboard
-from api.schemas import Channel, InboundMessage, SessionState
+from api.schemas import Badge, Channel, InboundMessage, SessionState
 from api.stt import transcribe_media_id
 from api.tenancy import TenantScope
 
@@ -329,6 +329,61 @@ async def _try_resume_intake(db, phone: str, message: InboundMessage) -> bool:
     return True
 
 
+# G6 — the same words the dashboard prints. `Badge` carries the values and
+# lib/api/format.ts carries the labels, so this is a second copy and it exists
+# on purpose: without it the closing WhatsApp message and the recruiter's
+# screen call the same candidate two different things, ninety seconds apart, in
+# the same demo.
+_BADGE_LABEL = {
+    Badge.verified: "Verified",
+    Badge.partial: "Partially verified",
+    Badge.unverified: "Unverified",
+}
+
+
+async def _completion_summary(db, session) -> str:
+    """What the candidate gets instead of one flat sentence.
+
+    Everything here is already computed and committed: `submit_answer` calls
+    `finalize()`, which recomputes the profile BEFORE it returns. This is a
+    read, not a second scoring pass.
+
+    WHAT IS DELIBERATELY LEFT OUT. `resume_score` -- the gap between it and the
+    competence score is the recruiter's insight and the demo's punchline, and
+    the product already withholds audit detail from candidates. `consistency`
+    -- it is an int with no band, and inventing "High" here would be a word
+    that appears nowhere else in the product.
+
+    NEVER RAISES. This is the last message of the demo; a traceback here loses
+    the ending, so it degrades to the flat sentence it replaces.
+    """
+    from api.engine import graph as graph_engine
+
+    try:
+        graph = await graph_engine.build_candidate_graph(
+            db, session.candidate_id, scope=TenantScope.of(session.tenant_id)
+        )
+        if graph is None:
+            return DONE_MESSAGE
+        # `probed`, not `score > 0`. It is the field that means "we asked about
+        # this", which is what "covered" claims -- and it is what the dashboard
+        # counts, so the two cannot disagree on stage.
+        probed = sum(1 for d in graph.dimension_profile if d.probed)
+        claims = len(graph.claims)
+        return (
+            "That's everything — thank you.\n\n"
+            f"*Competence score: {graph.competence_score}/100*\n"
+            f"Status: {_BADGE_LABEL.get(graph.badge, graph.badge.value)}\n"
+            f"Evidence covered {probed} of {len(graph.dimension_profile)} "
+            f"dimensions across {claims} "
+            f"{'claim' if claims == 1 else 'claims'}.\n\n"
+            "Your verified profile is ready and the recruiter can see it now."
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("completion summary failed; sending the plain message")
+        return DONE_MESSAGE
+
+
 async def _handle(db, message: InboundMessage) -> None:
     phone = normalise_phone(message.external_id)
     if not phone:
@@ -421,7 +476,11 @@ async def _handle(db, message: InboundMessage) -> None:
         response.provider_message_id = message.provider_message_id
         await db.commit()
 
-    reply = next_question.text if next_question else DONE_MESSAGE
+    reply = (
+        next_question.text
+        if next_question
+        else await _completion_summary(db, session)      # G6
+    )
     await whatsapp_channel.send_text(phone, reply)
     session.last_outbound_at = utcnow()
     await db.commit()
