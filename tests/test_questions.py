@@ -22,6 +22,7 @@ from string import Template
 
 import pytest
 
+from tests.conftest import onboard, run_interview
 from api.engine.question import (
     DUPLICATE_JACCARD,
     FALLBACK_QUESTIONS,
@@ -791,3 +792,221 @@ def test_no_single_rule_carries_the_whole_corpus():
     for rule in RULES:
         lost = baseline - _recall_without(rule)
         assert lost < 60, f"{rule} alone carries {lost:.1f} points of recall"
+
+
+# ===========================================================================
+# P2-03 — bounded regeneration
+#
+# Fixture mode returns the fallback for every question, so none of this is
+# exercised by the rest of the suite. These tests drive the model path with a
+# stub and COUNT THE CALLS, because the cap is the whole point: the latency
+# guardrail is +20% on the median turn and every turn already blocks on a call.
+# ===========================================================================
+
+import asyncio
+
+import api.engine.question as question_module
+from api.config import settings as _settings
+from api.schemas import GeneratedQuestion
+
+GOOD = "What was your scope on the handle time work, and which queue was it?"
+BAD_LEAK = "So you cut it from 480s to 310s — how did you get from 480 to 310?"
+BAD_ANCHOR = "Tell me more."
+
+KWARGS = dict(
+    claim_type="aht_control",
+    claim_metric="480s -> 310s",
+    job_family="bpo_operations",
+)
+
+
+class _Model:
+    """Stub for `complete_json`. Returns queued questions and counts calls, so
+    the retry cap is asserted by observation rather than by reading the code."""
+
+    def __init__(self, *questions: str):
+        self.queue = list(questions)
+        self.calls = 0
+        self.prompts: list[str] = []
+
+    async def __call__(self, prompt, model, **kw):
+        self.calls += 1
+        self.prompts.append(prompt)
+        text = self.queue.pop(0) if self.queue else self.queue and "" or GOOD
+        return GeneratedQuestion(question=text, probe_level=ProbeLevel.VALIDATION)
+
+
+def _generate(monkeypatch, model, validation: bool = True, **extra):
+    """Drives the model path with a stub.
+
+    `question_validation` is set EXPLICITLY rather than inherited from the
+    environment. Without this the suite fails under `QUESTION_VALIDATION=false`,
+    and the convention — set by `TRANSFER_PROBE` — is that the suite stays green
+    with a behaviour flag off. A test asserting validation behaviour must turn
+    validation on itself.
+    """
+    monkeypatch.setattr(_settings, "question_validation", validation)
+    monkeypatch.setattr(question_module, "complete_json", model)
+    return asyncio.run(
+        question_module.generate_question(
+            CLAIM, ProbeLevel.VALIDATION, **{**KWARGS, **extra}
+        )
+    )
+
+
+def test_accepted_first_attempt_makes_one_call(monkeypatch):
+    model = _Model(GOOD)
+    result = _generate(monkeypatch, model)
+    assert model.calls == 1, "a passing question must not be regenerated"
+    assert result.source == "model"
+    assert result.attempts == 1
+    assert result.violations == ()
+
+
+def test_rejected_question_triggers_exactly_one_regeneration(monkeypatch):
+    model = _Model(BAD_LEAK, GOOD)
+    result = _generate(monkeypatch, model)
+    assert model.calls == 2, f"expected exactly 2 model calls, got {model.calls}"
+    assert result.source == "regenerated"
+    assert result.attempts == 2
+    assert result.question == GOOD
+
+
+def test_two_failures_fall_back_and_never_make_a_third_call(monkeypatch):
+    """The cap. Not "usually two" — never three, whatever the model returns."""
+    model = _Model(BAD_LEAK, BAD_ANCHOR)
+    result = _generate(monkeypatch, model)
+    assert model.calls == 2, f"{model.calls} model calls — the cap leaked"
+    assert result.source == "fallback"
+    assert result.attempts == 2
+    assert result.question == question_module.fallback_question(
+        ProbeLevel.VALIDATION, CLAIM
+    ).question
+
+
+def test_violations_are_recorded_from_attempt_one(monkeypatch):
+    """M6d asks how often the MODEL produces a bad question, which is a property
+    of attempt one. A successful retry must not erase that."""
+    model = _Model(BAD_LEAK, GOOD)
+    result = _generate(monkeypatch, model)
+    assert result.source == "regenerated"
+    assert "answer_leakage" in result.violations
+
+
+def test_the_fallback_is_never_validated(monkeypatch):
+    """R1 in the phase plan, asserted structurally. The rendered fallback trips
+    `answer_leakage` by construction (corpus q60), and CLAUDE.md rule 5 requires
+    every LLM call to have a fallback — so a validator able to reject it would
+    leave no path at all."""
+    fallback_text = question_module.fallback_question(
+        ProbeLevel.VALIDATION, CLAIM
+    ).question
+    model = _Model(fallback_text)          # the model call itself failed
+    seen: list[str] = []
+
+    real_validate = question_module.validate
+
+    def spy(text, **kw):
+        seen.append(text)
+        return real_validate(text, **kw)
+
+    monkeypatch.setattr(question_module, "validate", spy)
+    result = _generate(monkeypatch, model)
+
+    assert result.source == "fallback"
+    assert result.attempts == 1
+    assert model.calls == 1, "a failed model call must not be retried by the validator"
+    assert fallback_text not in seen, "the fallback was passed through validate()"
+
+
+def test_retry_prompt_names_the_rules_and_shows_no_examples(monkeypatch):
+    """The retry brief carries rule NAMES. Worked examples would be a per-cohort
+    authoring cost and would re-introduce the bias the taxonomy keeps out of
+    code — A's contract forbids per-family examples in prompts."""
+    model = _Model(BAD_LEAK, GOOD)
+    _generate(monkeypatch, model)
+    retry_prompt = model.prompts[1]
+    assert "answer_leakage" in retry_prompt
+    assert "REJECTED" in retry_prompt.upper()
+    # No corpus question may appear in the prompt — that is what an example is.
+    for entry in ENTRIES:
+        assert entry["question"] not in retry_prompt
+
+
+def test_first_prompt_carries_no_retry_brief(monkeypatch):
+    model = _Model(GOOD)
+    _generate(monkeypatch, model)
+    assert "REJECTED" not in model.prompts[0].upper()
+    assert "$violations" not in model.prompts[0], "template slot left unrendered"
+
+
+def test_validation_flag_off_reproduces_the_phase_one_path(monkeypatch):
+    """QUESTION_VALIDATION=false must be the pre-phase system, question for
+    question — the TRANSFER_PROBE precedent."""
+    model = _Model(BAD_LEAK)
+    result = _generate(monkeypatch, model, validation=False)
+    assert model.calls == 1, "no validation means no retry"
+    assert result.question == BAD_LEAK
+    assert result.source == "model"
+    assert result.violations == ()
+
+
+def test_attempt_is_duck_compatible_with_generated_question(monkeypatch):
+    """`GeneratedQuestion` lives in the frozen schemas.py, so QuestionAttempt
+    carries the two attributes every existing call site reads. If this breaks,
+    orchestrator.ask_next stops persisting question text."""
+    model = _Model(GOOD)
+    result = _generate(monkeypatch, model)
+    assert isinstance(result.question, str) and result.question
+    assert result.probe_level is ProbeLevel.VALIDATION
+
+
+def test_question_columns_default_safely(client):
+    """A row written without the new fields must read as an unvalidated model
+    question rather than raising."""
+    import asyncio as _asyncio
+
+    from api import ids
+    from api.db import SessionLocal
+    from api.models import Question
+
+    async def scenario():
+        async with SessionLocal() as db:
+            body = onboard(client, name="Column Defaults", phone="+919810080001")
+            session_id = body["session_id"]
+            claim_id = body["claims"][0]["id"]
+            q = Question(
+                id=ids.question_id(), claim_id=claim_id, session_id=session_id,
+                text="Bare row, no provenance set.", probe_level="VALIDATION",
+            )
+            db.add(q)
+            await db.commit()
+            await db.refresh(q)
+            return q.source, q.attempts, q.violations_json, q.is_repair
+
+    assert _asyncio.run(scenario()) == ("model", 1, None, False)
+
+
+def test_seeded_questions_never_exceed_two_attempts(client):
+    """Over a whole interview, not one call."""
+    import asyncio as _asyncio
+
+    from sqlalchemy import select
+
+    from api.db import SessionLocal
+    from api.models import Question
+
+    body = onboard(client, name="Attempt Ceiling", phone="+919810080002")
+    run_interview(client, body["session_id"])
+
+    async def rows():
+        async with SessionLocal() as db:
+            return list(
+                (await db.execute(select(Question).where(
+                    Question.session_id == body["session_id"]))).scalars().all()
+            )
+
+    asked = _asyncio.run(rows())
+    assert asked, "no questions were asked"
+    assert max(q.attempts for q in asked) <= 2
+    assert {q.source for q in asked} <= {"model", "regenerated", "fallback"}

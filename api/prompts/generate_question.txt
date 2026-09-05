@@ -32,6 +32,7 @@ RULES
   - Never comment on their English, and never ask them to elaborate "more
     professionally". Score is on evidence, not presentation.
   - One answerable thing. No two questions joined by "and also".
+$violations
 
 Return ONLY JSON, no prose, no markdown fences, matching this schema:
 
