@@ -136,6 +136,8 @@ the tree and re-ranks live for any role profile.
 | `OPENAI_API_KEY` empty | fixture mode: no network, deterministic heuristics |
 | `WHATSAPP_ACCESS_TOKEN` empty | outbound dry-run; inbound webhooks still parse |
 | `ADAPTIVE_PROBING=false` | strict VALIDATION→OUTCOME sweep |
+| `QUESTION_VALIDATION=false` | no question validation, no regeneration — the Phase 1 question path |
+| `REPAIR_TURN=false` | a non-answer consumes its budgeted question, as in Phase 1 |
 | `SCORE_INLINE=false` | signal extraction moves to a background task |
 | `VOICE_WEIGHT=0` | removes the text/voice asymmetry |
 | `MAX_QUESTIONS`, `MAX_CLAIMS` | interview size |
@@ -222,7 +224,7 @@ weight profiles with live re-ranking, `why_ranked` on every ranked row, the
 duration, `/api/dev/*` tooling, engine-generated fixture, seed showing the
 resume/competence inversion and the ranking flip across three lenses, Docker.
 
-**Phase 1 is complete — 186 tests passing.** All fourteen tasks merged
+**Phase 1 and Phase 2 are complete — 307 tests passing.** All fourteen tasks merged
 (`docs/PHASE_1_TASKS.md`). The exit condition is the one written in
 `PHASE_1_SUCCESS_METRICS.md` §Reporting, and all four parts hold: M1b = 100%,
 M5c = 0%, guardrails green, and M4a **published** as `insufficient data
@@ -235,9 +237,38 @@ scoring.**
 `TRANSFER_PROBE=false` still reproduces the pre-phase interview exactly:
 0 probes, competence 46 / 61 / 56 / 14 identical both ways.
 
-Next: the conversation layer — claim extraction quality and question
-generation. Nothing in Phase 2 (`docs/PHASE_2_EXECUTION_PLAN.md`) starts
-before that is decided.
+**Phase 2 — Question Quality Infrastructure — is complete.** Question
+generation is now `planner → model → validate() → one regeneration → fallback`,
+with `engine/question.validate()` applying **seven rules in pure Python**:
+`answer_leakage · duplicate_content · multiple_fact_targets ·
+hypothetical_misuse · unsupported_metric · scope_drift · no_claim_anchor`. Same
+pattern as `enforce_verbatim()` — the model produces, Python decides. A
+non-answer earns one **off-budget** repair turn. `questions` records
+`source · attempts · violations_json · is_repair`, which is what makes M6
+computable from stored rows.
+
+Three things about that layer are load-bearing and easy to break:
+
+- **The regeneration cap is one, written as two explicit calls rather than a
+  loop** — a loop invites raising the constant. The ceiling is the +20%
+  median-turn-latency guardrail.
+- **The fallback is never validated.** It is rendered `On "<claim>" — <base>`,
+  so it quotes the claim including its figures and trips `answer_leakage` by
+  construction. CLAUDE.md rule 5 requires every LLM call to have a fallback, so
+  a validator able to reject it would leave no path at all.
+- **Rule 3 is not evaluated on TRANSFER.** A valid T1 probe pairs one claim's
+  method with another's problem, so two fact targets is the mechanism working.
+
+`docs/PHASE_2_EXECUTION_PLAN.md` also holds **Phase 3** (D6–D10: Evaluation
+entity, versioning, replay, tenant isolation, score history), re-designated
+because its own entry condition — M4a has produced a number — is still unmet.
+**Trigger for D9 tenant isolation: before the first customer's data lands.**
+
+Next, and it is a measurement rather than a feature: **the question corpus is at
+100% on every metric, so it can tell you the validator got worse, not whether it
+is good.** Run `validate()` over questions a live interview generates with a real
+`OPENAI_API_KEY` and look at what it rejects. Do not add corpus entries
+reactively — that is counter-metric C6.
 
 `M5a` reads 98.0%, not the 81.7% an older revision of the checklist recorded:
 it is margin-based against `taxonomy.MARGIN_FLOOR`, over the 50 golden entries
