@@ -585,6 +585,36 @@ def test_a_document_is_parsed_into_a_candidate_and_starts_the_interview(
     assert graph["claims"], "claims should have been extracted from the resume"
 
 
+def test_the_candidate_is_told_what_is_happening_during_onboarding(
+    client, sent_resume, monkeypatch
+):
+    """G7. Onboarding is two model calls before the first question, and one
+    question in four is regenerated. Silence there reads as a crash — to the
+    candidate and, on a projector, to the room. Both gaps must be narrated."""
+    from api.channels.whatsapp_cloud import whatsapp_channel
+
+    sent: list[str] = []
+    original = whatsapp_channel.send_text
+
+    async def _record(to: str, text: str):
+        sent.append(text)
+        return await original(to, text)
+
+    monkeypatch.setattr(whatsapp_channel, "send_text", _record)
+    sent_resume(RESUME.encode(), "text/plain")
+
+    client.post(
+        "/api/webhooks/whatsapp",
+        json=_delivery("+919810021000", document_id="media.G7A", wamid="wamid.G7A",
+                       profile_name="Doc Acked"),
+    )
+
+    assert len(sent) >= 3, f"expected two acks then the question, got {sent}"
+    assert "one moment" in sent[0], sent[0]
+    assert "understood your background" in sent[1], sent[1]
+    assert sent[-1] not in (sent[0], sent[1]), "the question must be its own message"
+
+
 def test_a_retried_document_delivery_does_not_onboard_twice(client, sent_resume):
     """G8. `_already_processed` queries `responses`, and a resume upload writes
     no Response row — so without `_claim_once` a Meta retry is a second

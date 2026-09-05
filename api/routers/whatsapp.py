@@ -68,6 +68,24 @@ UNSUPPORTED_FILE_MESSAGE = (
     "I can read PDF, Word or plain-text resumes. Could you send one of those?"
 )
 
+# G7 — the two gaps between a resume arriving and the first question, each
+# covered by the message that says what is happening in it.
+#
+# The silence is not 10 seconds. Onboarding is claim extraction (LLM #1) then
+# question generation (LLM #2), and `complete_json` retries internally on a
+# timeout as well as on a schema error, so each is up to two round-trips at a
+# 25s client timeout. One question in four also fails validation and is
+# regenerated (M7h = 25.5% over 519 live questions), which is a third call.
+# Nothing about that is visible to a candidate holding a phone, and an audience
+# watching a projector reads any of it as a crash.
+#
+# There is no third ack. "Ready, let us begin" would fire immediately before
+# the question with no gap between them -- a notification buzz carrying no
+# information. Two messages, two gaps.
+RESUME_RECEIVED_MESSAGE = (
+    "Resume received. I'm reading through your experience now — one moment."
+)
+
 # G3 — mime -> the suffix `ingest.parse.extract_text` dispatches on. Meta gives
 # us a mime; `extract_text` keys on the file suffix, so one of them has to
 # translate and it is not going to be the frozen parser. `application/msword`
@@ -249,6 +267,8 @@ async def _try_resume_intake(db, phone: str, message: InboundMessage) -> bool:
     if await _resume_open_question(db, phone):        # G8b
         return True
 
+    await whatsapp_channel.send_text(phone, RESUME_RECEIVED_MESSAGE)      # G7 #1
+
     try:
         resume_text = extract_text(f"resume{suffix}", data)
     except UnsupportedResume as exc:
@@ -266,6 +286,21 @@ async def _try_resume_intake(db, phone: str, message: InboundMessage) -> bool:
         phone=phone,
         resume_text=resume_text,
         filename=f"resume{suffix}",
+    )
+
+    # G7 #2. The claim count is free -- `_onboard` already returned it -- and it
+    # is the better message: it proves the resume was READ, where "preparing
+    # your question" only promises that something is happening.
+    await whatsapp_channel.send_text(
+        phone,
+        (
+            f"Got it — I've understood your background and found "
+            f"{len(result.claims)} "
+            f"{'claim' if len(result.claims) == 1 else 'claims'} worth "
+            f"verifying. Preparing your first question..."
+        )
+        if result.claims
+        else "Got it — I've read your background. Preparing your first question...",
     )
 
     session = await db.get(ChatSession, result.session_id)
