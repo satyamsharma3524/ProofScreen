@@ -224,7 +224,7 @@ weight profiles with live re-ranking, `why_ranked` on every ranked row, the
 duration, `/api/dev/*` tooling, engine-generated fixture, seed showing the
 resume/competence inversion and the ranking flip across three lenses, Docker.
 
-**Phase 1 and Phase 2 are complete — 307 tests passing.** All fourteen tasks merged
+**Phase 1 and Phase 2 are complete — 332 tests passing** (307 at Phase 2 exit; Phase 3's harness added 25). All fourteen tasks merged
 (`docs/PHASE_1_TASKS.md`). The exit condition is the one written in
 `PHASE_1_SUCCESS_METRICS.md` §Reporting, and all four parts hold: M1b = 100%,
 M5c = 0%, guardrails green, and M4a **published** as `insufficient data
@@ -264,11 +264,38 @@ entity, versioning, replay, tenant isolation, score history), re-designated
 because its own entry condition — M4a has produced a number — is still unmet.
 **Trigger for D9 tenant isolation: before the first customer's data lands.**
 
-Next, and it is a measurement rather than a feature: **the question corpus is at
-100% on every metric, so it can tell you the validator got worse, not whether it
-is good.** Run `validate()` over questions a live interview generates with a real
-`OPENAI_API_KEY` and look at what it rejects. Do not add corpus entries
-reactively — that is counter-metric C6.
+**Phase 3 — Real Interview Validation Study — is running.** That measurement
+(the corpus reads 100%, so it detects regression and cannot say whether the
+validator is *good*) is now half done. Plan and full execution log:
+`docs/PHASE_3_VALIDATION_STUDY.md`. `scripts/interview_study.py` drives real
+interviews, instruments `validate()` from outside, and writes
+`studies/phase3/`. **`api/` is not modified by this phase** — that is
+acceptance criterion 1, and it holds.
+
+Measured over **519 generated questions, 68 interviews, 9 families, $3.67**:
+
+- **M7h live reject rate 25.5%** — one question in four fails validation on the
+  first attempt, against a corpus reading 100%. Different populations, not a
+  contradiction; this is just the first time the second one has a number.
+- **`duplicate_content` is the second most common rule in the wild (40 fires)** —
+  the one P2-01's ablation found was worth *zero* recall on the corpus. The
+  ablation was right that the corpus under-represented it.
+- **`hypothetical_misuse` fired zero times in 486 decisions.** Not evidence the
+  rule is wrong; evidence gpt-4o does not make that mistake. **Do not delete
+  it** on this basis — see the plan's §11.
+- **The repair turn fired zero times in 68 interviews.** `is_non_answer()` wants
+  a canned phrase or <12 chars and no realistic candidate writes either. This
+  fails an acceptance criterion and is reported as a failure, not fixed: a
+  persona authored to reply "ok" would be fitting the data to the test.
+
+**Blocked on a human.** `studies/phase3/human_review_sample.csv` is 100 blind
+items (50 validator-accepts, 50 rejects) awaiting labels; §12 of the plan is the
+reviewer brief. Nothing downstream — confusion matrix, disagreement analysis —
+can be computed until they land. **Do not tune `DUPLICATE_JACCARD` or the
+stopword lists during the study** (C7): that is fitting to the test set, and it
+is the one move that makes the study worthless while making it look successful.
+
+Do not add corpus entries reactively — that is counter-metric C6.
 
 `M5a` reads 98.0%, not the 81.7% an older revision of the checklist recorded:
 it is margin-based against `taxonomy.MARGIN_FLOOR`, over the 50 golden entries
