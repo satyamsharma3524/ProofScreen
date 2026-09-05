@@ -25,7 +25,8 @@ from sqlalchemy import select  # noqa: E402
 
 from api.db import SessionLocal  # noqa: E402
 from api.engine.graph import build_candidate_graph  # noqa: E402
-from api.models import Candidate  # noqa: E402
+from api.models import DEVELOPMENT_TENANT_ID, Candidate  # noqa: E402
+from api.tenancy import TenantScope  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "fixtures" / "sample_graph.json"
 
@@ -47,7 +48,9 @@ async def main(name_like: str = "Priya%") -> None:
         if candidate is None:
             raise SystemExit(f"no candidate matching {name_like!r} — run seed.py first")
 
-        graph = await build_candidate_graph(db, candidate.id)
+        graph = await build_candidate_graph(
+            db, candidate.id, scope=TenantScope.of(DEVELOPMENT_TENANT_ID)
+        )
         payload = {"_note": NOTE, **json.loads(graph.model_dump_json())}
         OUT.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
         print(f"wrote {OUT.relative_to(Path.cwd())} from {candidate.name}")

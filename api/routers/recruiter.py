@@ -14,6 +14,10 @@ The `role_id` parameter is the product. Every dimension score is already
 stored, so passing a different role recomputes the ranking from rows we
 already have — no model calls, no re-interviewing. Two requests, two orders,
 same evidence.
+
+D9 — every route here depends on `current_tenant` and passes the resulting
+scope down. No handler writes a tenant predicate itself; a cross-tenant id
+comes back as 404, never 403, because 403 would confirm the row exists.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from api.schemas import (
     RoleWeightsIn,
     ValidationOut,
 )
+from api.tenancy import TenantScope, current_tenant, get_owned, scoped
 from api.taxonomy import (
     claim_types,
     default_claim_weights,
@@ -56,8 +61,9 @@ async def ranked_candidates(
         None, description="Rank under this role's weights instead of the family defaults"
     ),
     db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> RankedCandidates:
-    role_ref, rows = await rank_candidates(db, role_id)
+    role_ref, rows = await rank_candidates(db, role_id, scope=scope)
     return RankedCandidates(scored_for=role_ref, candidates=rows)
 
 
@@ -66,24 +72,36 @@ async def candidate_graph(
     candidate_id: str,
     role_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> CandidateGraph:
-    graph = await build_candidate_graph(db, candidate_id, role_id)
+    graph = await build_candidate_graph(db, candidate_id, role_id, scope=scope)
     if graph is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "candidate not found")
     return graph
 
 
 @router.get("/roles", response_model=list[RoleOut])
-async def list_roles(db: AsyncSession = Depends(get_db)) -> list[RoleOut]:
+async def list_roles(
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
+) -> list[RoleOut]:
     rows = (
-        await db.execute(select(JobRole).order_by(JobRole.created_at))
+        await db.execute(
+            scoped(
+                select(JobRole).order_by(JobRole.created_at, JobRole.id),
+                JobRole,
+                scope,
+            )
+        )
     ).scalars().all()
     return [role_to_out(r) for r in rows]
 
 
 @router.post("/roles", response_model=RoleOut, status_code=status.HTTP_201_CREATED)
 async def create_role_profile(
-    payload: RoleWeightsIn, db: AsyncSession = Depends(get_db)
+    payload: RoleWeightsIn,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> RoleOut:
     """Weights are rescaled to sum to 100, so 40/30/20/20 is accepted as typed."""
     role = await create_role(
@@ -92,6 +110,7 @@ async def create_role_profile(
         job_family=payload.job_family,
         claim_weights=payload.claim_weights or None,
         dimension_weights_override=payload.dimension_weights or None,
+        scope=scope,
     )
     return role_to_out(role)
 
@@ -118,6 +137,7 @@ async def record_outcome(
     candidate_id: str,
     payload: OutcomeIn,
     db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> OutcomeOut:
     """Record what a recruiter decided.
 
@@ -130,22 +150,23 @@ async def record_outcome(
     three rows, not one row updated three times, because the progression is
     what M4a rank-correlates against.
     """
-    candidate = await db.get(Candidate, candidate_id)
+    candidate = await get_owned(db, Candidate, candidate_id, scope)
     if candidate is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "candidate not found")
 
     # An unknown lens is an error, not a null. "Rejected under the Ops lens"
     # and "rejected" are different facts, and quietly degrading the first into
     # the second corrupts how the validation report groups decisions, with
-    # nothing surfacing to say so.
+    # nothing surfacing to say so. Another tenant's lens is "unknown" here.
     if payload.role_id is not None:
-        if await db.get(JobRole, payload.role_id) is None:
+        if await get_owned(db, JobRole, payload.role_id, scope) is None:
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND, f"role_id {payload.role_id!r} not found"
             )
 
     outcome = CandidateOutcome(
         id=ids.outcome_id(),
+        tenant_id=scope.require(),
         candidate_id=candidate_id,
         role_id=payload.role_id,
         decision=payload.decision.value,
@@ -161,7 +182,9 @@ async def record_outcome(
 
 @router.get("/candidates/{candidate_id}/outcomes", response_model=list[OutcomeOut])
 async def outcome_history(
-    candidate_id: str, db: AsyncSession = Depends(get_db)
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> list[OutcomeOut]:
     """A candidate's decision history, OLDEST FIRST.
 
@@ -169,14 +192,18 @@ async def outcome_history(
     progression, so this is the order the data is consumed in. Newest-first
     would be the better default for a UI feed and the wrong one for P1-11.
     """
-    if await db.get(Candidate, candidate_id) is None:
+    if await get_owned(db, Candidate, candidate_id, scope) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "candidate not found")
 
     rows = (
         await db.execute(
-            select(CandidateOutcome)
-            .where(CandidateOutcome.candidate_id == candidate_id)
-            .order_by(CandidateOutcome.decided_at, CandidateOutcome.id)
+            scoped(
+                select(CandidateOutcome)
+                .where(CandidateOutcome.candidate_id == candidate_id)
+                .order_by(CandidateOutcome.decided_at, CandidateOutcome.id),
+                CandidateOutcome,
+                scope,
+            )
         )
     ).scalars().all()
     return [OutcomeOut.model_validate(r, from_attributes=True) for r in rows]
@@ -194,6 +221,7 @@ async def validation(
         ),
     ),
     db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> ValidationOut:
     """M4 — score against recruiter decision. The metric Phase 1 exists to produce.
 
@@ -214,7 +242,10 @@ async def validation(
     # engine, and this router is imported at app startup.
     from scripts.validation_report import build_report, collect
 
-    return build_report(await collect(db), minimum_n)
+    # D9 — one tenant's report. A cross-tenant correlation would leak the shape
+    # of another customer's candidate pool, which PRODUCTION_READINESS.md 4
+    # flags as a decision rather than a default. This is the decision.
+    return build_report(await collect(db, scope), minimum_n)
 
 
 @router.get("/taxonomy")

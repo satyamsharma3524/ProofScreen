@@ -7,7 +7,15 @@ POST /api/dev/sessions/{id}/answer    step one answer into a live session
 GET  /api/dev/fixture                 the hand-written sample graph
 GET  /api/dev/detect?text=...         why a resume routed where it did
 GET  /api/dev/llm                     cache hits, calls, fallbacks
+POST /api/dev/tenants                 provision a tenant + its one API key
 POST /api/dev/reset                   drop and recreate every table
+
+D9 — every route here that touches tenant data depends on `current_tenant`,
+exactly like the recruiter routes. A dev endpoint that skipped the scope would
+be a hole straight through the isolation boundary, and "it is behind a flag" is
+not an access-control argument. The four routes that touch NO tenant data
+(`fixture`, `detect`, `llm`, `reset`) take no scope, because a scope they
+ignored would be a lie about what they enforce.
 
 The step-answer endpoint is what the retired web-chat channel used to do. It is
 explicitly a dev tool, not a second candidate channel: it takes a session id
@@ -22,6 +30,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api import ids
@@ -32,7 +41,7 @@ from api.engine.graph import build_candidate_graph
 from api.engine.voice import analyse
 from api.ingest.parse import normalise
 from api.llm import cache_stats
-from api.models import Candidate, ChatSession, Resume
+from api.models import Candidate, ChatSession, Resume, Tenant
 from api.schemas import (
     Channel,
     DevAnswerIn,
@@ -42,7 +51,10 @@ from api.schemas import (
     SessionState,
     SimulateIn,
     SimulateOut,
+    TenantCreateIn,
+    TenantOut,
 )
+from api.tenancy import TenantScope, create_tenant, current_tenant, get_owned
 from api.taxonomy import (
     GENERAL,
     MARGIN_FLOOR,
@@ -93,7 +105,9 @@ def _guard() -> None:
 
 @router.post("/simulate", response_model=SimulateOut)
 async def simulate(
-    payload: SimulateIn, db: AsyncSession = Depends(get_db)
+    payload: SimulateIn,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> SimulateOut:
     """Ingest -> claims -> adaptive probes -> signals -> scores, in one call.
 
@@ -107,6 +121,7 @@ async def simulate(
 
     candidate = Candidate(
         id=ids.candidate_id(),
+        tenant_id=scope.require(),
         name=payload.name,
         role=payload.role,
         phone=payload.phone,
@@ -114,6 +129,7 @@ async def simulate(
     )
     resume = Resume(
         id=ids.resume_id(),
+        tenant_id=candidate.tenant_id,
         candidate_id=candidate.id,
         raw_text=normalise(payload.resume_text),
         filename="simulated.txt",
@@ -145,7 +161,7 @@ async def simulate(
     if session.completed_at is None:
         await orchestrator.finalize(db, session)
 
-    graph = await build_candidate_graph(db, candidate.id)
+    graph = await build_candidate_graph(db, candidate.id, scope=scope)
     if graph is None:  # pragma: no cover
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "graph assembly failed")
 
@@ -164,7 +180,9 @@ async def simulate(
 
 @router.post("/sessions/{session_id}/start", response_model=SessionOut)
 async def start_session(
-    session_id: str, db: AsyncSession = Depends(get_db)
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> SessionOut:
     """Ask the first question without waiting for a WhatsApp opt-in.
 
@@ -174,7 +192,7 @@ async def start_session(
     step that opting in represents.
     """
     _guard()
-    session = await db.get(ChatSession, session_id)
+    session = await get_owned(db, ChatSession, session_id, scope)
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
     if session.state == SessionState.COMPLETE.value:
@@ -191,12 +209,15 @@ async def start_session(
 
 @router.post("/sessions/{session_id}/answer", response_model=DevAnswerOut)
 async def answer_session(
-    session_id: str, payload: DevAnswerIn, db: AsyncSession = Depends(get_db)
+    session_id: str,
+    payload: DevAnswerIn,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> DevAnswerOut:
     """Step one answer in without WhatsApp. Dev tool — no opt-in, no phone."""
     _guard()
 
-    session = await db.get(ChatSession, session_id)
+    session = await get_owned(db, ChatSession, session_id, scope)
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
     if session.state == SessionState.COMPLETE.value:
@@ -300,6 +321,37 @@ async def detect(text: str = Query(min_length=1, max_length=20_000)) -> dict:
         "min_terms_required": MIN_TERMS,
         "chars_considered": len(text),
     }
+
+
+@router.post("/tenants", status_code=status.HTTP_201_CREATED)
+async def provision_tenant(
+    payload: TenantCreateIn, db: AsyncSession = Depends(get_db)
+) -> TenantOut:
+    """Create a tenant and return its API key ONCE.
+
+    Provisioning lives behind the dev flag rather than in the recruiter API on
+    purpose: creating a tenant is an operator action, and an authenticated
+    tenant must never be able to mint another one. It takes no `current_tenant`
+    for the same reason — there is no tenant yet.
+
+    `api_key` is in this response and in no other, ever. Only its sha256 is
+    stored, so a lost key is re-provisioned, never recovered.
+    """
+    _guard()
+    slug = payload.slug.strip().lower()
+    if not slug:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "slug is required")
+    existing = (
+        await db.execute(select(Tenant).where(Tenant.slug == slug))
+    ).scalars().first()
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"slug {slug!r} already exists")
+
+    tenant, raw_key = await create_tenant(db, name=payload.name or slug, slug=slug)
+    log.warning("provisioned tenant %s (%s)", tenant.id, slug)
+    return TenantOut(
+        id=tenant.id, name=tenant.name, slug=tenant.slug, api_key=raw_key
+    )
 
 
 @router.get("/llm")

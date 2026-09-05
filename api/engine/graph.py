@@ -10,6 +10,12 @@ The second one is the demo moment. Every dimension score is already stored, so
 re-ranking for a different recruiter is arithmetic over rows we have — no model
 call, no re-interview. Two requests with two role_ids return two different
 orders over identical evidence, in milliseconds.
+
+D9 — every public function here takes a `TenantScope` and it is REQUIRED, not
+defaulted. A default would be the one thing D9 exists to prevent: a caller that
+forgets and silently gets everybody's candidates. Nothing in this file writes
+`where(tenant_id == ...)` by hand; `tenancy.scoped()` and `tenancy.get_owned()`
+are the only two places that predicate is spelled out.
 """
 
 from __future__ import annotations
@@ -56,6 +62,7 @@ from api.schemas import (
     SessionState,
     VoiceSignals,
 )
+from api.tenancy import TenantScope, get_owned, scoped
 from api.taxonomy import (
     claim_type_label,
     family_margin,
@@ -107,6 +114,8 @@ async def create_role(
     claim_weights: dict[str, float] | None = None,
     dimension_weights_override: dict[str, float] | None = None,
     is_default: bool = False,
+    *,
+    scope: TenantScope,
 ) -> JobRole:
     """A recruiter's weight profile. Unspecified weights fall back to the
     family defaults, and everything is rescaled to sum to 100 — a recruiter who
@@ -115,6 +124,7 @@ async def create_role(
     weights = scoring.normalise_weights(claim_weights or default_claim_weights(family))
     role = JobRole(
         id=ids.role_id(),
+        tenant_id=scope.require(),
         title=title,
         job_family=family,
         claim_weights_json=json.dumps(weights),
@@ -127,7 +137,7 @@ async def create_role(
 
 
 async def resolve_weights(
-    db: AsyncSession, job_family: str, role_id: str | None
+    db: AsyncSession, job_family: str, role_id: str | None, scope: TenantScope
 ) -> tuple[dict[str, float], dict[str, float], RoleRef | None]:
     """(claim weights, dimension weight OVERRIDE, which role produced them).
 
@@ -139,7 +149,9 @@ async def resolve_weights(
     """
     family = resolve_family(job_family)
     if role_id:
-        role = await db.get(JobRole, role_id)
+        # Another tenant's lens is not "a lens we could not find" — it is not
+        # ours to read. `get_owned` returns None and the family defaults apply.
+        role = await get_owned(db, JobRole, role_id, scope)
         if role is not None:
             claim_w = json.loads(role.claim_weights_json or "{}") or default_claim_weights(family)
             dim_w = json.loads(role.dimension_weights_json or "{}")
@@ -185,13 +197,21 @@ def _claim_score_under(
 
 
 async def session_contradictions(
-    db: AsyncSession, session_id: str
+    db: AsyncSession, session_id: str, scope: TenantScope
 ) -> list[Contradiction]:
     rows = (
         await db.execute(
-            select(ContradictionRow)
-            .where(ContradictionRow.session_id == session_id)
-            .order_by(ContradictionRow.created_at)
+            scoped(
+                select(ContradictionRow)
+                .where(ContradictionRow.session_id == session_id)
+                # D8 — `id` breaks a created_at tie. Several contradictions can
+                # land in the same commit and therefore the same microsecond;
+                # consistency arithmetic is order-free, but the LIST the
+                # recruiter reads should not shuffle between requests.
+                .order_by(ContradictionRow.created_at, ContradictionRow.id),
+                ContradictionRow,
+                scope,
+            )
         )
     ).scalars().all()
     return [
@@ -211,15 +231,19 @@ async def session_contradictions(
 
 
 async def build_consistency_report(
-    db: AsyncSession, session_id: str
+    db: AsyncSession, session_id: str, scope: TenantScope
 ) -> ConsistencyReport:
     from api.models import SessionFact
 
-    clashes = await session_contradictions(db, session_id)
+    clashes = await session_contradictions(db, session_id, scope)
     facts_tracked = len(
         (
             await db.execute(
-                select(SessionFact).where(SessionFact.session_id == session_id)
+                scoped(
+                    select(SessionFact).where(SessionFact.session_id == session_id),
+                    SessionFact,
+                    scope,
+                )
             )
         ).scalars().all()
     )
@@ -239,22 +263,27 @@ async def build_consistency_report(
 
 
 async def build_candidate_graph(
-    db: AsyncSession, candidate_id: str, role_id: str | None = None
+    db: AsyncSession, candidate_id: str, role_id: str | None = None,
+    *, scope: TenantScope,
 ) -> CandidateGraph | None:
-    candidate = await db.get(Candidate, candidate_id)
+    candidate = await get_owned(db, Candidate, candidate_id, scope)
     if candidate is None:
         return None
 
     family = resolve_family(candidate.job_family)
     claim_weights, dim_weights, role_ref = await resolve_weights(
-        db, family, role_id or candidate.role_id
+        db, family, role_id or candidate.role_id, scope
     )
 
     claims = (
         await db.execute(
-            select(Claim)
-            .where(Claim.candidate_id == candidate_id)
-            .order_by(Claim.order_index)
+            scoped(
+                select(Claim)
+                .where(Claim.candidate_id == candidate_id)
+                .order_by(Claim.order_index),
+                Claim,
+                scope,
+            )
         )
     ).scalars().all()
     claim_ids = [c.id for c in claims]
@@ -262,17 +291,27 @@ async def build_candidate_graph(
     scores = {
         s.claim_id: s
         for s in (
-            await db.execute(select(ClaimScore).where(ClaimScore.claim_id.in_(claim_ids)))
+            await db.execute(
+                scoped(
+                    select(ClaimScore).where(ClaimScore.claim_id.in_(claim_ids)),
+                    ClaimScore,
+                    scope,
+                )
+            )
         ).scalars().all()
     } if claim_ids else {}
 
     qa_rows = (
         (
             await db.execute(
-                select(Question, Response)
-                .join(Response, Response.question_id == Question.id)
-                .where(Question.claim_id.in_(claim_ids))
-                .order_by(Question.order_index)
+                scoped(
+                    select(Question, Response)
+                    .join(Response, Response.question_id == Question.id)
+                    .where(Question.claim_id.in_(claim_ids))
+                    .order_by(Question.order_index, Question.id),
+                    Question,
+                    scope,
+                )
             )
         ).all()
         if claim_ids
@@ -313,14 +352,20 @@ async def build_candidate_graph(
 
     session = (
         await db.execute(
-            select(ChatSession)
-            .where(ChatSession.candidate_id == candidate_id)
-            .order_by(ChatSession.started_at.desc())
+            scoped(
+                select(ChatSession)
+                .where(ChatSession.candidate_id == candidate_id)
+                .order_by(ChatSession.started_at.desc(), ChatSession.id),
+                ChatSession,
+                scope,
+            )
         )
     ).scalars().first()
 
     consistency_report = (
-        await build_consistency_report(db, session.id) if session else ConsistencyReport()
+        await build_consistency_report(db, session.id, scope)
+        if session
+        else ConsistencyReport()
     )
 
     claim_graphs: list[ClaimGraph] = []
@@ -367,9 +412,13 @@ async def build_candidate_graph(
 
     resume = (
         await db.execute(
-            select(Resume)
-            .where(Resume.candidate_id == candidate_id)
-            .order_by(Resume.created_at.desc())
+            scoped(
+                select(Resume)
+                .where(Resume.candidate_id == candidate_id)
+                .order_by(Resume.created_at.desc(), Resume.id),
+                Resume,
+                scope,
+            )
         )
     ).scalars().first()
     r_score = (
@@ -438,16 +487,26 @@ async def build_candidate_graph(
 # ---------------------------------------------------------------------------
 
 
-async def recompute_profile(db: AsyncSession, candidate_id: str) -> Profile | None:
-    graph = await build_candidate_graph(db, candidate_id)
+async def recompute_profile(
+    db: AsyncSession, candidate_id: str, scope: TenantScope
+) -> Profile | None:
+    graph = await build_candidate_graph(db, candidate_id, scope=scope)
     if graph is None:
         return None
 
     profile = (
-        await db.execute(select(Profile).where(Profile.candidate_id == candidate_id))
+        await db.execute(
+            scoped(
+                select(Profile).where(Profile.candidate_id == candidate_id),
+                Profile,
+                scope,
+            )
+        )
     ).scalar_one_or_none()
     if profile is None:
-        profile = Profile(id=ids.profile_id(), candidate_id=candidate_id)
+        profile = Profile(
+            id=ids.profile_id(), tenant_id=scope.require(), candidate_id=candidate_id
+        )
         db.add(profile)
 
     profile.resume_score = graph.resume_score
@@ -620,20 +679,30 @@ def _why_ranked(
 
 
 async def rank_candidates(
-    db: AsyncSession, role_id: str | None = None
+    db: AsyncSession, role_id: str | None = None, *, scope: TenantScope
 ) -> tuple[RoleRef | None, list[CandidateSummary]]:
     """Ranked list. With a role_id, every score is recomputed from stored
     dimension scores under that role's weights — no model calls, no
     re-interviewing, and the order genuinely changes."""
     candidates = (
-        await db.execute(select(Candidate).order_by(Candidate.created_at.desc()))
+        await db.execute(
+            scoped(
+                select(Candidate).order_by(
+                    Candidate.created_at.desc(), Candidate.id
+                ),
+                Candidate,
+                scope,
+            )
+        )
     ).scalars().all()
     if not candidates:
         return None, []
 
     ids_list = [c.id for c in candidates]
 
-    role: JobRole | None = await db.get(JobRole, role_id) if role_id else None
+    role: JobRole | None = (
+        await get_owned(db, JobRole, role_id, scope) if role_id else None
+    )
     role_ref = (
         RoleRef(id=role.id, title=role.title, job_family=role.job_family) if role else None
     )
@@ -647,13 +716,27 @@ async def rank_candidates(
     profiles = {
         p.candidate_id: p
         for p in (
-            await db.execute(select(Profile).where(Profile.candidate_id.in_(ids_list)))
+            await db.execute(
+                scoped(
+                    select(Profile).where(Profile.candidate_id.in_(ids_list)),
+                    Profile,
+                    scope,
+                )
+            )
         ).scalars().all()
     }
 
     claims_by_candidate: dict[str, list[Claim]] = {}
     for claim in (
-        await db.execute(select(Claim).where(Claim.candidate_id.in_(ids_list)))
+        await db.execute(
+            scoped(
+                select(Claim)
+                .where(Claim.candidate_id.in_(ids_list))
+                .order_by(Claim.order_index, Claim.id),
+                Claim,
+                scope,
+            )
+        )
     ).scalars().all():
         claims_by_candidate.setdefault(claim.candidate_id, []).append(claim)
 
@@ -663,7 +746,13 @@ async def rank_candidates(
         for s in (
             (
                 await db.execute(
-                    select(ClaimScore).where(ClaimScore.claim_id.in_(all_claim_ids))
+                    scoped(
+                        select(ClaimScore).where(
+                            ClaimScore.claim_id.in_(all_claim_ids)
+                        ),
+                        ClaimScore,
+                        scope,
+                    )
                 )
             ).scalars().all()
             if all_claim_ids
@@ -674,9 +763,13 @@ async def rank_candidates(
     sessions: dict[str, ChatSession] = {}
     for session in (
         await db.execute(
-            select(ChatSession)
-            .where(ChatSession.candidate_id.in_(ids_list))
-            .order_by(ChatSession.started_at)
+            scoped(
+                select(ChatSession)
+                .where(ChatSession.candidate_id.in_(ids_list))
+                .order_by(ChatSession.started_at, ChatSession.id),
+                ChatSession,
+                scope,
+            )
         )
     ).scalars().all():
         sessions[session.candidate_id] = session

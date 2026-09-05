@@ -12,8 +12,16 @@ Three new tables carry the parts of the architecture that make it defensible:
   contradictions  what that memory caught, with severity and arithmetic
   job_roles       recruiter weight profiles — same evidence, different ranking
 
+Phase 4 adds three tables and one column to almost every other one:
+
+  tenants         the ownership boundary — see api/tenancy.py
+  api_keys        a hashed shared key per tenant; the raw key is never stored
+  evaluations     one finalized assessment, immutable, with its provenance
+
 No Alembic, by design. `Base.metadata.create_all()` at startup; a schema change
-means `docker compose down -v` and re-seed.
+means `docker compose down -v` and re-seed. `create_all()` cannot ADD a column
+to a table that already exists, which is why `db.verify_schema()` fails loudly
+at startup on a database from before Phase 4 instead of at the first query.
 
 Enum columns are plain String, not native Postgres ENUMs: adding an enum value
 would need a migration, and create_all() cannot do that. Pydantic enforces the
@@ -25,6 +33,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -46,6 +55,81 @@ class Base(DeclarativeBase):
 
 _TS = DateTime(timezone=True)
 
+# ---------------------------------------------------------------------------
+# D9 — the tenant column
+#
+# Declared here rather than in api/tenancy.py because it is a fact about the
+# SCHEMA, and tenancy.py imports these models. One direction, no cycle.
+#
+# THE DEFAULT IS DELIBERATE AND MEASURED. A non-null column with no default
+# would break `scripts/interview_study.py`, which constructs Candidate and
+# Resume directly and belongs to Phase 3 — under independent review, and not
+# editable. So an unspecified tenant lands in the EXPLICIT development tenant
+# rather than becoming global or null. Nothing in `api/` relies on it:
+# `test_a_tenant_scoped_pipeline_writes_no_development_tenant_rows` drives a
+# whole interview under a second tenant and asserts no row fell back here.
+#
+# No `ondelete`. Deleting a tenant that still holds candidates must FAIL, not
+# cascade a customer's entire evidence corpus away on one stray DELETE.
+DEVELOPMENT_TENANT_ID = "t_dev"
+DEVELOPMENT_TENANT_SLUG = "dev"
+DEVELOPMENT_TENANT_NAME = "Development"
+
+
+def tenant_column() -> Mapped[str]:
+    """The owning tenant. One per tenant-owned table, indexed, never null."""
+    return mapped_column(
+        String(32),
+        ForeignKey("tenants.id"),
+        index=True,
+        nullable=False,
+        default=DEVELOPMENT_TENANT_ID,
+    )
+
+
+class Tenant(Base):
+    """ARTIFACT 6 — the ownership boundary.
+
+    A tenant is a customer: one company's recruiters, candidates, roles,
+    evidence and evaluations. `Candidate` is NOT global — the same human
+    applying to two customers is two candidate rows, because their evidence
+    belongs to whoever gathered it. The Person/Candidacy split that would make
+    identity global is deferred (see PHASE_2_EXECUTION_PLAN.md §Deferred).
+    """
+
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    # Human-typeable, unique. `dev` is the development tenant every legacy
+    # write and every un-keyed request lands in.
+    slug: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
+
+
+class ApiKey(Base):
+    """A shared API key per tenant. THE RAW KEY IS NEVER STORED.
+
+    `key_hash` is sha256 hex of the key, so a database dump discloses no
+    credential. The key itself is returned exactly once, at creation, and
+    cannot be recovered afterwards.
+
+    This is not an authentication system. There are no users, no roles, no
+    rotation and no expiry — it is the minimum credential needed to decide
+    WHICH TENANT a request belongs to, which is what D9 is actually about.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(120), default="")
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
+
 
 class JobRole(Base):
     """ARTIFACT 5 — a recruiter's weight profile.
@@ -58,6 +142,7 @@ class JobRole(Base):
     __tablename__ = "job_roles"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     title: Mapped[str] = mapped_column(String(200))
     job_family: Mapped[str] = mapped_column(String(60), index=True)
     claim_weights_json: Mapped[str] = mapped_column(Text, default="{}")
@@ -70,6 +155,7 @@ class Candidate(Base):
     __tablename__ = "candidates"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     name: Mapped[str] = mapped_column(String(200))
     phone: Mapped[str | None] = mapped_column(String(40), index=True, default=None)
     email: Mapped[str | None] = mapped_column(String(200), default=None)
@@ -85,6 +171,7 @@ class Resume(Base):
     __tablename__ = "resumes"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     candidate_id: Mapped[str] = mapped_column(
         ForeignKey("candidates.id", ondelete="CASCADE"), index=True
     )
@@ -101,6 +188,7 @@ class ChatSession(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     candidate_id: Mapped[str] = mapped_column(
         ForeignKey("candidates.id", ondelete="CASCADE"), index=True
     )
@@ -124,6 +212,7 @@ class Claim(Base):
     __tablename__ = "claims"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     resume_id: Mapped[str] = mapped_column(
         ForeignKey("resumes.id", ondelete="CASCADE"), index=True
     )
@@ -141,6 +230,7 @@ class Question(Base):
     __tablename__ = "questions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     claim_id: Mapped[str] = mapped_column(
         ForeignKey("claims.id", ondelete="CASCADE"), index=True
     )
@@ -185,6 +275,7 @@ class Response(Base):
     __tablename__ = "responses"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     question_id: Mapped[str] = mapped_column(
         ForeignKey("questions.id", ondelete="CASCADE"), index=True
     )
@@ -224,6 +315,7 @@ class Evidence(Base):
     __tablename__ = "evidence"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     response_id: Mapped[str] = mapped_column(
         ForeignKey("responses.id", ondelete="CASCADE"), index=True
     )
@@ -244,6 +336,7 @@ class ClaimScore(Base):
     __tablename__ = "claim_scores"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     claim_id: Mapped[str] = mapped_column(
         ForeignKey("claims.id", ondelete="CASCADE"), unique=True, index=True
     )
@@ -266,6 +359,7 @@ class SessionFact(Base):
     __tablename__ = "session_facts"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"), index=True
     )
@@ -283,6 +377,7 @@ class ContradictionRow(Base):
     __tablename__ = "contradictions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"), index=True
     )
@@ -309,6 +404,7 @@ class Profile(Base):
     __tablename__ = "profiles"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     candidate_id: Mapped[str] = mapped_column(
         ForeignKey("candidates.id", ondelete="CASCADE"), unique=True, index=True
     )
@@ -345,6 +441,7 @@ class CandidateOutcome(Base):
     __tablename__ = "candidate_outcomes"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = tenant_column()
     candidate_id: Mapped[str] = mapped_column(
         ForeignKey("candidates.id", ondelete="CASCADE"), index=True
     )

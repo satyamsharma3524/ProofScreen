@@ -34,6 +34,7 @@ from api.engine.voice import analyse
 from api.models import Candidate, Response as ResponseRow, utcnow
 from api.schemas import Channel, InboundMessage, SessionState
 from api.stt import transcribe_media_id
+from api.tenancy import TenantScope
 
 log = logging.getLogger("proofscreen.webhook")
 
@@ -128,6 +129,20 @@ async def _already_processed(db, provider_message_id: str | None) -> bool:
     return existing is not None
 
 
+# D9 — THE TRUSTED PATH, and one of exactly two in the product.
+#
+# One WhatsApp business number serves every tenant. An inbound message carries
+# a phone number and nothing else, so there is no tenant to scope by until the
+# opt-in code or the phone resolves a session — and that session is then what
+# supplies the tenant for every row written afterwards. Stated out loud here
+# rather than implied by an unfiltered query: `grep -rn "TenantScope.system"
+# api/` is the complete list of places this codebase crosses the boundary.
+_INBOUND_SCOPE = TenantScope.system(
+    "whatsapp inbound: one business number serves every tenant, and the "
+    "session is what identifies which one"
+)
+
+
 async def _handle(db, message: InboundMessage) -> None:
     phone = normalise_phone(message.external_id)
     if not phone:
@@ -143,7 +158,7 @@ async def _handle(db, message: InboundMessage) -> None:
     # --- 1. a bare opt-in code binds this phone number to a session ---------
     code = _extract_code(message.text)
     if code:
-        session = await orchestrator.find_session_by_opt_in_code(db, code)
+        session = await orchestrator.find_session_by_opt_in_code(db, code, _INBOUND_SCOPE)
         if session is None:
             await whatsapp_channel.send_text(phone, BAD_CODE_MESSAGE)
             return
@@ -174,7 +189,7 @@ async def _handle(db, message: InboundMessage) -> None:
         return
 
     # --- 2. otherwise this is an answer to an open question ----------------
-    session = await orchestrator.find_active_session_by_phone(db, phone)
+    session = await orchestrator.find_active_session_by_phone(db, phone, _INBOUND_SCOPE)
     if session is None:
         await whatsapp_channel.send_text(phone, NO_SESSION_MESSAGE)
         return

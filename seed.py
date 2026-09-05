@@ -46,8 +46,9 @@ from api.db import SessionLocal, drop_all, init_models  # noqa: E402
 from api.engine import graph as graph_engine  # noqa: E402
 from api.engine import orchestrator  # noqa: E402
 from api.ingest.parse import normalise  # noqa: E402
-from api.models import Candidate, Resume  # noqa: E402
+from api.models import DEVELOPMENT_TENANT_ID, Candidate, Resume  # noqa: E402
 from api.schemas import Channel  # noqa: E402
+from api.tenancy import TenantScope  # noqa: E402
 
 JD_BPO = (
     "Team Lead for a customer support operation: own CSAT and AHT for a team of "
@@ -362,10 +363,11 @@ ROLE_PRODUCT_OUTCOME = {
 }
 
 
-async def seed_person(db, person: dict) -> dict:
+async def seed_person(db, person: dict, scope) -> dict:
     """Run the real pipeline over hand-written answers."""
     candidate = Candidate(
         id=ids.candidate_id(),
+        tenant_id=scope.require(),
         name=person["name"],
         role=person["role"],
         phone=person["phone"],
@@ -377,6 +379,7 @@ async def seed_person(db, person: dict) -> dict:
     )
     resume = Resume(
         id=ids.resume_id(),
+        tenant_id=candidate.tenant_id,
         candidate_id=candidate.id,
         raw_text=normalise(person["resume"]),
         filename=f"{person['name'].split()[0].lower()}_resume.pdf",
@@ -416,7 +419,7 @@ async def seed_person(db, person: dict) -> dict:
     if session.completed_at is None:
         await orchestrator.finalize(db, session)
 
-    graph = await graph_engine.build_candidate_graph(db, candidate.id)
+    graph = await graph_engine.build_candidate_graph(db, candidate.id, scope=scope)
     return {
         "id": candidate.id,
         "name": candidate.name,
@@ -441,6 +444,13 @@ async def main(reset: bool) -> None:
     async with SessionLocal() as db:
         print(f"seeding into {settings.database_url.split('@')[-1]}\n")
 
+        # D9 — the seed writes into the DEVELOPMENT tenant, explicitly. Not a
+        # system scope: a system scope has no tenant_id to write, and every
+        # seeded row needs a real owner. `t_dev` is created by init_models and
+        # drop_all, so it is already there whichever branch ran above.
+        scope = TenantScope.of(DEVELOPMENT_TENANT_ID)
+        print(f"  tenant {DEVELOPMENT_TENANT_ID}\n")
+
         roles = []
         for spec in (ROLE_PEOPLE_FIRST, ROLE_OPS_EXCELLENCE, ROLE_PRODUCT_OUTCOME):
             role = await graph_engine.create_role(
@@ -448,6 +458,7 @@ async def main(reset: bool) -> None:
                 title=spec["title"],
                 job_family=spec["job_family"],
                 claim_weights=spec["claim_weights"],
+                scope=scope,
             )
             roles.append(role)
             print(f"  role  {role.id}  {role.title}")
@@ -455,7 +466,7 @@ async def main(reset: bool) -> None:
 
         rows = []
         for person in SEEDS:
-            rows.append(await seed_person(db, person))
+            rows.append(await seed_person(db, person, scope))
 
         header = f"  {'candidate':<18}{'Q':>3}{'resume':>8}{'evidence':>10}{'consist':>9}{'competence':>12}  badge"
         print(header)
@@ -470,7 +481,7 @@ async def main(reset: bool) -> None:
 
         print("\n  Same evidence, two recruiters:")
         for role in roles:
-            _, ranked = await graph_engine.rank_candidates(db, role.id)
+            _, ranked = await graph_engine.rank_candidates(db, role.id, scope=scope)
             order = " > ".join(f"{c.name.split()[0]} ({c.competence_score})" for c in ranked)
             print(f"    {role.title:<32} {order}")
 

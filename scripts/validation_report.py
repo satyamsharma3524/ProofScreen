@@ -214,33 +214,64 @@ class Snapshot:
         return sorted(rows, key=lambda r: (r.decided_at, r.id))[-1].decision
 
 
-async def collect(db: AsyncSession) -> Snapshot:
-    """One batched read of everything the report needs. No model call."""
+async def collect(db: AsyncSession, scope: "TenantScope | None" = None) -> Snapshot:
+    """One batched read of everything the report needs. No model call.
+
+    D9 — `scope` restricts the report to one tenant. It defaults to None, which
+    means the CLI keeps reading the whole database, because a support engineer
+    running `python scripts/validation_report.py` against their own box is not
+    a tenant. The endpoint always passes a real scope: a cross-tenant
+    correlation would leak the shape of another customer's candidate pool.
+    """
+    from api.tenancy import TenantScope, scoped
+
+    sc = scope or TenantScope.system("validation report CLI: whole database")
+
+    def q(stmt, model):
+        return scoped(stmt, model, sc)
+
     snap = Snapshot()
     snap.candidates = {
-        c.id: c for c in (await db.execute(select(Candidate))).scalars().all()
+        c.id: c
+        for c in (await db.execute(q(select(Candidate), Candidate))).scalars().all()
     }
     if not snap.candidates:
         return snap
 
     snap.profiles = {
-        p.candidate_id: p for p in (await db.execute(select(Profile))).scalars().all()
+        p.candidate_id: p
+        for p in (await db.execute(q(select(Profile), Profile))).scalars().all()
     }
     for session in (
-        await db.execute(select(ChatSession).order_by(ChatSession.started_at))
+        await db.execute(
+            q(
+                select(ChatSession).order_by(ChatSession.started_at, ChatSession.id),
+                ChatSession,
+            )
+        )
     ).scalars().all():
         snap.sessions[session.candidate_id] = session
-    for claim in (await db.execute(select(Claim))).scalars().all():
+    for claim in (await db.execute(q(select(Claim), Claim))).scalars().all():
         snap.claims_by_candidate.setdefault(claim.candidate_id, []).append(claim)
     snap.claim_scores = {
-        s.claim_id: s for s in (await db.execute(select(ClaimScore))).scalars().all()
+        s.claim_id: s
+        for s in (await db.execute(q(select(ClaimScore), ClaimScore))).scalars().all()
     }
     snap.questions = list(
-        (await db.execute(select(Question).order_by(Question.order_index))).scalars().all()
+        (
+            await db.execute(
+                q(
+                    select(Question).order_by(Question.order_index, Question.id),
+                    Question,
+                )
+            )
+        ).scalars().all()
     )
-    for response in (await db.execute(select(Response))).scalars().all():
+    for response in (await db.execute(q(select(Response), Response))).scalars().all():
         snap.responses_by_question[response.question_id] = response
-    for outcome in (await db.execute(select(CandidateOutcome))).scalars().all():
+    for outcome in (
+        await db.execute(q(select(CandidateOutcome), CandidateOutcome))
+    ).scalars().all():
         snap.outcomes_by_candidate.setdefault(outcome.candidate_id, []).append(outcome)
     return snap
 

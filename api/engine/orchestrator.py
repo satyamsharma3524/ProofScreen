@@ -77,6 +77,7 @@ from api.schemas import (
     VoiceSignals,
 )
 from api.taxonomy import claim_type_label, default_claim_weights
+from api.tenancy import TenantScope, scoped
 
 log = logging.getLogger("proofscreen.orchestrator")
 
@@ -261,7 +262,13 @@ async def _qa_rows(db: AsyncSession, session_id: str) -> list[tuple[Question, Re
                 select(Question, Response)
                 .join(Response, Response.question_id == Question.id)
                 .where(Question.session_id == session_id)
-                .order_by(Question.order_index)
+                # D8 — `id` is the tiebreaker, not decoration. order_index is
+                # unique in practice (it is a COUNT of the session's questions),
+                # but "in practice" is not determinism: an unordered tie would
+                # let replay merge a claim's answers in a different order from
+                # the live run, and a replay that can disagree with itself
+                # proves nothing. Costs one column in an already-indexed sort.
+                .order_by(Question.order_index, Question.id)
             )
         ).all()
     )
@@ -716,6 +723,10 @@ async def create_session(
 
     session = ChatSession(
         id=ids.session_id(),
+        # D9 — every row this interview produces inherits the CANDIDATE's
+        # tenant. That is the whole propagation rule: one lookup at the root,
+        # never a re-resolution further down where it could differ.
+        tenant_id=candidate.tenant_id,
         candidate_id=candidate.id,
         channel=channel.value,
         state=SessionState.NEW.value,
@@ -728,6 +739,7 @@ async def create_session(
     for order, item in enumerate(extracted):
         claim = Claim(
             id=ids.claim_id(),
+            tenant_id=candidate.tenant_id,
             resume_id=resume.id,
             candidate_id=candidate.id,
             text=item.text.strip(),
@@ -797,6 +809,7 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
 
     question = Question(
         id=ids.question_id(),
+        tenant_id=session.tenant_id,
         claim_id=plan.claim.id,
         session_id=session.id,
         text=generated.question,
@@ -873,6 +886,7 @@ async def _persist_evidence(
         db.add(
             Evidence(
                 id=ids.evidence_id(),
+                tenant_id=session.tenant_id,
                 response_id=response.id,
                 claim_id=claim.id,
                 dimension=node.dimension.value,
@@ -887,6 +901,7 @@ async def _persist_evidence(
         db.add(
             SessionFact(
                 id=ids.fact_id(),
+                tenant_id=session.tenant_id,
                 session_id=session.id,
                 claim_id=claim.id,
                 source_response_id=response.id,
@@ -912,6 +927,7 @@ async def _persist_evidence(
         db.add(
             ContradictionRow(
                 id=ids.contradiction_id(),
+                tenant_id=session.tenant_id,
                 session_id=session.id,
                 fact_key=clash.fact_key,
                 fact_label=clash.fact_label,
@@ -965,7 +981,9 @@ async def recompute_claim(
         await db.execute(select(ClaimScore).where(ClaimScore.claim_id == claim.id))
     ).scalar_one_or_none()
     if stored is None:
-        stored = ClaimScore(id=ids.score_id(), claim_id=claim.id)
+        stored = ClaimScore(
+            id=ids.score_id(), tenant_id=session.tenant_id, claim_id=claim.id
+        )
         db.add(stored)
 
     stored.score = score
@@ -1005,6 +1023,7 @@ async def submit_answer(
 
     response = Response(
         id=ids.response_id(),
+        tenant_id=session.tenant_id,
         question_id=question.id,
         session_id=session.id,
         channel=(channel or Channel(session.channel)).value,
@@ -1027,11 +1046,12 @@ async def submit_answer(
     if settings.score_inline and claim is not None:
         from api.engine import graph as graph_engine
 
+        scope = TenantScope.of(session.tenant_id)
         await _persist_evidence(db, session, claim, question, response)
         await db.commit()
         await recompute_claim(db, session, claim)
-        contradictions = await graph_engine.session_contradictions(db, session.id)
-        await graph_engine.recompute_profile(db, session.candidate_id)
+        contradictions = await graph_engine.session_contradictions(db, session.id, scope)
+        await graph_engine.recompute_profile(db, session.candidate_id, scope)
 
     # P2-04 — a non-answer earns one more go at the SAME probe, off-budget.
     #
@@ -1079,6 +1099,7 @@ async def _maybe_repair(
     claim = await db.get(Claim, question.claim_id)
     repair = Question(
         id=ids.question_id(),
+        tenant_id=session.tenant_id,
         claim_id=question.claim_id,
         session_id=session.id,
         text=question_engine.repair_question(
@@ -1124,7 +1145,9 @@ async def score_pending(db: AsyncSession, session_id: str) -> None:
 
     for claim in touched.values():
         await recompute_claim(db, session, claim)
-    await graph_engine.recompute_profile(db, session.candidate_id)
+    await graph_engine.recompute_profile(
+        db, session.candidate_id, TenantScope.of(session.tenant_id)
+    )
 
 
 async def finalize(db: AsyncSession, session: ChatSession) -> None:
@@ -1141,7 +1164,9 @@ async def finalize(db: AsyncSession, session: ChatSession) -> None:
     session.completed_at = utcnow()
     await db.commit()
 
-    await graph_engine.recompute_profile(db, session.candidate_id)
+    await graph_engine.recompute_profile(
+        db, session.candidate_id, TenantScope.of(session.tenant_id)
+    )
     log.info("session %s complete after %d questions", session.id, session.questions_asked)
 
 
@@ -1170,29 +1195,46 @@ async def session_out(db: AsyncSession, session: ChatSession) -> SessionOut:
 
 
 async def find_session_by_opt_in_code(
-    db: AsyncSession, code: str
+    db: AsyncSession, code: str, scope: TenantScope
 ) -> ChatSession | None:
+    """Opt-in code -> session. Takes a scope so the bypass is stated, not assumed.
+
+    The webhook passes `TenantScope.system(...)` because one WhatsApp business
+    number serves every tenant and an inbound message carries no tenant until
+    this lookup resolves one. Any other caller passes a real scope and gets a
+    filtered query, because `scoped()` is what applies the predicate.
+    """
     return (
         await db.execute(
-            select(ChatSession).where(ChatSession.opt_in_code == code.strip().upper())
+            scoped(
+                select(ChatSession)
+                .where(ChatSession.opt_in_code == code.strip().upper())
+                .order_by(ChatSession.started_at.desc(), ChatSession.id),
+                ChatSession,
+                scope,
+            )
         )
     ).scalars().first()
 
 
 async def find_active_session_by_phone(
-    db: AsyncSession, phone: str
+    db: AsyncSession, phone: str, scope: TenantScope
 ) -> ChatSession | None:
-    """Most recent live session for a phone number."""
+    """Most recent live session for a phone number. See the note above on scope."""
     return (
         await db.execute(
-            select(ChatSession)
-            .join(Candidate, Candidate.id == ChatSession.candidate_id)
-            .where(
-                Candidate.phone == phone,
-                ChatSession.state.notin_(
-                    [SessionState.COMPLETE.value, SessionState.ABANDONED.value]
-                ),
+            scoped(
+                select(ChatSession)
+                .join(Candidate, Candidate.id == ChatSession.candidate_id)
+                .where(
+                    Candidate.phone == phone,
+                    ChatSession.state.notin_(
+                        [SessionState.COMPLETE.value, SessionState.ABANDONED.value]
+                    ),
+                )
+                .order_by(ChatSession.started_at.desc(), ChatSession.id),
+                ChatSession,
+                scope,
             )
-            .order_by(ChatSession.started_at.desc())
         )
     ).scalars().first()

@@ -61,6 +61,20 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     enable_dev_endpoints: bool = True
 
+    # --- D9 tenancy ---
+    # false (the default, and what the demo and the test suite run under): a
+    # request with no X-API-Key is served as the DEVELOPMENT tenant `t_dev`.
+    # true: no key, no service — 401. Turn it on before the URL is public.
+    # An unknown key is 401 in BOTH modes.
+    require_api_key: bool = False
+
+    # --- D7 provenance ---
+    # Which build produced an evaluation. Set at image build time
+    # (`--build-arg`/env); `.git` is in .dockerignore, so inside the container
+    # this env var is the only source. Empty falls back to reading .git/HEAD,
+    # then to the literal "unknown". Never a fabricated SHA.
+    build_sha: str | None = None
+
     # --- resume_score contrast metric ---
     default_job_description: str = (
         "Experienced professional responsible for owning a measurable operational "

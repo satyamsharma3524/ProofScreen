@@ -508,6 +508,10 @@ class OutcomeOut(BaseModel):
     id: str
     candidate_id: str
     role_id: str | None = None
+    # P4/D10, ADDITIVE AND OPTIONAL. Which finalized assessment the decision was
+    # made against. Null on rows written before Phase 4 and on a decision
+    # recorded for a candidate who has never completed an interview.
+    evaluation_id: str | None = None
     decision: OutcomeDecision
     stage: str | None = None
     decided_by: str | None = None
@@ -611,6 +615,206 @@ class SessionOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# PHASE 4 — additive only.
+#
+# `schemas.py` is frozen and dual-owned (CLAUDE.md rule 2). Everything below is
+# NEW; nothing above it was renamed, retyped, reordered or removed, and the two
+# existing models that grew a field (`OutcomeOut`, `HealthOut`) grew an OPTIONAL
+# one with a default, so every client generated from the old openapi.json still
+# validates. docs/PHASE_4_TASKS.md 6 is the complete list, for one review pass
+# instead of a diff.
+# ---------------------------------------------------------------------------
+
+
+class EvaluationStatus(str, Enum):
+    """Two states, and both are observed rather than invented.
+
+    `draft` is an interview in flight; `finalized` is the immutable record.
+    There is no `running` — the live state is `sessions.state` and duplicating
+    it here would recreate the `profiles.status` confusion Phase 4 exists to
+    end. There is no `abandoned` either: `SessionState.ABANDONED` is declared
+    in this file and assigned NOWHERE in the codebase (three reads, zero
+    writes), so an abandoned evaluation would be an unreachable state with an
+    untestable transition.
+    """
+
+    draft = "draft"
+    finalized = "finalized"
+
+
+class ProvenanceOut(BaseModel):
+    """D7 — which versions produced a number.
+
+    Typed fields, not a blob, for everything with stable semantics. The two
+    dicts are the only structured members, because their KEY SETS genuinely
+    vary: prompts get added, flags get added.
+
+    `evaluation_version` is a hash of the material inputs, not a counter. Two
+    evaluations are comparable iff it matches; when it differs, the components
+    say which part of the system moved.
+    """
+
+    taxonomy_version: str = ""
+    taxonomy_hash: str = ""
+    rubric_version: str = ""
+    scoring_version: str = ""
+    question_policy_version: str = ""
+    prompt_versions: dict[str, str] = Field(default_factory=dict)
+    code_version: str = "unknown"
+    app_version: str = ""
+    llm_mode: str = "fixture"
+    model_requested: str | None = None
+    # What the provider actually answered with. Recorded, never hashed — see
+    # engine/provenance.py for why a per-process observation cannot honestly be
+    # a per-evaluation identity input.
+    model_returned: str | None = None
+    feature_flags: dict[str, str] = Field(default_factory=dict)
+    evaluation_version: str = ""
+
+
+class EvaluationOut(BaseModel):
+    """D6 — one completed assessment, addressable on its own.
+
+    Carries the RESULT and a pointer to the evidence, never a copy of it. The
+    drill-down is unchanged: GET /api/recruiter/candidates/{candidate_id}.
+    """
+
+    id: str
+    status: EvaluationStatus
+    candidate_id: str
+    candidate_name: str = ""
+    session_id: str
+    role_id: str | None = None
+    role_title: str | None = None
+    job_family: str
+    job_family_label: str = ""
+    created_at: datetime
+    finalized_at: datetime | None = None
+    resume_score: int = 0
+    weighted_evidence_score: int = 0
+    competence_score: int = 0
+    badge: Badge = Badge.unverified
+    consistency_score: int = 100
+    contradiction_count: int = 0
+    role_coverage: int = 0
+    claims_scored: int = 0
+    questions_asked: int = 0
+    dimension_profile: list[DimensionScore] = Field(default_factory=list)
+    # The weights this evaluation was scored under, snapshotted. CONFIGURATION,
+    # not evidence: `role_id` is SET NULL on delete, so without this a deleted
+    # lens would make a finalized evaluation unexplainable.
+    claim_weights: dict[str, float] = Field(default_factory=dict)
+    dimension_weights: dict[str, float] = Field(default_factory=dict)
+    provenance: ProvenanceOut = Field(default_factory=ProvenanceOut)
+
+
+class EvaluationSummary(BaseModel):
+    """One row of a candidate's evaluation history."""
+
+    id: str
+    status: EvaluationStatus
+    session_id: str
+    role_id: str | None = None
+    created_at: datetime
+    finalized_at: datetime | None = None
+    competence_score: int = 0
+    weighted_evidence_score: int = 0
+    badge: Badge = Badge.unverified
+    evaluation_version: str = ""
+
+
+class ReplayStatus(str, Enum):
+    MATCH = "MATCH"
+    MISMATCH = "MISMATCH"
+
+
+class ReplayDifference(BaseModel):
+    field: str
+    stored: str
+    replayed: str
+
+
+class ReplayResultOut(BaseModel):
+    """D8 — recomputed from stored signals, compared with what was finalized.
+
+    THE CONTRACT, STATED IN FULL: *extraction is recorded; everything
+    downstream of extraction is replayable.* No model call, no regenerated
+    question, no re-created answer. `resume_score` is deliberately not compared
+    — it is a function of live configuration rather than of stored evidence.
+    """
+
+    evaluation_id: str
+    status: ReplayStatus
+    replayed_at: datetime
+    llm_calls: int = 0
+    claims_replayed: int = 0
+    answers_replayed: int = 0
+    differences: list[ReplayDifference] = Field(default_factory=list)
+    # Which version inputs have moved since finalization. Populated whether or
+    # not the numbers moved: it is the explanation for a MISMATCH and the
+    # reassurance behind a MATCH.
+    provenance_drift: list[ReplayDifference] = Field(default_factory=list)
+    note: str = ""
+
+
+class HistoryEntryKind(str, Enum):
+    evaluation_created = "evaluation_created"
+    evaluation_finalized = "evaluation_finalized"
+    decision = "decision"
+
+
+class EvaluationHistoryEntry(BaseModel):
+    kind: HistoryEntryKind
+    at: datetime
+    evaluation_id: str
+    # Present on `decision` entries only.
+    outcome_id: str | None = None
+    decision: OutcomeDecision | None = None
+    previous_decision: OutcomeDecision | None = None
+    decided_by: str | None = None
+    stage: str | None = None
+    note: str | None = None
+    # Present on lifecycle entries only.
+    competence_score: int | None = None
+    badge: Badge | None = None
+
+
+class EvaluationHistoryOut(BaseModel):
+    """D10 — what the evaluation said, and what a human then did about it.
+
+    Assembled from two existing sources, deterministically ordered: the
+    evaluation's own lifecycle columns and the append-only `candidate_outcomes`
+    rows. No event table, because its only content would duplicate two columns
+    that already exist.
+    """
+
+    evaluation_id: str
+    candidate_id: str
+    status: EvaluationStatus
+    finalized_at: datetime | None = None
+    competence_score: int = 0
+    badge: Badge = Badge.unverified
+    current_decision: OutcomeDecision | None = None
+    decisions_recorded: int = 0
+    entries: list[EvaluationHistoryEntry] = Field(default_factory=list)
+
+
+class TenantCreateIn(BaseModel):
+    slug: str = Field(max_length=60)
+    name: str | None = Field(default=None, max_length=200)
+
+
+class TenantOut(BaseModel):
+    """`api_key` appears in THIS response and nowhere else, ever. Only its
+    sha256 is stored, so a lost key is re-provisioned, never recovered."""
+
+    id: str
+    name: str
+    slug: str
+    api_key: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # dev endpoints
 # ---------------------------------------------------------------------------
 
@@ -659,3 +863,11 @@ class HealthOut(BaseModel):
     whatsapp: str
     max_questions: int
     job_families: int
+    # P4/D7, ADDITIVE AND OPTIONAL. The active version set, so "which build
+    # produced this?" is answerable without shelling into the container.
+    taxonomy_version: str | None = None
+    rubric_version: str | None = None
+    scoring_version: str | None = None
+    question_policy_version: str | None = None
+    code_version: str | None = None
+    evaluation_version: str | None = None

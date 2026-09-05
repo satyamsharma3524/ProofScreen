@@ -36,6 +36,7 @@ from api.schemas import (
     SessionState,
 )
 from api.taxonomy import claim_type_label, default_claim_weights, family_label, resolve_family
+from api.tenancy import TenantScope, current_tenant
 
 log = logging.getLogger("proofscreen.candidates")
 
@@ -45,6 +46,7 @@ router = APIRouter(prefix="/api/candidates", tags=["candidate"])
 async def _onboard(
     db: AsyncSession,
     *,
+    scope: TenantScope,
     name: str,
     phone: str,
     resume_text: str,
@@ -62,8 +64,23 @@ async def _onboard(
             "a valid phone number is required — WhatsApp is the candidate channel",
         )
 
+    # D9 — a candidate may not be pinned to a lens that is not this tenant's.
+    # The FK alone would accept it: job_roles is one table across tenants, and
+    # the reference would then quietly resolve to nothing every time it is read.
+    if role_id is not None:
+        from api.models import JobRole
+        from api.tenancy import get_owned
+
+        if await get_owned(db, JobRole, role_id, scope) is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"role_id {role_id!r} not found"
+            )
+
     candidate = Candidate(
         id=ids.candidate_id(),
+        # D9 — the ROOT of tenant propagation. Every claim, question, response,
+        # evidence row, score and evaluation for this person inherits from here.
+        tenant_id=scope.require(),
         name=name.strip() or "Unnamed candidate",
         phone=normalised,
         email=(email or "").strip() or None,
@@ -73,6 +90,7 @@ async def _onboard(
     )
     resume = Resume(
         id=ids.resume_id(),
+        tenant_id=candidate.tenant_id,
         candidate_id=candidate.id,
         raw_text=normalise(resume_text),
         filename=filename,
@@ -150,6 +168,7 @@ async def create_candidate(
     role_id: str | None = Form(None),
     job_description: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> CandidateCreateOut:
     data = await file.read()
     try:
@@ -159,6 +178,7 @@ async def create_candidate(
 
     return await _onboard(
         db,
+        scope=scope,
         name=name,
         phone=phone,
         resume_text=resume_text,
@@ -175,7 +195,9 @@ async def create_candidate(
     "/text", response_model=CandidateCreateOut, status_code=status.HTTP_201_CREATED
 )
 async def create_candidate_from_text(
-    payload: CandidateTextIn, db: AsyncSession = Depends(get_db)
+    payload: CandidateTextIn,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
 ) -> CandidateCreateOut:
     if len(payload.resume_text.strip()) < 80:
         raise HTTPException(
@@ -183,6 +205,7 @@ async def create_candidate_from_text(
         )
     return await _onboard(
         db,
+        scope=scope,
         name=payload.name,
         phone=payload.phone,
         resume_text=payload.resume_text,

@@ -9,6 +9,7 @@ reading ids off a screen out loud.
 from __future__ import annotations
 
 import random
+import secrets
 import string
 import uuid
 
@@ -91,6 +92,37 @@ def profile_id() -> str:
 
 def outcome_id() -> str:
     return f"o_{_short()}"
+
+
+def tenant_id() -> str:
+    # Few of these ever exist and a human names them, so 6 is plenty. The
+    # DEVELOPMENT tenant does not use this: it is the fixed literal `t_dev`
+    # (models.DEVELOPMENT_TENANT_ID), because a random id for the one tenant
+    # every default write lands in would make seeds and fixtures unstable.
+    return f"t_{_short()}"
+
+
+def api_key_id() -> str:
+    # Machine-only. See _MACHINE.
+    return f"ak_{_short(_MACHINE)}"
+
+
+def evaluation_id() -> str:
+    # 10, not 6, and deliberately against the "humans read it" rule. An
+    # evaluation id is a URL path segment and a support-ticket reference, and
+    # there is one per interview — the most numerous recruiter-facing entity
+    # there will ever be. At 6 chars the birthday bound bites at a few thousand
+    # rows; at 10 it does not. See the _MACHINE note above.
+    return f"ev_{_short(_MACHINE)}"
+
+
+def api_key_secret() -> str:
+    """The raw API key. Returned once, stored only as a sha256 hash.
+
+    `secrets`, not `random`: this is a credential, and `random` is a Mersenne
+    Twister whose state is recoverable from its own output.
+    """
+    return f"psk_{secrets.token_urlsafe(32)}"
 
 
 def join_code() -> str:
