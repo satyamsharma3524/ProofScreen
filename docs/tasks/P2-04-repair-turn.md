@@ -122,6 +122,48 @@ EOF
 # end to end through the real webhook: answer "ok", expect a repair, not the next probe
 ```
 
+## As built — 2026-09-05
+
+| | Result |
+|---|---|
+| Tests | 290 → **298** |
+| Budget | a repair leaves `questions_asked` **unchanged** |
+| Model calls per repair | **0** |
+| Transfer invariant | **3 probes, all Rohit, all `signals_found = 0`** — re-measured |
+| Seed competence | 56 / 46 / 14 / 61 · three lens orderings unchanged |
+| Suite under every flag | 298 green — default, `REPAIR_TURN=false`, `QUESTION_VALIDATION=false`, `TRANSFER_PROBE=false`, `ADAPTIVE_PROBING=false` |
+
+**Measured on the evasive persona: 9 budgeted questions against the strong
+persona's 12, across 14 turns versus 12.** That is the mechanism stated in one
+line — fewer questions spent, more chances given.
+
+**Two existing tests broke, and both were proxies rather than invariants.**
+Neither was bent to pass:
+
+- `test_evasive_candidate_gets_a_shorter_interview` asserted
+  `len(weak_turns) < len(strong_turns)`. The invariant was always about
+  **budget** — *"no point asking a twelfth question of someone who has said
+  nothing for three"* — and turn count was a proxy that stopped being one. It
+  now asserts both halves: fewer budgeted questions (9 < 12) **and** more turns
+  (14 > 12), so if repairs ever stop firing the second assertion catches it.
+- `test_a_stalled_claim_produces_a_transfer_question_about_another_claim`
+  asserted one TRANSFER turn per claim. A repair sits at the same probe level as
+  the question it repairs, so a transfer probe that drew a non-answer now shows
+  two TRANSFER *turns*. That is one probe asked twice, not two probes —
+  `levels_used` still records TRANSFER once, so `transfer_used` still spends the
+  exemption exactly once. Repairs are excluded from the count rather than the
+  invariant being weakened.
+
+**`order_index` no longer means two things.** It was set from
+`session.questions_asked`, making it simultaneously transcript position and
+budget consumed. It is now a count of the session's questions, so
+`questions_asked` stays the budget; a test asserts the transcript is dense and
+unique with repairs interleaved.
+
+**One observation, unexplained.** A single full-suite run failed once and did
+not reproduce in eight subsequent runs across five flag configurations. No
+cause identified; recorded rather than explained away.
+
 ## 7. Risks
 
 | Risk | Mitigation |

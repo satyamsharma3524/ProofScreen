@@ -40,7 +40,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api import ids
@@ -208,6 +208,42 @@ async def _questions_of(db: AsyncSession, session_id: str) -> list[Question]:
     )
 
 
+async def _question_count(db: AsyncSession, session_id: str) -> int:
+    """Transcript length, repairs included. See `order_index` in `ask_next`."""
+    return int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(Question)
+                .where(Question.session_id == session_id)
+            )
+        ).scalar_one()
+    )
+
+
+async def _repair_already_used(db: AsyncSession, question: Question) -> bool:
+    """One repair per parent question, hard.
+
+    Without the cap a disengaged candidate loops inside a single probe forever
+    and the interview never terminates — the same class of bug as unbounded
+    regeneration, and the reason that cap is structural too.
+    """
+    if question.is_repair:
+        return True          # a repair is never itself repaired
+    later = (
+        await db.execute(
+            select(Question).where(
+                Question.session_id == question.session_id,
+                Question.claim_id == question.claim_id,
+                Question.probe_level == question.probe_level,
+                Question.is_repair.is_(True),
+                Question.order_index > question.order_index,
+            )
+        )
+    ).scalars().first()
+    return later is not None
+
+
 async def _open_question(db: AsyncSession, session_id: str) -> Question | None:
     return (
         await db.execute(
@@ -284,8 +320,20 @@ async def build_claim_states(
             state.levels_used.add(ProbeLevel(question.probe_level))
         except ValueError:
             pass
+        # The evidence counts however it arrived — a repair answer is a real
+        # answer from the candidate and suppressing it would lose signal.
         sig = evidence_engine.signals_of(response.signals_json)
         state.answer_signals.append(sig)
+
+        # P2-04 — but it does NOT count toward the stall signal. `stalled` is
+        # "answers >= 2 and the last one produced nothing", and `stalled` is
+        # what makes a claim transfer_available. Counting a repair here means a
+        # candidate who says "ok" twice stalls a claim that was never properly
+        # probed, and TRANSFER fires early on a claim with no evidence to
+        # transfer. Measured against the seed, the invariant is 3 probes, all
+        # Rohit, all signals_found = 0.
+        if question.is_repair:
+            continue
         state.answers += 1
         state.last_answer_signals = response.signals_found or 0
 
@@ -754,7 +802,12 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         text=generated.question,
         probe_level=plan.probe_level.value,
         target_dimension=plan.target_dimension.value if plan.target_dimension else None,
-        order_index=session.questions_asked,
+        # P2-04 — derived from a COUNT of this session's questions, not from
+        # `questions_asked`. The two used to be the same number and therefore
+        # the same concept; a repair turn does not consume budget, so
+        # `questions_asked` stays the budget counter and this stays transcript
+        # position. Dense and unique either way.
+        order_index=await _question_count(db, session.id),
         # P2-03 provenance. M6d-M6g are computed from these four columns and
         # nothing else, so they are written here on the one path that creates a
         # question row.
@@ -980,6 +1033,15 @@ async def submit_answer(
         contradictions = await graph_engine.session_contradictions(db, session.id)
         await graph_engine.recompute_profile(db, session.candidate_id)
 
+    # P2-04 — a non-answer earns one more go at the SAME probe, off-budget.
+    #
+    # Spending a budgeted question on "ok" is how a 12-question interview
+    # becomes an 8-question one, and the claim it was about scores zero for
+    # reasons that have nothing to do with the candidate's competence.
+    repair = await _maybe_repair(db, session, question, response)
+    if repair is not None:
+        return response, repair, contradictions
+
     next_question = None
     if session.questions_asked < settings.max_questions:
         next_question = await ask_next(db, session)
@@ -988,6 +1050,52 @@ async def submit_answer(
         await finalize(db, session)
 
     return response, next_question, contradictions
+
+
+async def _maybe_repair(
+    db: AsyncSession,
+    session: ChatSession,
+    question: Question,
+    response: Response,
+) -> Question | None:
+    """One repair question, or None. Deterministic, and makes no model call.
+
+    Deliberately narrow. It does NOT re-plan, does not change the probe level,
+    and does not touch `questions_asked` — the whole point is that this turn is
+    free. The answer that follows is stored and scored like any other, because
+    it is a real answer; only the BUDGET and the STALL COUNT treat it
+    differently.
+    """
+    if not settings.repair_turn:
+        return None
+    if not evidence_engine.is_non_answer(response.answer_text):
+        return None
+    if await _repair_already_used(db, question):
+        # Second non-answer in a row: accept it, score it, move on. Without
+        # this the interview never terminates for a disengaged candidate.
+        log.info("repair already spent on %s, accepting the non-answer", question.id)
+        return None
+
+    claim = await db.get(Claim, question.claim_id)
+    repair = Question(
+        id=ids.question_id(),
+        claim_id=question.claim_id,
+        session_id=session.id,
+        text=question_engine.repair_question(
+            ProbeLevel(question.probe_level), claim.text if claim else None
+        ),
+        probe_level=question.probe_level,
+        target_dimension=question.target_dimension,
+        order_index=await _question_count(db, session.id),
+        source="repair",
+        attempts=1,
+        is_repair=True,
+    )
+    db.add(repair)
+    # `questions_asked` is NOT incremented. That is the task.
+    await db.commit()
+    log.info("repair turn on %s (%s)", question.id, question.probe_level)
+    return repair
 
 
 async def score_pending(db: AsyncSession, session_id: str) -> None:
