@@ -1010,3 +1010,117 @@ def test_seeded_questions_never_exceed_two_attempts(client):
     assert asked, "no questions were asked"
     assert max(q.attempts for q in asked) <= 2
     assert {q.source for q in asked} <= {"model", "regenerated", "fallback"}
+
+
+# ===========================================================================
+# P2-05 — M6 in the validation report
+# ===========================================================================
+
+from scripts.validation_report import Snapshot, compute_m6, render, build_report, collect
+
+
+def _snapshot(questions=(), answers=0) -> Snapshot:
+    snap = Snapshot()
+    snap.questions = list(questions)
+    snap.responses_by_question = {f"r{i}": object() for i in range(answers)}
+    return snap
+
+
+class _Q:
+    """A Question row, minus the ORM. compute_m6 reads five attributes."""
+
+    def __init__(self, *, is_repair=False, source="model", violations=None, attempts=1):
+        self.is_repair = is_repair
+        self.source = source
+        self.violations_json = json.dumps(violations) if violations else None
+        self.attempts = attempts
+
+
+def test_m6_computed_with_no_model_call(client):
+    before = client.get("/api/dev/llm").json()["calls"]
+    compute_m6(_snapshot())
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
+
+def test_m6_scores_the_validator_against_the_corpus():
+    m6 = compute_m6(_snapshot())
+    assert m6["available"], "the question golden set was not found"
+    assert m6["corpus_entries"] == len(ENTRIES)
+    assert m6["m6a_precision"] >= 95
+    assert m6["m6b_recall"] >= 90
+    assert m6["m6c_accept_rate"] >= 95
+    assert m6["m6h_attribution"] >= 90
+
+
+def test_m6_excludes_repair_questions_from_generated_rates(monkeypatch):
+    """Repairs are not generated questions — REPAIR_PROMPTS is a fixed table —
+    so including them would dilute every rate by however disengaged the cohort
+    happened to be. They have their own metric, M6f."""
+    monkeypatch.setattr(_settings, "openai_api_key", "sk-test")   # live rates on
+    generated = [_Q(), _Q(violations=["answer_leakage"])]
+    with_repairs = generated + [_Q(is_repair=True), _Q(is_repair=True)]
+
+    clean = compute_m6(_snapshot(generated, answers=2))
+    noisy = compute_m6(_snapshot(with_repairs, answers=4))
+
+    assert clean["m6d_reject_rate"] == noisy["m6d_reject_rate"] == 50.0
+    assert clean["questions_asked"] == noisy["questions_asked"] == 2
+    assert noisy["repairs"] == 2
+    assert noisy["m6f_repair_rate"] == 50.0
+
+
+def test_m6_withholds_live_rates_in_fixture_mode(monkeypatch):
+    """Every question in fixture mode comes from FALLBACK_QUESTIONS, so a live
+    reject rate would describe the fallback path and not the model. Withheld,
+    never shown as a false 0% — the discipline M4a already follows."""
+    monkeypatch.setattr(_settings, "openai_api_key", None)
+    m6 = compute_m6(_snapshot([_Q(), _Q(source="fallback")], answers=2))
+
+    assert m6["live_rates_meaningful"] is False
+    assert m6["m6d_reject_rate"] is None
+    assert m6["m6e_fallback_rate"] is None
+    assert m6["m6g_repeat_rate"] is None
+    # M6f is still meaningful: a repair is a repair whatever produced the question.
+    assert m6["m6f_repair_rate"] is not None
+
+
+def test_m6_live_rates_appear_when_a_key_is_present(monkeypatch):
+    monkeypatch.setattr(_settings, "openai_api_key", "sk-test")
+    m6 = compute_m6(_snapshot([_Q(), _Q(source="fallback")], answers=2))
+    assert m6["live_rates_meaningful"] is True
+    assert m6["m6e_fallback_rate"] == 50.0
+
+
+def test_m6_per_rule_histogram_is_consistent():
+    """A single rule producing most violations is the likeliest sign of a
+    miscalibrated rule, and a total hides it."""
+    m6 = compute_m6(_snapshot())
+    assert set(m6["per_rule"]) <= set(RULES)
+    assert sum(m6["per_rule"].values()) > 0
+
+
+def test_m6_renders_with_every_denominator_named():
+    """The M5a failure was a denominator nobody stated. Every M6 rate names
+    what it is a rate OF, in the output itself."""
+    text = render(_snapshot(), build_report(_snapshot(), minimum_n=30))
+    assert "M6  Question quality" in text
+    for label in ("M6a", "M6b", "M6c", "M6d", "M6e", "M6f", "M6g", "M6h"):
+        assert label in text, f"{label} missing from the report"
+    assert "of 44 labelled good" in text
+    assert "labelled defects" in text
+    assert "C4" in text, "the counter-metric must be printed beside the number"
+
+
+def test_m6_does_not_disturb_m1_to_m5():
+    """Phase 1's numbers are a regression surface now. M6 reads the same
+    Snapshot and must not touch it."""
+    snap = _snapshot([_Q(), _Q(is_repair=True)], answers=2)
+    before = (list(snap.questions), dict(snap.responses_by_question))
+    compute_m6(snap)
+    assert list(snap.questions) == before[0]
+    assert dict(snap.responses_by_question) == before[1]
+
+
+def test_m6_reports_the_regeneration_cap():
+    m6 = compute_m6(_snapshot([_Q(attempts=1), _Q(attempts=2)]))
+    assert m6["max_attempts"] == 2, "the cap must be visible in the report"

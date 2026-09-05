@@ -63,10 +63,15 @@ from api.schemas import (  # noqa: E402
     ValidationCohort,
     ValidationOut,
 )
+from api.config import settings  # noqa: E402
+from api.engine.question import validate  # noqa: E402
 from api.taxonomy import MARGIN_FLOOR, MIN_TERMS, is_low_confidence, match_family  # noqa: E402
 
 MINIMUM_N = 30
 GOLDEN_PATH = Path(__file__).resolve().parents[1] / "tests" / "data" / "routing_golden.json"
+QUESTION_GOLDEN_PATH = (
+    Path(__file__).resolve().parents[1] / "tests" / "data" / "question_golden.json"
+)
 
 # The ordinal the whole of M4 rests on. Index in OutcomeDecision, worst to best.
 DECISION_RANK = {d.value: i for i, d in enumerate(OutcomeDecision)}
@@ -571,6 +576,111 @@ def compute_m5() -> dict:
     }
 
 
+def compute_m6(snap: Snapshot) -> dict:
+    """M6 — question quality. Two sources, and the difference matters.
+
+    M6a-M6c and M6h measure the VALIDATOR against a labelled corpus. M6d-M6g
+    measure the SYSTEM IN OPERATION against stored rows. Conflating them is how
+    M5a came to mean two different things for a whole phase, so every rate below
+    names its denominator in the output.
+
+    NO MODEL CALL. `question.validate()` imports no LLM, and the stored columns
+    are read as they are.
+    """
+    out: dict = {"available": False}
+
+    # --- the validator, against the corpus ---------------------------------
+    if QUESTION_GOLDEN_PATH.exists():
+        payload = json.loads(QUESTION_GOLDEN_PATH.read_text(encoding="utf-8"))
+        entries = payload.get("questions", [])
+        tp = fp = fn = ok_accept = n_accept = attributed = 0
+        per_rule: dict[str, int] = {}
+        for entry in entries:
+            ctx = entry["context"]
+            result = validate(
+                entry["question"],
+                claim_text=ctx["claim"],
+                claim_type=ctx.get("claim_type"),
+                claim_metric=ctx.get("claim_metric"),
+                job_family=entry.get("family"),
+                probe_level=ProbeLevel(ctx["probe_level"]),
+                prior_questions=ctx.get("prior_questions", ()),
+                prior_answers=ctx.get("prior_answers", ()),
+                other_claims=ctx.get("other_claims", ()),
+                target_claim_text=ctx.get("transfer_target_claim"),
+            )
+            for rule in result.violations:
+                per_rule[rule] = per_rule.get(rule, 0) + 1
+            if entry["verdict"] == "reject":
+                if result.accepted:
+                    fn += 1
+                else:
+                    tp += 1
+                    attributed += entry.get("primary_rule") in result.violations
+            else:
+                n_accept += 1
+                ok_accept += result.accepted
+                fp += not result.accepted
+        out.update(
+            available=True,
+            corpus_entries=len(entries),
+            m6a_precision=round(100 * tp / (tp + fp), 1) if tp + fp else None,
+            m6b_recall=round(100 * tp / (tp + fn), 1) if tp + fn else None,
+            m6c_accept_rate=round(100 * ok_accept / n_accept, 1) if n_accept else None,
+            m6h_attribution=round(100 * attributed / tp, 1) if tp else None,
+            corpus_rejects=tp + fn,
+            corpus_accepts=n_accept,
+            per_rule=dict(sorted(per_rule.items(), key=lambda kv: -kv[1])),
+        )
+
+    # --- the system in operation, from stored rows -------------------------
+    #
+    # Repairs are excluded from every generated-question rate. They are not
+    # generated questions — `REPAIR_PROMPTS` is a fixed table — and including
+    # them would dilute each rate by however disengaged the cohort happened to
+    # be. They have their own metric, M6f.
+    asked = [q for q in snap.questions if not q.is_repair]
+    repairs = [q for q in snap.questions if q.is_repair]
+    answers = len(snap.responses_by_question)
+
+    rejected = [q for q in asked if q.violations_json]
+    fallbacks = [q for q in asked if q.source == "fallback"]
+    repeats = [q for q in rejected if "duplicate_content" in (q.violations_json or "")]
+
+    live_rules: dict[str, int] = {}
+    for question in rejected:
+        try:
+            for rule in json.loads(question.violations_json or "[]"):
+                live_rules[rule] = live_rules.get(rule, 0) + 1
+        except ValueError:
+            continue
+
+    # In fixture mode every question comes from FALLBACK_QUESTIONS, so the live
+    # rates describe the fallback path rather than the model. Withheld rather
+    # than shown as a misleading 0% — the same discipline M4a follows.
+    live_meaningful = settings.llm_enabled
+    out.update(
+        questions_asked=len(asked),
+        repairs=len(repairs),
+        answers=answers,
+        llm_mode=settings.llm_mode,
+        live_rates_meaningful=live_meaningful,
+        m6d_reject_rate=(
+            round(100 * len(rejected) / len(asked), 1) if asked and live_meaningful else None
+        ),
+        m6e_fallback_rate=(
+            round(100 * len(fallbacks) / len(asked), 1) if asked and live_meaningful else None
+        ),
+        m6f_repair_rate=round(100 * len(repairs) / answers, 1) if answers else None,
+        m6g_repeat_rate=(
+            round(100 * len(repeats) / len(asked), 1) if asked and live_meaningful else None
+        ),
+        live_per_rule=dict(sorted(live_rules.items(), key=lambda kv: -kv[1])),
+        max_attempts=max((q.attempts for q in asked), default=0),
+    )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # rendering
 # ---------------------------------------------------------------------------
@@ -594,6 +704,7 @@ def _verdict(actual, target, comparator=lambda a, t: a >= t) -> str:
 
 def render(snap: Snapshot, report: ValidationOut) -> str:
     m1, m2, m3, m5 = compute_m1(snap), compute_m2(snap), compute_m3(snap), compute_m5()
+    m6 = compute_m6(snap)
     out: list[str] = []
     add = out.append
 
@@ -696,6 +807,53 @@ def render(snap: Snapshot, report: ValidationOut) -> str:
         add("    M5a is MARGIN-based, as the metrics doc specifies — A's P1-06a landed")
         add("    taxonomy.MARGIN_FLOOR. Denominator is the 50 entries a human says have")
         add("    a family; measuring over all 60 caps the metric at 83.3% by arithmetic.")
+
+    add("")
+    add("M6  Question quality")
+    if not m6.get("available"):
+        add("    question golden set not found")
+    else:
+        add(f"    corpus                              {m6['corpus_entries']} entries "
+            f"({m6['corpus_accepts']} accept, {m6['corpus_rejects']} reject)")
+        add(f"{_verdict(m6['m6a_precision'], 95)}M6a validator precision            "
+            f"{_fmt(m6['m6a_precision'], '%')}   target >= 95%   (of questions it rejected)")
+        add(f"{_verdict(m6['m6b_recall'], 90)}M6b validator recall               "
+            f"{_fmt(m6['m6b_recall'], '%')}   target >= 90%   (of {m6['corpus_rejects']} labelled defects)")
+        add(f"{_verdict(m6['m6c_accept_rate'], 95)}M6c accept-rate on good questions  "
+            f"{_fmt(m6['m6c_accept_rate'], '%')}   target >= 95%   (of {m6['corpus_accepts']} labelled good)")
+        add(f"{_verdict(m6['m6h_attribution'], 90)}M6h rejected for the right reason  "
+            f"{_fmt(m6['m6h_attribution'], '%')}   target >= 90%")
+        add("    C4: do not optimise the live reject rate DOWNWARD. A reject means")
+        add("        the validator did its job; driving M6d to zero by loosening rules")
+        add("        produces a validator indistinguishable from having none.")
+
+    add("")
+    add(f"    in operation                        {m6.get('questions_asked', 0)} questions asked, "
+        f"{m6.get('repairs', 0)} repair turns, {m6.get('answers', 0)} answers")
+    if not m6.get("live_rates_meaningful"):
+        add(f"    M6d/M6e/M6g WITHHELD — {m6.get('llm_mode')} mode: every question comes from")
+        add("    FALLBACK_QUESTIONS, so a live reject rate would describe the fallback")
+        add("    path and not the model. Withheld rather than shown as a false 0%.")
+    else:
+        add(f"     M6d live reject rate               {_fmt(m6['m6d_reject_rate'], '%')}"
+            f"   reported, not targeted (C4)   (of {m6['questions_asked']} asked)")
+        add(f"{_verdict(m6['m6e_fallback_rate'], 5, lambda a, t: a <= t)}"
+            f"M6e fallback rate                  {_fmt(m6['m6e_fallback_rate'], '%')}"
+            f"   target <= 5%    (of {m6['questions_asked']} asked)")
+        add(f"     M6g repeat rate                    {_fmt(m6['m6g_repeat_rate'], '%')}"
+            f"   reported        (of {m6['questions_asked']} asked)")
+    add(f"     M6f repair rate                    {_fmt(m6.get('m6f_repair_rate'), '%')}"
+        f"   reported        (of {m6.get('answers', 0)} answers)")
+    add(f"    max regeneration attempts {m6.get('max_attempts', 0)} (cap is 2, structurally)")
+    if m6.get("per_rule"):
+        add("    per-rule violations on the corpus — a single rule producing most of")
+        add("    them is the likeliest sign of a miscalibrated rule, which a total hides:")
+        for rule, count in m6["per_rule"].items():
+            add(f"      {rule:26} {count:3d}")
+    if m6.get("live_per_rule"):
+        add("    per-rule violations in operation:")
+        for rule, count in m6["live_per_rule"].items():
+            add(f"      {rule:26} {count:3d}")
 
     add("")
     add("=" * 78)
