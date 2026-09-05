@@ -492,3 +492,125 @@ the step most likely to contain an arithmetic error nobody catches.
 8. **Phase exit:** M7a–M7h published, D6 accounts for every disagreement, `api/`
    diff empty. Any recalibration the study motivates is a **separate**,
    evidenced change — after.
+
+---
+
+## 11. Execution log
+
+Kept here rather than in a new document (C2). Appended as the phase runs, so a
+reader sees what actually happened rather than what was planned.
+
+### P3-01 — harness (`scripts/interview_study.py`, `tests/test_study.py`)
+
+`api/` diff: **empty**, as required. Suite **307 → 330**, no existing test edited.
+
+**The costed pilot earned its keep three times over.** Plan §0 C-i mandates a
+`--limit` run before any full run; it found three defects that would each have
+corrupted or destroyed a paid run, and none of them were visible in fixture
+mode — which is the point of the fixture smoke test being labelled as measuring
+nothing.
+
+**Bug 1 — 85% of validator decisions were being thrown away.**
+Symptom: the pilot reported **M7e coverage 14.8%** while `questions.source` on
+the same rows said 45 `model` + 9 `regenerated`. Both cannot be true — a
+question with `source="model"` was validated by definition.
+
+Root cause: `orchestrator.submit_answer()` calls `ask_next()` itself
+(`orchestrator.py:1047`), so question N+1 is generated at the **tail of turn N**.
+The harness cleared its generation buffer at the top of each turn, which threw
+that generation away; `ask_next()` then returned the already-open question
+without generating, so the row fell through to the database branch and recorded
+`validator_ran=False` on a question the validator *had* judged.
+
+Fix: `_take_generation()` matches on question text and consumes once, so it is
+correct whatever order the orchestrator generates in. Pinned by three tests.
+After the fix, a single interview reads **M7e coverage 100.0%**.
+
+**This is the failure mode the plan's own guardrail was written for.** M7e has a
+90% floor precisely so that "the validator is barely running" cannot be mistaken
+for "the validator is fine". Had the pilot been skipped, the full run would have
+produced a dataset with a 15% coverage figure and a reject stratum missing six
+sevenths of its rows.
+
+**Bug 2 — one bad interview killed every interview after it.**
+A `FOREIGN KEY constraint failed` on an `evidence` insert left the shared
+`AsyncSession` in *"transaction has been rolled back"*, and the harness caught
+the exception without rolling back. Interviews 3, 4, 5 and 6 then failed on the
+same dead statement. The run **wrote 0 rows after paying for 21 model calls**.
+
+Fix: one session per interview, explicit `db.rollback()` on failure, and a
+failure count printed at exit — a run that silently drops a quarter of its
+interviews is reporting a coverage number that is not true.
+
+**Bug 3 — failures were being reported only as a per-line message.** A run that
+loses interviews has a coverage fact to declare, so the count is now summarised
+at exit and recorded here.
+
+**A fourth thing the pilot settled, which is a finding rather than a bug: the
+repair turn did not fire once.** `evidence.is_non_answer()` matches a canned
+phrase or a string under 12 characters, and neither the authored personas nor a
+competent simulator produce those — Rohit's *"I don't remember the details, it
+was a while ago."* reads as a real answer to it. So acceptance criterion 5's
+`is_repair` clause is expected to fail, and **it is not being engineered around**:
+authoring a persona that says "ok" to make a criterion pass would be fitting the
+data to the test. What it suggests is worth a separate measurement — the repair
+turn shipped in P2-04 and may almost never trigger on real candidates.
+
+### The pilot, after all three fixes
+
+Same six interviews, nothing else changed:
+
+| | before | after |
+|---|---|---|
+| Rows | 61 | **76** |
+| Validator ran on | 9 | **71** |
+| **M7e coverage** | **14.8%** | **92.1%** |
+| Accepts / rejects | 6 / 3 | **53 / 18** |
+| Interviews that failed | 4 of 6 | **0 of 6** |
+| Cost | $0.4738 | $0.4866 |
+
+**M7h live reject rate: 25.4%** — far higher than the ~8% the plan used as its
+worked example, which is good news for the study: a 50-item reject stratum is
+comfortably available rather than scarce, and F3's reweighting matters *less*
+than feared at a 2.9x over-representation instead of 11x. It is also a finding
+in its own right: **one generated question in four fails validation on the first
+attempt**, against a corpus that says the validator is at 100%.
+
+Per-rule, on the pilot: `answer_leakage` 11, `no_claim_anchor` 2,
+`unsupported_metric` 2, `duplicate_content` 2, `scope_drift` 1. Reading anything
+into that at n=18 would be premature; it is here because the histogram existing
+at all is what M6's per-rule counts were built for.
+
+### Measured cost
+
+| | calls | in | out | USD |
+|---|---|---|---|---|
+| One question generation (`gpt-4o`) | 1 | 417 | 26 | **0.0013** |
+| One interview, end to end (mean of 6) | 25 | 20,888 | 3,277 | **0.081** |
+| Pilot: 6 interviews, 76 rows | 150 | 125,330 | 19,660 | **0.4866** |
+
+Roughly **$0.0064 per dataset row**, so a 68-interview full run costs about
+**$5.50**. `gpt-4o-mini` for the candidate simulator is
+**0.3% of the bill** — the interview itself (question generation plus evidence
+extraction, both on production's `gpt-4o`) is essentially all of it, which is
+why moving the simulator to the cheap model was worth doing and moving anything
+else would not be.
+
+### Two production observations, neither fixed here
+
+Recorded because a live run surfaces things fixture mode cannot. **Neither is in
+scope**: acceptance criterion 1 is an empty `api/` diff, and both belong to
+owner A as separate, evidenced changes.
+
+1. **`AnswerSignals` fell back on a 240-character quote limit.** Evidence
+   extraction returned `causal_links[1].quote` longer than the `max_length=240`
+   in the frozen `api/schemas.py`, failed validation twice, and used the
+   heuristic fallback. That is rule 5 working — no stack trace, the interview
+   continued — but it means a long verbatim quote silently downgrades an answer
+   to heuristic scoring. Worth a measurement of its own: how often does this fire
+   on real answers?
+2. **A `FOREIGN KEY constraint failed` on an `evidence` insert** (bug 2's
+   trigger). SQLite now arms `PRAGMA foreign_keys=ON`, so this would previously
+   have passed under test and failed only on Postgres. Not yet reproduced in
+   isolation, and it may be an artifact of the shared session rather than a
+   production defect — **stated as unexplained rather than explained away.**
