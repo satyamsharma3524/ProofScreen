@@ -33,6 +33,7 @@ from api.models import (
     Claim,
     ClaimScore,
     ContradictionRow,
+    Evaluation,
     Evidence,
     JobRole,
     Profile,
@@ -46,8 +47,20 @@ from tests.conftest import RESUME, STRONG_ANSWERS
 OWNED_MODELS = [
     JobRole, Candidate, Resume, ChatSession, Claim, Question, Response,
     Evidence, ClaimScore, SessionFact, ContradictionRow, Profile,
-    CandidateOutcome,
+    CandidateOutcome, Evaluation,
 ]
+
+
+def test_the_owned_model_list_is_complete():
+    """The parametrised test below is only as good as this list, so the list is
+    derived rather than trusted: every mapped table except `tenants` and
+    `api_keys` — which ARE the tenancy — must appear."""
+    from api.models import Base
+
+    tabled = {
+        t for t in Base.metadata.tables if t not in {"tenants", "api_keys"}
+    }
+    assert {m.__tablename__ for m in OWNED_MODELS} == tabled
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +223,48 @@ def test_the_system_scope_is_used_in_exactly_one_place():
     assert hits[0].startswith("api/routers/whatsapp.py")
 
 
+def test_the_orchestrator_is_entered_with_resolved_rows_not_ids():
+    """The invariant that lets the orchestrator query without a tenant filter.
+
+    Its helpers select by `session_id` with no tenant predicate, and that is
+    safe only because the session is an aggregate root whose ownership was
+    checked when it was fetched. So the check is on the ENTRY POINTS: every
+    orchestrator function a router calls must take a resolved model object, or
+    a TenantScope. A public function taking a bare `session_id` would be the
+    hole, and this is what fails when someone adds one.
+    """
+    import ast
+    import inspect
+
+    from api.engine import orchestrator
+
+    called: set[str] = set()
+    for path in sorted(pathlib.Path("api/routers").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "orchestrator"
+            ):
+                called.add(node.func.attr)
+    assert called, "no orchestrator calls found; the scan is broken"
+
+    offenders = []
+    for name in sorted(called):
+        signature = inspect.signature(getattr(orchestrator, name))
+        params = [p for p in signature.parameters.values() if p.name != "db"]
+        annotations = " ".join(str(p.annotation) for p in params)
+        takes_row = "ChatSession" in annotations or "Candidate" in annotations
+        takes_scope = "TenantScope" in annotations
+        if not (takes_row or takes_scope):
+            offenders.append(f"orchestrator.{name}{signature}")
+    assert not offenders, (
+        "these router-reachable orchestrator entry points take neither a "
+        f"resolved row nor a TenantScope: {offenders}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # the development tenant
 # ---------------------------------------------------------------------------
@@ -275,6 +330,7 @@ def test_a_tenant_scoped_pipeline_writes_no_development_tenant_rows(client):
                 *await rows(
                     CandidateOutcome, CandidateOutcome.candidate_id == candidate.id
                 ),
+                *await rows(Evaluation, Evaluation.candidate_id == candidate.id),
             ]
 
     found = asyncio.run(scenario())

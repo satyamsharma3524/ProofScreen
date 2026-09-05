@@ -285,14 +285,23 @@ _STOP_SUBJECT = _STOP_PHRASING | frozenset(
 
 # Duplicate threshold, measured. Midpoint of the usable gap between the highest
 # BORDERLINE pair (0.333) and the lowest duplicate pair (0.400).
-# D7 — the question policy, versioned. `qpol_2` because Phase 2 replaced
-# `planner -> model -> ask` with `planner -> model -> validate -> one
-# regeneration -> fallback`, which changes which questions a candidate is
+# D7 — the question policy, versioned. Stamped on every evaluation.
+#
+# `qpol_2` is the Phase 2 shape — `planner -> model -> validate -> one
+# regeneration -> fallback` — which changes which questions a candidate is
 # actually asked and therefore what evidence exists to score.
 #
-# It is stamped on evaluations and it is NOT an invitation to tune the
-# constant below during Phase 3's study — that is counter-metric C7, and it is
-# the one move that makes the study worthless while making it look successful.
+# READ THIS BEFORE COMPARING TWO EVALUATIONS. The constant was introduced in
+# P4-D7, which lands AFTER commit 761959e ("P4A: two validator changes"). So
+# `qpol_2` denotes the validator INCLUDING those two rule refinements, not the
+# Phase 2 exit validator. Nothing was stamped before the constant existed, so
+# nothing is mislabelled — but do not read `qpol_2` as "unchanged since Phase 2
+# exit". The next behavioural change to `validate()` is `qpol_3`.
+#
+# BUMP IT WHEN A RULE'S BEHAVIOUR CHANGES. Not for a comment, not for a
+# refactor. And it is NOT an invitation to tune `DUPLICATE_JACCARD` below
+# during Phase 3's study — that is counter-metric C7, the one move that makes
+# a study worthless while making it look successful.
 QUESTION_POLICY_VERSION = "qpol_2"
 
 DUPLICATE_JACCARD = 0.37

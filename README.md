@@ -136,6 +136,8 @@ These five are the intellectual property, and each is one file you can open.
 | 3 | **Question protocol** — 5 probe levels + the adaptive policy | `api/engine/question.py` + `orchestrator.plan_next()` |
 | 4 | **Scoring engine** — rubrics, weights, consistency. No LLM. | `api/engine/signals.py`, `scoring.py`, `consistency.py` |
 | 5 | **Ranking engine** — role weight profiles, live re-ranking | `api/engine/graph.py` + `api/routers/recruiter.py` |
+| 6 | **Tenant boundary** — the only two places the ownership predicate is written | `api/tenancy.py` |
+| 7 | **Evaluation** — one completed assessment, immutable, with its provenance and its replay | `api/engine/evaluation.py`, `provenance.py`, `replay.py` |
 
 ### 1. Claim taxonomy
 
@@ -264,11 +266,21 @@ re-rank.
 | `GET` | `/api/recruiter/candidates/{id}?role_id=` | the full evidence graph |
 | `GET`/`POST` | `/api/recruiter/roles` | weight profiles |
 | `GET` | `/api/recruiter/taxonomy` | families, claim types, default weights — feeds the weight editor |
+| `POST` | `/api/recruiter/candidates/{id}/outcome` | record a hiring decision |
+| `GET` | `/api/recruiter/candidates/{id}/outcomes` | decision history, oldest first |
+| `GET` | `/api/recruiter/candidates/{id}/evaluations` | assessment history, newest first |
+| `GET` | `/api/recruiter/evaluations/{id}` | one finalized assessment, with its provenance |
+| `GET` | `/api/recruiter/evaluations/{id}/history` | what it concluded, and what a human then decided |
+| `GET` | `/api/recruiter/validation` | M4 — score vs recruiter decision, this tenant only |
 | `POST` | `/api/dev/simulate` | whole pipeline in one call |
 | `POST` | `/api/dev/sessions/{id}/start` | ask Q1 without a WhatsApp opt-in |
 | `POST` | `/api/dev/sessions/{id}/answer` | step one answer in |
 | `GET` | `/api/dev/fixture` | the generated sample graph |
 | `GET` | `/api/dev/llm` | cache hits, calls, fallbacks |
+| `GET` | `/api/dev/detect?text=` | why a resume routed where it did |
+| `GET` | `/api/dev/provenance` | the active version stamp, and what the fingerprint excludes |
+| `POST` | `/api/dev/replay/{evaluation_id}` | rescore from stored signals and diff — zero model calls |
+| `POST` | `/api/dev/tenants` | provision a tenant; returns its API key ONCE |
 | `POST` | `/api/dev/reset` | drop and recreate every table |
 | `GET` | `/api/health` | db, llm mode, whatsapp mode, policy |
 

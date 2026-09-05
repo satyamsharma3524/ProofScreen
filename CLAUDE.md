@@ -76,7 +76,19 @@ it is the whole mechanism.
    confidence or personality — anywhere, ever. Those are bias vectors, and
    removing them is a stated product decision, not an oversight.
 7. **No Alembic.** `create_all()` at startup. Schema change =
-   `docker compose down -v` and re-seed.
+   `docker compose down -v` and re-seed. `create_all()` **cannot add a column
+   to a table that already exists** — `db.verify_schema()` now fails at startup
+   with the remedy printed rather than at the first query. Adding a column
+   means adding it to `db._REQUIRED_COLUMNS` too.
+8. **No handler writes a tenant predicate.** `api/tenancy.py` owns `scoped()`
+   and `get_owned()`, and they are the only two places `tenant_id ==` appears.
+   A cross-tenant id is **404, never 403** — 403 confirms the row exists.
+   `TenantScope.system(reason=...)` is the one bypass; there is exactly one
+   use, in the WhatsApp webhook, and an AST test fails if a second appears.
+9. **A finalized `Evaluation` is immutable.** Any update to a row whose
+   `finalized_at` was already set raises `EvaluationFinalized` from a
+   `before_update` listener — not only through the service function. A new
+   assessment is a new interview and a new row.
 
 ## Commands
 
@@ -141,6 +153,8 @@ the tree and re-ranks live for any role profile.
 | `SCORE_INLINE=false` | signal extraction moves to a background task |
 | `VOICE_WEIGHT=0` | removes the text/voice asymmetry |
 | `MAX_QUESTIONS`, `MAX_CLAIMS` | interview size |
+| `REQUIRE_API_KEY=true` | no `X-API-Key`, no service (401). **Set it before the URL is public** |
+| `BUILD_SHA` | stamped as `code_version`; `.git` is dockerignored, so in the container this is the only source |
 | `WHATSAPP_VALIDATE_SIGNATURE=true` | requires a correct `WHATSAPP_APP_SECRET` |
 | `ENABLE_DEV_ENDPOINTS=false` | hides `/api/dev/*` |
 
@@ -224,7 +238,9 @@ weight profiles with live re-ranking, `why_ranked` on every ranked row, the
 duration, `/api/dev/*` tooling, engine-generated fixture, seed showing the
 resume/competence inversion and the ranking flip across three lenses, Docker.
 
-**Phase 1 and Phase 2 are complete — 332 tests passing** (307 at Phase 2 exit; Phase 3's harness added 25). All fourteen tasks merged
+**Phase 1 and Phase 2 are complete** (307 tests at Phase 2 exit; Phase 3's
+harness took it to 332, a parallel validator commit to 344, and Phase 4 to
+**457** — `pytest -q` is the source of truth, not this sentence). All fourteen tasks merged
 (`docs/PHASE_1_TASKS.md`). The exit condition is the one written in
 `PHASE_1_SUCCESS_METRICS.md` §Reporting, and all four parts hold: M1b = 100%,
 M5c = 0%, guardrails green, and M4a **published** as `insufficient data
@@ -263,6 +279,70 @@ Three things about that layer are load-bearing and easy to break:
 entity, versioning, replay, tenant isolation, score history), re-designated
 because its own entry condition — M4a has produced a number — is still unmet.
 **Trigger for D9 tenant isolation: before the first customer's data lands.**
+
+**Phase 4 — Evaluation Integrity & Production Readiness — is complete.**
+D6–D10 merged; plan, task specs and the acceptance report are
+`docs/PHASE_4_TASKS.md`. **457 tests passing** (344 at the Phase 4 baseline
+`761959e`; the "332" this file used to claim was already stale). Backward
+compatible: 0 paths removed, 0 fields removed or retyped, 0 new required
+parameters — `HealthOut` and `OutcomeOut` each grew optional defaulted fields
+and nothing else changed.
+
+- **D9 tenancy.** 16 tables; 15 carry `tenant_id`. Enforcement is one module
+  (rule 8 above), not a `where` clause per endpoint. Unkeyed requests are the
+  **named development tenant `t_dev`**, never a global view.
+- **D7 provenance.** Taxonomy is versioned twice — `tax_1` (declared) and a
+  content hash (measured), because a weight tuned in data is the change most
+  likely to move a score with nothing in git to show for it. Plus rubric,
+  scoring, question-policy and three prompt hashes, `code_version`, the model
+  requested, and eight allowlisted flags. `evaluation_version` =
+  `evx_sha256(material)[:16]`. **`model_returned` is recorded and NOT hashed** —
+  it is a per-process observation, so hashing it would make an evaluation's
+  identity depend on whether anyone made a live call in that process.
+- **D6 Evaluation.** `draft -> finalized`, and only those two. No `abandoned`:
+  `SessionState.ABANDONED` is declared in `schemas.py` and **assigned nowhere**
+  — three reads, zero writes. One evaluation per session, by UNIQUE constraint.
+  It stores the result, the configuration and pointers; it stores **no
+  evidence**, and there is still no `evidence_nodes` table.
+- **D8 replay.** *Extraction is recorded; everything downstream of extraction is
+  replayable.* Zero model calls, proved three ways including a poisoned wrapper.
+  The four seeded personas all replay MATCH. Missing signals give a **409 that
+  names what is absent** — scoring what remains would be a confident lower
+  number produced by missing data.
+- **D10 audit.** **No events table**, deliberately: its content would duplicate
+  two columns on `evaluations` and the already-append-only `candidate_outcomes`.
+  That table gained `evaluation_id` and `previous_decision`; the history
+  endpoint assembles a deterministic timeline from the two sources.
+
+Phase 4 things that look like bugs and are not:
+
+- **`tenant_id` defaults to `t_dev`.** Required because
+  `scripts/interview_study.py` writes `Candidate` rows directly and Phase 3 is
+  frozen. Nothing in `api/` relies on it, and
+  `test_a_tenant_scoped_pipeline_writes_no_development_tenant_rows` drives a
+  whole interview under a second tenant and reads back every row to prove it.
+- **The orchestrator's queries are not tenant-scoped.** The session is an
+  aggregate root; every router-reachable entry point takes a **resolved row**,
+  not an id, so possession is authorisation. Pinned by
+  `test_the_orchestrator_is_entered_with_resolved_rows_not_ids`.
+- **`qpol_2` is not the Phase 2 exit validator.** The constant was introduced in
+  D7, after `761959e` ("P4A: two validator changes"), so it denotes the
+  validator including those refinements.
+- **Replay excludes `resume_score`.** It depends on
+  `settings.default_job_description`, so it is a function of live configuration
+  rather than of stored evidence.
+
+Still open after Phase 4: auth is **one shared key per tenant** — no users, no
+roles, no rotation, and user-level authorization does not exist and is not
+claimed. `REQUIRE_API_KEY` defaults to `false`; **turn it on before the URL is
+public.** `profiles` is still a mutable score cache with a pointer bolted on,
+because making it a pure pointer means changing `rank_candidates`. The DPDP
+workstream (`PRODUCTION_READINESS.md` §7) is untouched and outranks all of this
+commercially.
+
+**A parallel session commits to `main`.** `761959e` landed mid-phase from
+another agent. File ownership held, but the hourly-push discipline below assumes
+humans coordinating. Check `git log` before assuming your baseline.
 
 **Phase 3 — Real Interview Validation Study — is running.** That measurement
 (the corpus reads 100%, so it detects regression and cannot say whether the

@@ -329,3 +329,227 @@ Nothing is renamed, retyped, reordered or removed.
 6. **Auth is a shared API key per tenant.** No users, no roles, no rotation
    endpoint, no expiry. Tenant isolation is real; user-level authorization does
    not exist and is not claimed.
+
+---
+
+# Phase 4 acceptance report
+
+Produced by the integration review, 2026-09-05. Every number below was measured
+in this repository, not estimated.
+
+**Baseline correction first.** Phase 4 started from **`761959e` (344 tests)**,
+not from `bcc7375` (332). A parallel session committed *"P4A: two validator
+changes"* to `api/engine/question.py`, `tests/test_questions.py` and
+`tests/test_study.py` at 15:13 while this work was in flight, and Phase 4 is
+stacked on top of it. `git diff --name-only 761959e HEAD` was audited: no Phase
+4 commit touches a Phase 3 study file, `tests/test_questions.py` or
+`tests/test_study.py`. The only Phase 4 edit to `api/engine/question.py` is the
+twelve-line `QUESTION_POLICY_VERSION` constant. **CLAUDE.md's "332 tests" was
+already stale before Phase 4 began.**
+
+## A. The chain, verified end to end
+
+Walked in one process against a fresh tenant, with the numbers printed at every
+hop:
+
+```
+Candidate    c_9d2815
+Interview    s_fa367336a3   state=COMPLETE  12 questions
+Claims       3
+Q&A turns    12
+Quotes       38 verbatim, across 6 dimensions
+Claim scores [74, 52, 65]
+Evidence     65  x consistency 1.0  =  competence 65 (partial)
+Evaluation   ev_14c0022ce3  finalized
+Provenance   tax_1@4e0f5b9b2fae rub_1 score_1 qpol_2 -> evx_7c1936571a953c36
+Replay       MATCH   0 model calls, 3 claims, 12 answers, 0 differences
+Decision     rejected (was shortlisted), 2 recorded
+History      [created, finalized, decision, decision]
+```
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Can every recruiter-facing number be traced to persisted evidence? | **Yes.** competence ← weighted evidence × consistency multiplier ← claim scores ← dimension scores ← `responses.signals_json` ← verbatim quotes in `responses.raw_text`. Replay walks that chain from the bottom with no model call and reproduces the headline exactly. |
+| 2 | Is a finalized evaluation distinguishable from the live interview? | **Yes.** `status`, `finalized_at` and immutability. The evaluation does not echo `sessions.state`, and a test asserts it does not — that echo is the `profiles.status` duplication D6 exists to end. |
+| 3 | Can we say which versions produced it? | **Yes.** Eleven typed provenance fields plus two structured dicts, and `provenance.drift()` names the component that moved rather than just reporting a different hash. |
+| 4 | Can the deterministic tail be replayed without an LLM? | **Yes.** `0` model calls, asserted three ways: the response's own `llm_calls`, the `/api/dev/llm` counter before and after, and a run with `complete_json`, `_raw_completion` and `_get_client` all monkeypatched to raise. |
+| 5 | Is the original result preserved? | **Yes.** Every column of the evaluation row and every `claim_scores` row compared before and after three replays and three decisions: byte-identical. |
+| 6 | Can tenant A reach tenant B? | **No**, on every surface tested — graph, ranked list, session, dev start, dev answer, dev replay, roles, outcomes, outcome history, evaluations, evaluation history and the validation report. Cross-tenant 404s are byte-identical to not-found 404s. |
+| 7 | Can decisions be reconstructed historically? | **Yes.** All six audit questions from one call, ordered deterministically down to the row id. |
+| 8 | Hidden mutable dependencies? | **None in the scoring path.** `signals.py`, `scoring.py` and `consistency.py` contain zero references to `settings`, `datetime.now`, `utcnow`, `random`, `time` or `os.environ`. Two were found in the wider path and both are closed — see §G. |
+| 9 | Accidental model calls in replay? | **None.** `replay.py` has no module-scope import of `api.llm`, `openai` or `engine.evidence`; the wrapper is imported inside one function purely to read its counter, and replay raises if the counter moved. |
+| 10 | Unnecessary abstractions? | Four new modules for five deliverables, each named or implied by the approved plan. Reviewed and kept — see §G. |
+
+## B. Test counts
+
+| | Baseline `761959e` | Now | Δ |
+|---|---|---|---|
+| **Total** | **344** | **457** | **+113** |
+
+| File | Tests | |
+|---|---|---|
+| `test_tenancy.py` | 34 | new — D9 |
+| `test_provenance.py` | 26 | new — D7 |
+| `test_evaluation.py` | 23 | new — D6 + persisted D7 |
+| `test_replay.py` | 16 | new — D8 |
+| `test_audit.py` | 14 | new — D10 |
+| `test_questions.py` | 123 | unchanged |
+| `test_pipeline.py` | 79 | unchanged |
+| `test_scoring.py` | 30 | unchanged |
+| `test_taxonomy.py` | 28 | unchanged |
+| `test_study.py` | 27 | unchanged |
+| `test_policy.py` | 25 | unchanged |
+| `test_transfer.py` | 17 | unchanged |
+| `test_consistency.py` | 15 | unchanged |
+
+**457 passed in ~12s**, still SQLite + fixture mode, still no Docker and no
+network. Zero pre-existing tests were modified, skipped or deleted.
+
+Code: **+2,804 / −92** across 22 files in `api/`, plus 2,275 lines of tests.
+More test than implementation, which for a phase whose deliverable is
+*trustworthiness* is the right ratio.
+
+## C. Schema and migration
+
+**16 tables, up from 13.** New: `tenants`, `api_keys`, `evaluations` (35
+columns, 8 indexes). **15 tables carry `tenant_id`** — every domain table plus
+`api_keys`. Columns added to existing tables: `profiles.latest_evaluation_id`,
+`candidate_outcomes.evaluation_id`, `candidate_outcomes.previous_decision`.
+
+| Scenario | Result |
+|---|---|
+| **Empty database** | `verify_schema()` → `[]`, `create_all()` builds all 16 tables, `t_dev` is created. Verified on a fresh SQLite file. |
+| **Existing pre-Phase-4 database** | `verify_schema()` reports all six missing columns and `init_models()` raises `SchemaOutOfDate` naming each one and the remedy. Verified against a database seeded by the `bcc7375` build. |
+| **The remedy** | `seed.py --reset` against that same legacy file rebuilds and re-seeds correctly. Verified. |
+| **Fixture stability** | `seed.py --reset && dump_fixture.py` reproduces `fixtures/sample_graph.json` byte-identically after normalising random ids and timestamps. Seed scores unchanged at **56 / 46 / 14 / 61** and all three role rankings unchanged. |
+
+There is no Alembic, by design (`CLAUDE.md` rule 7). Phase 4 does not add one;
+it adds the error message that was missing when the rule bites.
+
+## D. API backward compatibility
+
+Machine-diffed, old spec against new:
+
+- **Paths removed: 0.** Six added.
+- **Operations removed: 0. New required parameters: 0. Response codes removed: 0.**
+- **Schemas removed: 0.** Twelve added.
+- **Fields removed: 0. Fields retyped: 0. New required fields: 0.**
+- Two existing models grew optional defaulted fields: `HealthOut` +6 version
+  fields, `OutcomeOut` +`evaluation_id`.
+
+`X-API-Key` is optional while `REQUIRE_API_KEY=false`, so an existing client
+keeps working with no change at all. A Next.js client generated from the old
+`openapi.json` still validates against the new server.
+
+## E. Security and data isolation findings
+
+**Enforced**
+
+1. One enforcement point. `scoped()` and `get_owned()` are the only two places
+   the tenant predicate is written; an AST scan proves no `select()` on an
+   owned model in `api/` escapes them.
+2. Fail closed. `TenantScope.require()` raises rather than returning None, so a
+   missing context can never become an unfiltered query.
+3. One trusted path, asserted by AST to be exactly one, in the WhatsApp
+   webhook, where a business number genuinely serves every tenant.
+4. Aggregate-root discipline. The orchestrator's inner queries are not
+   re-filtered; instead every router-reachable entry point takes a resolved row
+   or a `TenantScope`, pinned by
+   `test_the_orchestrator_is_entered_with_resolved_rows_not_ids`.
+5. No route drift. Every route is walked and asserted to declare
+   `Depends(current_tenant)`, against an explicit allowlist of the nine that
+   touch no tenant data.
+6. No credential is stored. Only the sha256 of an API key; the raw value is
+   returned once. No credential can enter a provenance record — the flag set is
+   eight hard-coded names, verified structurally over the AST and by a canary
+   scan of a stored row.
+7. No tenant identifier leaks into any recruiter payload. Verified by scanning
+   the serialised graph, evaluation, history, ranked row and replay result.
+8. Existence does not leak: cross-tenant 404 bodies are byte-identical to
+   not-found 404 bodies.
+
+**Open, and deliberately so**
+
+| # | Finding | Severity | Why it stands |
+|---|---|---|---|
+| S1 | Auth is one shared API key per tenant. No users, no roles, no rotation, no expiry. | Medium | D9 says do not build an authentication system the repo has no foundation for. Tenant isolation is real; **user-level authorization does not exist and is not claimed.** |
+| S2 | `REQUIRE_API_KEY` defaults to `false`, so an unkeyed request is served as `t_dev`. | High **if deployed as-is** | Keeps the demo and 457 tests working. **It must be `true` before the URL is public**, and `.env.example` says so. This is a deployment gate, not a code defect. |
+| S3 | Opt-in codes are matched across all tenants by the webhook. | Low | Six characters over a 28-character alphabet. A collision binds a phone to the wrong session; it discloses no stored data. Sized for a demo. |
+| S4 | `tenant_id` has a column default of `t_dev`. | Low | Required because `scripts/interview_study.py` (Phase 3, frozen) writes rows directly. Nothing in `api/` relies on it, proved by driving a full interview under a second tenant and reading back every row it produced. |
+| S5 | Deleting a tenant that holds data raises rather than cascading. | Informational | Deliberate. There is no offboarding path yet, and a stray DELETE must not remove a customer's evidence corpus. |
+| S6 | The DPDP Act workstream (`PRODUCTION_READINESS.md` §7) is untouched. | Blocking for sale | Consent, retention, erasure and the processor DPA remain unaddressed. **This outranks everything in Phase 4 commercially** and is a legal gate, not engineering work. |
+
+## F. Replay limitations, stated plainly
+
+1. **Extraction is never replayed.** Claim extraction, question generation and
+   the candidate's answers are historical artifacts, read and never recreated.
+   Promising more would be broken by a provider's deprecation schedule.
+2. **`resume_score` is excluded from the comparison.** It is keyword overlap
+   against `settings.default_job_description` whenever a resume carries no JD,
+   which makes it a function of live configuration. It is recorded on the
+   evaluation and not diffed; comparing it would report environment drift as
+   evaluation drift.
+3. **A taxonomy change makes replay mismatch, correctly.** `score_claim` reads
+   the family vocabulary, so a retuned taxonomy changes the replayed number.
+   That is the intended signal, and `provenance_drift` names it as the cause.
+4. **`model_returned` is a per-process observation.** In fixture mode it is
+   null. It is recorded but excluded from the fingerprint.
+5. **Replay needs the recorded `VOICE_WEIGHT`.** An evaluation without one is
+   refused rather than replayed against today's setting.
+6. **Provenance is stamped at finalization.** A configuration change *during*
+   an interview is attributed to the final stamp. Not currently detectable.
+7. **Replay does not verify quotes against answers.** `enforce_verbatim()` ran
+   at extraction time and its result is what is stored; replay trusts the
+   stored signals as its input, by definition.
+
+## G. Architecture debt found
+
+**Fixed during the review** (both were Phase 4's own defects, smallest scope):
+
+- **`taxonomy_hash()` could describe bytes the process never parsed.** `_raw()`
+  and the hash were two independently cached file reads. A provenance record
+  that hashes content the running code did not load is the one thing provenance
+  must never do. Now one `_load()` returns both.
+- **`_qa_rows` ordered on `order_index` alone**, and `session_contradictions`
+  on `created_at` alone. Unique in practice; "in practice" is not determinism.
+  Both now carry an `id` tiebreaker.
+
+**Recorded, not fixed**
+
+- **`tests/test_pipeline.py:845` uses `pytest.skip` without importing pytest**
+  in that scope. Pre-existing (present at `bcc7375`), and it only fires on the
+  non-SQLite branch — i.e. the first time the suite runs against Postgres it
+  becomes a `NameError` instead of a skip. Not a Phase 4 defect, so it was left
+  alone; it is a one-line fix for whoever owns that file.
+- **`profiles` is still a mutable score cache.** The plan's "Profile becomes a
+  pure pointer" is not done: `rank_candidates` reads its cached scores, and
+  changing that is a scoring rewrite this phase forbids. It gained the pointer
+  column, so the follow-up is a read-path change and nothing else.
+- **`scoring.merge_dimension_scores` is dead.** Documented as deprecated since
+  Phase 1 and called from nowhere. Pre-existing.
+- **Four new modules, reviewed for necessity.** `tenancy.py` is D9's stated
+  enforcement layer; `replay.py` is named in the approved plan; `evaluation.py`
+  and `provenance.py` are two deliverables the plan states as separate
+  artifacts. Folding provenance and evaluation into `graph.py` would put the
+  write path for an immutable record inside the module that recomputes mutable
+  ones. `replay._Recomputed` and the `EvaluationOut`/`EvaluationSummary` split
+  were both examined as candidates for removal and kept — one is a local
+  accumulator, the other is the ordinary list/detail distinction.
+- **`replay.required_state()` is read only by tests and by this document.** It
+  is the documented contract behind a 409, so it stays; if it ever stops being
+  cited, delete it.
+- **A parallel session is committing to `main`.** `761959e` landed mid-phase.
+  The two-developer ownership model held — no file was edited by both — but the
+  hourly-push discipline in `CLAUDE.md` assumes humans coordinating, and two
+  agents do not. Worth a rule before the next parallel phase.
+
+## H. What Phase 4 did NOT do
+
+Unchanged and deliberately so: the six dimensions, the rubrics, the gates, the
+weights, the consistency arithmetic, the question policy's behaviour, the
+TRANSFER probe, the repair turn, `enforce_verbatim()`, and every Phase 3
+artifact. No threshold was tuned, no corpus entry was added (C6), and
+`DUPLICATE_JACCARD` is still 0.37 (C7).
+
+`TRANSFER_PROBE=false` still reproduces the pre-Phase-1 interview, and the four
+seeded personas still score 56 / 46 / 14 / 61.

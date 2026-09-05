@@ -29,8 +29,21 @@ GENERAL = "general"
 
 
 @lru_cache(maxsize=1)
+def _load() -> tuple[dict[str, Any], str]:
+    """The taxonomy and the hash OF THE BYTES THAT PRODUCED IT.
+
+    One read, both values. Hashing the file separately would let the two
+    disagree: `_raw()` caches at first use, and a `taxonomy_hash()` that read
+    the file again later could describe content this process never parsed —
+    which is the one thing a provenance record must never do. Found in the
+    Phase 4 integration review.
+    """
+    raw = TAXONOMY_PATH.read_bytes()
+    return json.loads(raw.decode("utf-8")), hashlib.sha256(raw).hexdigest()[:12]
+
+
 def _raw() -> dict[str, Any]:
-    return json.loads(TAXONOMY_PATH.read_text(encoding="utf-8"))
+    return _load()[0]
 
 
 def _clean(mapping: dict[str, Any]) -> dict[str, Any]:
@@ -68,10 +81,12 @@ def taxonomy_version() -> str:
     return str(_raw().get("version") or "tax_0")
 
 
-@lru_cache(maxsize=1)
 def taxonomy_hash() -> str:
-    """sha256 of the file's bytes, first 12 hex. The MEASURED version."""
-    return hashlib.sha256(TAXONOMY_PATH.read_bytes()).hexdigest()[:12]
+    """sha256 of the file's bytes, first 12 hex. The MEASURED version.
+
+    Read from the same single load as the taxonomy itself — see `_load()`.
+    """
+    return _load()[1]
 
 
 def families() -> dict[str, dict[str, Any]]:

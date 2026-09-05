@@ -694,6 +694,34 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
 
 
 # ---------------------------------------------------------------------------
+# D9 — WHY THE QUERIES IN THIS FILE ARE NOT TENANT-SCOPED, AND WHY THAT IS SAFE
+#
+# The helpers above select by `session_id`, `claim_id` or `candidate_id` with
+# no tenant predicate. That is deliberate: the SESSION is the aggregate root,
+# and the tenant boundary is enforced when the root is resolved, not again at
+# every inner read. Re-filtering here would be a second enforcement point that
+# could drift from the first, which is the failure mode `api/tenancy.py` exists
+# to avoid.
+#
+# The invariant that makes it hold: EVERY PUBLIC ENTRY POINT TAKES A RESOLVED
+# ROW, NOT AN ID. `create_session(db, candidate, resume, ...)`,
+# `ask_next(db, session)`, `submit_answer(db, session, ...)`,
+# `finalize(db, session)` and `session_out(db, session)` all require an object
+# the caller already fetched — and every router fetches it with
+# `tenancy.get_owned()`. Possession of the row IS the authorisation. The two
+# functions that DO take a bare lookup key, `find_session_by_opt_in_code` and
+# `find_active_session_by_phone`, take a `TenantScope` instead and say so.
+#
+# `test_the_orchestrator_is_entered_with_resolved_rows_not_ids` pins this. Add
+# a public function taking a bare `session_id` and it fails — which is the
+# point, because that would be the hole.
+#
+# `score_pending(db, session_id)` is the one exception and is not reachable
+# from any router: it is the background entry point for SCORE_INLINE=false,
+# called only by `finalize()` with a session it already holds.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # lifecycle
 # ---------------------------------------------------------------------------
 

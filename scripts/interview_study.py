@@ -62,7 +62,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-OUT_DIR = ROOT / "studies" / "phase3"
+# Overridable so a later phase can run the same three commands over its own
+# directory without a second copy of this file. Defaults to Phase 3's, which is
+# where the committed study lives.
+OUT_DIR = Path(os.environ.get("STUDY_DIR") or (ROOT / "studies" / "phase3"))
 
 # Set BEFORE api.config is imported anywhere, exactly as tests/conftest.py does.
 # A file rather than :memory: so `interview_id` joins to a real `sessions.id`
@@ -87,7 +90,7 @@ from api.llm import complete_json  # noqa: E402
 from api.models import Candidate, Resume  # noqa: E402
 from api.schemas import Channel  # noqa: E402
 
-DATASET = OUT_DIR / "real_question_dataset.csv"
+DATASET = OUT_DIR / os.environ.get("STUDY_DATASET", "real_question_dataset.csv")
 SAMPLE = OUT_DIR / "human_review_sample.csv"
 SAMPLE_KEY = OUT_DIR / ".sample_key.csv"
 MATRIX = OUT_DIR / "confusion_matrix.md"
