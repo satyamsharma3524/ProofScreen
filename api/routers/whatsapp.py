@@ -52,10 +52,12 @@ DONE_MESSAGE = (
     "That's everything — thank you. Your verified profile is ready and the "
     "recruiter can see it now."
 )
+# G4 — this is now an instruction the system can actually honour. It could not
+# before: documents were dropped in parse_inbound, so a candidate who followed
+# it got silence. Ships after G3 for that reason, never before.
 NO_SESSION_MESSAGE = (
-    "Hi! I couldn't find an active verification for this number. Upload your "
-    "resume on ProofScreen and send me the 6-character code you get back to "
-    "begin."
+    "Hi! I don't have a verification running for this number yet. "
+    "Send me your resume as a PDF or Word document and I'll get started."
 )
 BAD_CODE_MESSAGE = "I don't recognise that code. Please check it and send it again."
 ALREADY_DONE_MESSAGE = "This verification is already complete — nothing more to do."
