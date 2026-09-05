@@ -223,6 +223,27 @@ GAP_HINTS: dict[Dimension, str] = {
 # ---------------------------------------------------------------------------
 
 
+class QuestionAttempt(NamedTuple):
+    """What `generate_question()` produced, and how it got there.
+
+    `GeneratedQuestion` lives in the frozen `api/schemas.py` and stays the LLM's
+    RESPONSE model; this is the function's return type, so the validation
+    outcome can reach the `questions` row without touching that file. It carries
+    `question` and `probe_level` under the same names, so the existing call
+    sites keep working unchanged.
+
+    `source` and `violations` are persisted (`questions.source`,
+    `questions.violations_json`) and counted in M6, so their string values are
+    stable vocabulary, not display text.
+    """
+
+    question: str
+    probe_level: ProbeLevel
+    source: str                       # "model" | "regenerated" | "fallback"
+    attempts: int                     # 1 or 2, never higher
+    violations: tuple[str, ...]       # what attempt 1 tripped, for M6d
+
+
 class QuestionValidation(NamedTuple):
     """Why a generated question was accepted or rejected.
 
@@ -516,6 +537,39 @@ def fallback_question(
     )
 
 
+def _retry_brief(violations: tuple[str, ...]) -> str:
+    """What to tell the model on the second attempt.
+
+    RULE NAMES AND A ONE-LINE DEFINITION. Never worked examples: a per-defect
+    example is a per-cohort authoring cost and re-introduces the bias the
+    taxonomy exists to keep out of code — A's contract forbids per-family
+    examples in prompts for exactly this reason. The evidence that naming the
+    mistake types is enough is arXiv 2507.02858, where guided generation beat
+    human-authored questions; the guidance there is a taxonomy, not a gallery.
+    """
+    if not violations:
+        return ""
+    lines = "\n".join(f"  - {v}: {_RETRY_HINTS[v]}" for v in violations if v in _RETRY_HINTS)
+    if not lines:
+        return ""
+    return (
+        "\nYOUR PREVIOUS ATTEMPT WAS REJECTED. Fix these and ask again:\n"
+        f"{lines}\n"
+    )
+
+
+# One line each, phrased as an instruction rather than an illustration.
+_RETRY_HINTS: dict[str, str] = {
+    "answer_leakage": "do not state any figure the claim already gives — ask for it",
+    "duplicate_content": "this repeats an earlier question; ask something new",
+    "multiple_fact_targets": "ask about ONE metric, not two",
+    "hypothetical_misuse": "ask what they actually did, not what they would do",
+    "unsupported_metric": "do not invent numbers the candidate never mentioned",
+    "scope_drift": "stay on the claim being probed",
+    "no_claim_anchor": "name the specific work being asked about",
+}
+
+
 def _brief_for(probe_level: ProbeLevel, transfer: TransferSpec | None) -> str:
     """The probe brief, plus the concrete substitution when there is one.
 
@@ -551,40 +605,100 @@ async def generate_question(
     prior_qa: list[tuple[str, str]] | None = None,
     target_dimension: Dimension | None = None,
     transfer: TransferSpec | None = None,
-) -> GeneratedQuestion:
+    other_claims: "Sequence[str]" = (),
+    target_claim_text: str | None = None,
+) -> QuestionAttempt:
     """`transfer` is required for a TRANSFER probe and ignored for every other
     level. It is the planner's choice of what to ask; this function still only
     chooses how to say it. No prompt-file change was needed: the template
     already interpolates `$probe_level_brief`, and its no-hypotheticals rule
     already carves out "UNLESS the probe brief above explicitly asks for one".
     """
-    prompt = load_prompt(
-        "generate_question",
-        claim_text=claim_text,
-        claim_type_label=claim_type_label(job_family, claim_type),
-        claim_metric=claim_metric or "none stated",
-        family_label=family_label(job_family),
-        probe_level=probe_level.value,
-        probe_level_brief=_brief_for(probe_level, transfer),
-        prior_qa=_format_prior(prior_qa or []),
-        gap_hint=GAP_HINTS.get(target_dimension, "") if target_dimension else "",
-    )
+    fallback = fallback_question(probe_level, claim_text, transfer=transfer)
+    prior_questions = [q for q, _ in (prior_qa or [])]
+    prior_answers = [a for _, a in (prior_qa or [])]
 
-    result = await complete_json(
-        prompt,
-        GeneratedQuestion,
-        temperature=settings.llm_temperature_question,
-        fallback=lambda: fallback_question(probe_level, claim_text, transfer=transfer),
-        # Wording is non-deterministic on purpose; caching would make every
-        # follow-up on a repeated claim identical.
-        cache=False,
-    )
+    def render(violations: tuple[str, ...]) -> str:
+        return load_prompt(
+            "generate_question",
+            claim_text=claim_text,
+            claim_type_label=claim_type_label(job_family, claim_type),
+            claim_metric=claim_metric or "none stated",
+            family_label=family_label(job_family),
+            probe_level=probe_level.value,
+            probe_level_brief=_brief_for(probe_level, transfer),
+            prior_qa=_format_prior(prior_qa or []),
+            gap_hint=GAP_HINTS.get(target_dimension, "") if target_dimension else "",
+            violations=_retry_brief(violations),
+        )
 
-    text = (result.question or "").strip()
-    if len(text) < 12:
-        log.warning("model returned an unusable question, using fallback")
-        return fallback_question(probe_level, claim_text, transfer=transfer)
+    async def ask(violations: tuple[str, ...] = ()) -> tuple[str, bool]:
+        """One model call. Returns (text, came_from_fallback)."""
+        result = await complete_json(
+            render(violations),
+            GeneratedQuestion,
+            temperature=settings.llm_temperature_question,
+            fallback=lambda: fallback,
+            # Wording is non-deterministic on purpose; caching would make every
+            # follow-up on a repeated claim identical.
+            cache=False,
+        )
+        text = (result.question or "").strip()
+        if text == fallback.question:
+            return text, True
+        if len(text) < 12:
+            log.warning("model returned an unusable question, using fallback")
+            return fallback.question, True
+        return text, False
 
-    # The policy owns the probe level, not the model. A drifting level would
-    # corrupt the dimension-coverage bookkeeping that drives the next question.
-    return GeneratedQuestion(question=text, probe_level=probe_level)
+    def check(text: str) -> QuestionValidation:
+        return validate(
+            text,
+            claim_text=claim_text,
+            claim_type=claim_type,
+            claim_metric=claim_metric,
+            job_family=job_family,
+            probe_level=probe_level,
+            prior_questions=prior_questions,
+            prior_answers=prior_answers,
+            other_claims=other_claims or (),
+            target_claim_text=target_claim_text,
+        )
+
+    # --- attempt 1 ----------------------------------------------------------
+    text, from_fallback = await ask()
+    if from_fallback:
+        # THE FALLBACK IS NEVER VALIDATED, and this is structural rather than an
+        # exemption list. It is rendered as `On "<claim>" — <base>`, so it quotes
+        # the claim including its figures and trips `answer_leakage` by
+        # construction (corpus q60). CLAUDE.md rule 5 requires every LLM call to
+        # have a fallback, so a validator able to reject it would leave no path
+        # at all.
+        return QuestionAttempt(text, probe_level, "fallback", 1, ())
+
+    if not settings.question_validation:
+        return QuestionAttempt(text, probe_level, "model", 1, ())
+
+    first = check(text)
+    if first.accepted:
+        return QuestionAttempt(text, probe_level, "model", 1, ())
+
+    log.info("question rejected (%s), regenerating once", ", ".join(first.violations))
+
+    # --- attempt 2, and there is no attempt 3 -------------------------------
+    # Written as a second explicit call rather than `for attempt in range(N)`.
+    # A loop invites someone to raise the constant; two calls make raising it a
+    # visible diff. Same reasoning that keeps `select_transfer()` out of a
+    # `planner.py`. The ceiling is the +20% median-turn-latency guardrail in
+    # PHASE_1_SUCCESS_METRICS.md — every turn already blocks on a model call.
+    retry_text, retry_from_fallback = await ask(first.violations)
+    if retry_from_fallback:
+        return QuestionAttempt(retry_text, probe_level, "fallback", 2, first.violations)
+
+    if check(retry_text).accepted:
+        return QuestionAttempt(retry_text, probe_level, "regenerated", 2, first.violations)
+
+    # Two strikes. The fallback is thin but it is anchored, cohort-neutral and
+    # never wrong about the probe level.
+    log.info("regenerated question also rejected, using fallback")
+    return QuestionAttempt(fallback.question, probe_level, "fallback", 2, first.violations)

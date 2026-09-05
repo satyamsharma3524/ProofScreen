@@ -724,6 +724,16 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
 
     prior = [(q.text, r.answer_text) for q, r in await _qa_rows(db, session.id)]
 
+    # P2-03 — the validator needs the claims it must NOT drift to, and on a
+    # TRANSFER probe the one it MUST reference. Both are already in hand: the
+    # planner chose them.
+    target_claim = None
+    if plan.transfer is not None and plan.transfer.target_claim_id:
+        target = next(
+            (s.claim for s in states if s.claim.id == plan.transfer.target_claim_id), None
+        )
+        target_claim = target.text if target else None
+
     generated = await question_engine.generate_question(
         plan.claim.text,
         plan.probe_level,
@@ -733,6 +743,8 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         prior_qa=prior,
         target_dimension=plan.target_dimension,
         transfer=plan.transfer,
+        other_claims=[s.claim.text for s in states if s.claim.id != plan.claim.id],
+        target_claim_text=target_claim,
     )
 
     question = Question(
@@ -743,6 +755,12 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         probe_level=plan.probe_level.value,
         target_dimension=plan.target_dimension.value if plan.target_dimension else None,
         order_index=session.questions_asked,
+        # P2-03 provenance. M6d-M6g are computed from these four columns and
+        # nothing else, so they are written here on the one path that creates a
+        # question row.
+        source=generated.source,
+        attempts=generated.attempts,
+        violations_json=json.dumps(list(generated.violations)) if generated.violations else None,
     )
     db.add(question)
 

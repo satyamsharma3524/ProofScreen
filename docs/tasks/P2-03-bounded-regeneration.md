@@ -2,8 +2,16 @@
 
 Seven-section spec. Owner **A**, task 3 of 5. **Depends: P2-02.**
 
-**Migration impact: schema change** (`questions` gains four columns) **+ fixture
-regeneration.** One reset serves this task and P2-04.
+**Migration impact: schema change** (`questions` gains four columns). One reset
+serves this task and P2-04.
+
+**CORRECTED — no fixture regeneration is needed.** This spec originally said
+"schema change + fixture regeneration". Measured: the new columns live on
+`questions` and `CandidateGraph` surfaces none of them, so regenerating produces
+a byte-identical fixture. Verified by content hash over three consecutive
+regenerations against the committed file — all four `b60bd896322d4663`. The
+Phase 1 fixture diff therefore stays the only one in the log, which is the
+separation the review asked for.
 
 ---
 
@@ -127,6 +135,35 @@ EOF
 # flag off == Phase 1
 QUESTION_VALIDATION=false python seed.py --reset   # expect competence 56 / 46 / 14 / 61
 ```
+
+## As built — 2026-09-05
+
+| | Result |
+|---|---|
+| Tests | 279 → **290** |
+| Model calls on a rejected question | **exactly 2**, asserted by call count |
+| Suite under `QUESTION_VALIDATION=false` | **290 passed** |
+| Suite under `TRANSFER_PROBE=false` | **290 passed** |
+| Seed competence | 56 / 46 / 14 / 61 — unchanged |
+| Three lens orderings | unchanged |
+| Fixture | **unchanged**, hash-verified 3× |
+
+**`QuestionAttempt` was needed and is not new architecture.** The validation
+outcome has to reach the `questions` row, and `GeneratedQuestion` lives in the
+frozen `api/schemas.py`. `QuestionAttempt` is a NamedTuple in `question.py`
+carrying `question` and `probe_level` **under the same names**, so every
+existing call site works unchanged while `ask_next` reads the three new fields.
+`GeneratedQuestion` stays what it always was: the LLM's response model.
+
+**The cap is two explicit calls, not a loop.** A loop invites raising the
+constant; two calls make raising it a visible diff — the same reasoning that
+keeps `select_transfer()` out of a `planner.py`.
+
+**Tests set `question_validation` explicitly** rather than inheriting it from
+the environment. Four tests initially failed under `QUESTION_VALIDATION=false`,
+which breaks the convention `TRANSFER_PROBE` set: the suite stays green with a
+behaviour flag off, so a test asserting validation behaviour must turn
+validation on itself.
 
 ## 7. Risks
 

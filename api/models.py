@@ -154,6 +154,30 @@ class Question(Base):
     asked_at: Mapped[datetime] = mapped_column(_TS, default=utcnow)
     answered: Mapped[bool] = mapped_column(default=False)
 
+    # --- P2-03: how this question came to be asked --------------------------
+    #
+    # Without these, "how often does the system generate bad questions?" is not
+    # answerable from stored rows at all, and EXECUTION_STANDARD.md 5 requires
+    # every metric to be. M6d-M6g are computed from exactly these four columns.
+    #
+    # All defaulted and nullable, so `create_all()` is enough and there is no
+    # backfill — the schema change is still a `docker compose down -v`.
+    #
+    # `String` rather than a native enum, per the convention: create_all()
+    # cannot add a value to a Postgres enum, and a new question source should
+    # not need a migration.
+    source: Mapped[str] = mapped_column(String(16), default="model")
+    # 1 or 2. Never higher — the cap is structural in `generate_question()`.
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    # Rules that tripped on ATTEMPT ONE, JSON list. Attempt one is what M6d is
+    # about: how often the model produces a bad question. If attempt two also
+    # failed, `source` reads "fallback" and that is the second fact worth
+    # keeping.
+    violations_json: Mapped[str | None] = mapped_column(Text, default=None)
+    # Landed here, unused until P2-04, so the phase needs ONE schema reset
+    # rather than two. Two resets in one phase is an avoidable demo-day hazard.
+    is_repair: Mapped[bool] = mapped_column(default=False)
+
 
 class Response(Base):
     """──────── THE SEAM ────────  A writes raw_text. B writes signals_json."""
