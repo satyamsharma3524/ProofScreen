@@ -764,3 +764,81 @@ non-answers that these personas do not, or `is_non_answer()` is too narrow to
 catch a real evasion. **That is a measurement, not a fix**, and it belongs to
 the E-series (`interview → evaluation`) rather than here.
 
+
+### P3-03/04/05 — the review, the matrix, the finding
+
+100 items labelled, 100 notes written, 0 blank. Integrity checked before
+scoring: every `claim` and `question` byte-matches the file that was issued, and
+the returned file carries no validator column (criterion 9's refusal did not
+need to fire).
+
+**Human verdicts: 64 accept / 36 reject.**
+
+| | value | 95% CI |
+|---|---|---|
+| **M7a Precision** | **54.0%** | [40.4%, 67.0%] |
+| **M7b Recall** | **50.7%** | reweighted |
+| **M7c Accuracy** | 74.9% | reweighted |
+| **M7d F1** | 52.3% | derived |
+| **M7g κ** | **not measured** — no second reviewer | — |
+
+Raw sample 27/23 and 9/41; reweighted TP 67 · FP 57 · FN 65 · TN 297.
+
+**Published as it fell, per the M4a pre-commitment.** Roughly half of what the
+validator blocks a human would have sent, and roughly half of what a human would
+block it passes. Against a corpus reading 100%. Both numbers are right; they are
+about different populations, and that gap is the entire reason this phase exists.
+
+**M7f per-rule precision:** `answer_leakage` **79.2%** (19/24) · `duplicate_content`
+38.5% (5/13) · `no_claim_anchor` 28.6% (2/7) · `multiple_fact_targets` **0%**
+(0/3) · `scope_drift` **0%** (0/2) · `unsupported_metric` 100% (1/1, ignore).
+**The validator's useful behaviour is concentrated in one rule**, which is also
+its most-fired.
+
+Full analysis: `studies/phase3/validator_disagreements.md`. Six findings; the
+two that matter:
+
+- **All 9 false accepts are one defect class with no rule** — the question
+  asserts a tool, system, event or outcome the claim never established
+  ("the macros", "the transcription tool", "an increase in conversion rate").
+  The non-numeric sibling of `unsupported_metric`, which catches numerals only.
+  **The briefed root-cause taxonomy could not express it**, because eight of its
+  ten causes are rule names and a missing rule cannot appear in a list of rules.
+  That is a flaw in my method, recorded as one.
+- **The ground truth is not solid.** On that same defect class the reviewer split
+  **6 accept / 7 reject** across 13 items — including the *same claim* and *same
+  invented tool* labelled both ways (r0052 vs r0072, r0090 vs r0093). §0 F4
+  specified a 20-item κ overlap for exactly this and it was not run, so **54% is
+  a lower bound with an unmeasured error bar.**
+
+### Acceptance criteria — final
+
+| # | Criterion | Status |
+|---|---|---|
+| 1–4 | `api/` diff empty · suite green · corpus and constants byte-identical | **PASS** (332 tests) |
+| 5 | 519 rows · 9 families · 6 levels · 124 regenerations | **PASS**, except… |
+| 5 | …≥ 1 `is_repair` | **FAIL — 0.** Reported, not engineered around |
+| 6–9 | Joins · M7e 93.6% · blinding · refusal | **PASS** |
+| 10 | Both tables with Wilson intervals and n per stratum | **PASS** |
+| 11 | 100% of disagreements classified, one cause each | **PASS** — 32/32, with a cause the taxonomy lacked |
+| 12 | κ reported, metrics published whatever it says | **PARTIAL** — metrics published (Decision 5); **κ not measured, no second reviewer** |
+| 13 | Reproducible skeleton under a fixed `--run-seed` | **PASS** |
+
+**Two criteria are not met and neither is being quietly closed.** Criterion 5's
+repair clause is a finding about `is_non_answer()`. Criterion 12's κ is a gap in
+execution that Finding 4 shows was not decorative — it is now the highest-value
+15 minutes available.
+
+### Phase 3 exit
+
+The exit condition was *"the numbers exist and are published — not that they are
+high."* They exist and are published. **The phase's own recommendation is to
+spend 15 minutes closing the κ gap before acting on anything**, because Finding 4
+puts an unmeasured share of the 46-point precision gap on the referee rather than
+the validator.
+
+**Nothing measured here has been applied.** Recalibration is Phase 3's *output*,
+in the order the analysis recommends: the `P1`/`p95` tokenisation bug first (a
+real bug, no judgement call), then κ, then rule 2's `claim_id` conditioning, then
+`unsupported_premise` — and only after κ produces a definition crisp enough to
+test.
