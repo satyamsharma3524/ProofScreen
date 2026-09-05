@@ -192,6 +192,66 @@ print(f"M6a precision {100*tp/(tp+fp):.1f}%  M6b recall {100*tp/(tp+fn):.1f}%  "
 EOF
 ```
 
+## As built — 2026-09-05
+
+| Metric | Target | Measured |
+|---|---|---|
+| M6a precision | ≥ 95% | **100%** (32 true / 0 false rejections) |
+| M6b recall | ≥ 90% | **100%** (0 missed) |
+| M6c accept-rate | ≥ 95% | **100%** (0 good questions rejected) |
+| M6h attribution | ≥ 90% | **100%** |
+| Tests | — | 93 in this file, **279** total |
+| Model calls | 0 | 0, asserted structurally and via `/api/dev/llm` |
+
+**100% on all four is a warning, not a result.** `routing_golden.json`'s own
+header says a scorer that aces its own golden set has usually been tuned until
+it did. Four fixes were made after the first run (75% precision, 79.5%
+accept-rate) and each is a general defect rather than a special case:
+
+1. **No inflection handling** — `users`/`user` and `interviewed`/`interviews`
+   read as different subjects, so rule 7 mis-fired 9 times. Fixed with a crude
+   auditable `_stem()`, the same approach as `taxonomy._INFLECTION`. This was
+   the single biggest cause.
+2. **`p95_latency_ms` resolved from neither "latency" nor "p95 latency"**, so
+   rule 3 missed a genuine two-metric question. Percentile prefixes added to
+   `_LABEL_MODIFIERS`.
+3. **Rule 4 was English-only.** `q73` — *"Agar activation gir jaata to aap kya
+   karte?"* — is a textbook hypothetical and the pattern list missed it
+   entirely. `agar` added. This completes a marker list for the language the
+   product operates in; it is **not** a judgement about register, which no rule
+   here may make.
+4. **Rule 7's anchor set was too narrow.** A question may anchor to the claim,
+   its type label, **the last answer** (this is a WhatsApp thread — *"you
+   mentioned it jumped to 520 seconds"* is anchored by any reasonable reading),
+   and on TRANSFER the planner's target claim. Scope stays rule 6's job.
+
+**The finding the metrics could not see.** With all four at 100%, rule ablation
+showed **`duplicate_content` was worth ZERO recall**: every entry authored for it
+was an unanchored fallback-style string that rule 7 caught anyway, so rule 2
+fired but was never *necessary*. The corpus could not distinguish "rule 2 works"
+from "rule 2 does nothing". Three anchored duplicates (`q74`–`q76`) were added
+in this task so rule 2 is the only rule standing between them and acceptance.
+Every rule now earns recall:
+
+| rule disabled | recall lost |
+|---|---|
+| `answer_leakage` | 18.8 pts |
+| `multiple_fact_targets` | 15.6 pts |
+| `hypothetical_misuse` | 12.5 pts |
+| `duplicate_content` | 9.4 pts |
+| `unsupported_metric` | 9.4 pts |
+| `scope_drift` | 6.2 pts |
+| `no_claim_anchor` | 6.2 pts |
+
+`test_every_rule_earns_its_place` keeps it that way, and
+`test_no_single_rule_carries_the_whole_corpus` guards the opposite failure.
+
+**Fallback violation snapshot shipped**, per the runtime/CI split agreed in
+review: all six rendered fallbacks violate exactly `("answer_leakage",)` — they
+quote the claim including its figures — and a companion test proves the base
+text is otherwise clean, so a future reader cannot conclude the fallbacks are
+simply bad.
+
 ## 7. Risks
 
 | Risk | Mitigation |

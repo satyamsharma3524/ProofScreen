@@ -22,7 +22,14 @@ from string import Template
 
 import pytest
 
-from api.engine.question import FALLBACK_QUESTIONS, TRANSFER_FALLBACKS
+from api.engine.question import (
+    DUPLICATE_JACCARD,
+    FALLBACK_QUESTIONS,
+    TRANSFER_FALLBACKS,
+    QuestionValidation,
+    fallback_question,
+    validate,
+)
 from api.schemas import Dimension, ProbeLevel
 from api.taxonomy import claim_types, fact_keys
 
@@ -489,3 +496,298 @@ def test_adversarial_duplicate_accepts_sit_below_the_threshold():
         )
         checked += 1
     assert checked >= 2, "not enough R2 boundary cases to pin the threshold"
+
+
+# ===========================================================================
+# P2-02 — the validator, measured against the corpus above
+# ===========================================================================
+
+
+def run_validator(entry: dict) -> QuestionValidation:
+    """Every metric test goes through this, so the call shape is asserted once."""
+    c = entry["context"]
+    return validate(
+        entry["question"],
+        claim_text=c["claim"],
+        claim_type=c["claim_type"],
+        claim_metric=c.get("claim_metric"),
+        job_family=entry["family"],
+        probe_level=ProbeLevel(c["probe_level"]),
+        prior_questions=c.get("prior_questions", ()),
+        prior_answers=c.get("prior_answers", ()),
+        other_claims=c.get("other_claims", ()),
+        target_claim_text=c.get("transfer_target_claim"),
+    )
+
+
+def _scores() -> dict:
+    tp = fp = fn = ok_accept = n_accept = attributed = 0
+    missed, false_alarms, misattributed = [], [], []
+    for e in ENTRIES:
+        v = run_validator(e)
+        if e["verdict"] == "reject":
+            if v.accepted:
+                fn += 1
+                missed.append((e["id"], e["primary_rule"]))
+            else:
+                tp += 1
+                if e["primary_rule"] in v.violations:
+                    attributed += 1
+                else:
+                    misattributed.append((e["id"], e["primary_rule"], v.violations))
+        else:
+            n_accept += 1
+            if v.accepted:
+                ok_accept += 1
+            else:
+                fp += 1
+                false_alarms.append((e["id"], e["naive_reject_risk"], v.violations))
+    return {
+        "m6a": 100 * tp / (tp + fp) if tp + fp else 0.0,
+        "m6b": 100 * tp / (tp + fn) if tp + fn else 0.0,
+        "m6c": 100 * ok_accept / n_accept if n_accept else 0.0,
+        "m6h": 100 * attributed / tp if tp else 0.0,
+        "missed": missed, "false_alarms": false_alarms,
+        "misattributed": misattributed,
+    }
+
+
+def test_validator_precision_on_golden_set():
+    s = _scores()
+    assert s["m6a"] >= 95, f"M6a {s['m6a']:.1f}% — false rejections: {s['false_alarms']}"
+
+
+def test_validator_recall_on_golden_set():
+    s = _scores()
+    assert s["m6b"] >= 90, f"M6b {s['m6b']:.1f}% — missed: {s['missed']}"
+
+
+def test_validator_accepts_good_questions():
+    """M6c, the anti-gaming metric. A validator that rejects everything scores
+    100% recall and fails here."""
+    s = _scores()
+    assert s["m6c"] >= 95, f"M6c {s['m6c']:.1f}% — false rejections: {s['false_alarms']}"
+
+
+def test_validator_rejects_for_the_intended_reason():
+    """M6h. Precision and recall answer "did we reject the right question?" and
+    not "for the intended reason?". Without this a validator that rejects
+    correctly via the wrong rule looks green while the team tunes the wrong
+    rule."""
+    s = _scores()
+    assert s["m6h"] >= 90, f"M6h {s['m6h']:.1f}% — {s['misattributed']}"
+
+
+def test_a_reject_everything_validator_fails_the_corpus():
+    """The guard that makes M6c load-bearing. Asserted with a stub rather than
+    argued, because "we would notice" is not a test."""
+    n_accept = len(ACCEPTS)
+    stub_accepted = 0          # a validator that rejects unconditionally
+    assert 100 * stub_accepted / n_accept < 95, (
+        "a reject-everything validator would pass M6c — the corpus has too few "
+        "accept entries for the metric to mean anything"
+    )
+    real = _scores()
+    assert real["m6c"] > 100 * stub_accepted / n_accept
+
+
+def test_validator_makes_no_model_call(client):
+    """Structurally impossible — `validate` imports no LLM — but asserted the
+    same way the routing endpoint is, because "impossible" drifts."""
+    before = client.get("/api/dev/llm").json()["calls"]
+    for e in ENTRIES:
+        run_validator(e)
+    assert client.get("/api/dev/llm").json()["calls"] == before
+
+
+def test_validator_is_deterministic():
+    """Same inputs, same violations, forever — the property that lets a stored
+    `violations_json` be trusted months later."""
+    sample = ENTRIES[:12]
+    first = [run_validator(e) for e in sample]
+    for _ in range(20):
+        assert [run_validator(e) for e in sample] == first
+
+
+def test_violation_names_are_the_frozen_seven():
+    """These strings are persisted in `questions.violations_json` from P2-03.
+    A rename invalidates stored history, so the set is pinned in two places —
+    here and in the corpus — and both must agree."""
+    emitted = {v for e in ENTRIES for v in run_validator(e).violations}
+    assert emitted <= set(RULES), f"validator emitted unknown rules: {emitted - set(RULES)}"
+    assert emitted == set(RULES), f"rules never exercised by the corpus: {set(RULES) - emitted}"
+
+
+def test_accepted_questions_carry_no_violations():
+    for e in ENTRIES:
+        v = run_validator(e)
+        assert v.accepted == (not v.violations), f"{e['id']}: accepted/violations disagree"
+
+
+def test_all_rules_run_rather_than_short_circuiting():
+    """M6 counts violations per rule. If evaluation stopped at the first hit,
+    every rule after it would read zero and the histogram would lie about which
+    rule is miscalibrated."""
+    entry = next(e for e in ENTRIES if e["id"] == "q58")
+    v = run_validator(entry)
+    assert len(v.violations) >= 2, (
+        "q58 is the deliberate co-occurrence entry; a single violation means "
+        "evaluation is short-circuiting"
+    )
+
+
+@pytest.mark.parametrize("rule", RULES)
+def test_each_rule_fires_on_its_own_reject_entries(rule):
+    """Per-rule coverage: the rule must actually fire on the entries authored
+    for it, not merely be caught by some other rule."""
+    entries = [e for e in REJECTS if e["primary_rule"] == rule]
+    assert entries, f"no entries with {rule} as primary_rule"
+    for e in entries:
+        assert rule in run_validator(e).violations, (
+            f"{e['id']}: {rule} did not fire; got {run_validator(e).violations}"
+        )
+
+
+@pytest.mark.parametrize("rule", RULES)
+def test_each_rule_leaves_its_adversarial_accepts_alone(rule):
+    """The other half, and the one that stops a rule being implemented as
+    "reject anything that looks vaguely like this"."""
+    entries = [e for e in ACCEPTS if e["naive_reject_risk"] == rule]
+    assert entries, f"no adversarial accept entries for {rule}"
+    for e in entries:
+        v = run_validator(e)
+        assert v.accepted, f"{e['id']}: rejected as {v.violations}"
+
+
+def test_validator_never_reads_presentation():
+    """Structural anti-bias invariant. Two questions with identical substance
+    and different fluency must produce identical violations. CLAUDE.md rule 6 —
+    if this test ever needs changing, the change is wrong."""
+    claim = "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process"
+    fluent = "Could you walk me through the scope of the handle time work, please?"
+    plain = "handle time work ka scope kya tha bhai batao"
+    kwargs = dict(
+        claim_text=claim, claim_type="aht_control", job_family="bpo_operations",
+        probe_level=ProbeLevel.VALIDATION,
+    )
+    assert validate(fluent, **kwargs).violations == validate(plain, **kwargs).violations
+
+
+def test_rule_three_is_not_evaluated_on_transfer():
+    """The finding from P2-01 (q63), pinned as behaviour rather than a comment.
+    A T1 probe pairs one claim's method with another's problem, so two fact
+    targets is the mechanism working."""
+    q = ("Suppose you had taken on the attrition problem instead. Using the daily "
+         "handle time reviews, where would you start?")
+    claim = "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process"
+    target = "Owned shrinkage reporting and brought attrition down from 31% to 18% in three quarters"
+    on_transfer = validate(
+        q, claim_text=claim, claim_type="aht_control", job_family="bpo_operations",
+        probe_level=ProbeLevel.TRANSFER, target_claim_text=target,
+    )
+    assert "multiple_fact_targets" not in on_transfer.violations
+    # The same two subjects on a non-transfer probe ARE two evidence targets.
+    on_outcome = validate(
+        "Afterwards, what happened to handle time and to attrition?",
+        claim_text=claim, claim_type="aht_control", job_family="bpo_operations",
+        probe_level=ProbeLevel.OUTCOME,
+    )
+    assert "multiple_fact_targets" in on_outcome.violations
+
+
+def test_duplicate_threshold_matches_the_measured_value():
+    """The constant and the corpus's recorded measurement are one number in two
+    files. If they drift, one of them is lying about how rule 2 was calibrated."""
+    assert DUPLICATE_JACCARD == MEASURED["recommended_threshold"]
+
+
+# ---------------------------------------------------------------------------
+# out-of-corpus: the fallback violation-set snapshot promised in P2-01
+# ---------------------------------------------------------------------------
+
+CLAIM = "Reduced average handle time from 480s to 310s across a 28-agent inbound voice process"
+
+# EXPECTED, not aspirational. The rendered fallback is `On "<claim>" — <base>`,
+# so it quotes the claim INCLUDING its figures and therefore leaks by
+# construction. Recording the exact set is what catches a future edit that
+# introduces a genuinely broken fallback, without pretending the current ones
+# are validator-clean. This is the CI half of the runtime/CI split: at runtime
+# the fallback bypasses validation because it must (CLAUDE.md rule 5 — every
+# LLM call has a fallback, so a validator able to reject it leaves no path).
+EXPECTED_FALLBACK_VIOLATIONS = {
+    ProbeLevel.VALIDATION: ("answer_leakage",),
+    ProbeLevel.OPERATIONAL: ("answer_leakage",),
+    ProbeLevel.INCIDENT: ("answer_leakage",),
+    ProbeLevel.DECISION: ("answer_leakage",),
+    ProbeLevel.OUTCOME: ("answer_leakage",),
+    ProbeLevel.TRANSFER: ("answer_leakage",),
+}
+
+
+@pytest.mark.parametrize("level", list(ProbeLevel))
+def test_fallback_violation_snapshot(level):
+    rendered = fallback_question(level, CLAIM).question
+    actual = validate(
+        rendered, claim_text=CLAIM, claim_type="aht_control",
+        job_family="bpo_operations", probe_level=level,
+    ).violations
+    assert actual == EXPECTED_FALLBACK_VIOLATIONS[level], (
+        f"{level.value} fallback now violates {actual}, expected "
+        f"{EXPECTED_FALLBACK_VIOLATIONS[level]}. Either a fallback was edited or "
+        f"a rule changed — look at which before updating this snapshot"
+    )
+
+
+def test_fallbacks_leak_only_because_they_quote_the_claim():
+    """The reason the snapshot above is all `answer_leakage`, asserted so that a
+    future reader does not conclude the fallbacks are simply bad. Strip the
+    quoted claim and the base text is clean."""
+    for level, base in FALLBACK_QUESTIONS.items():
+        v = validate(
+            base, claim_text=CLAIM, claim_type="aht_control",
+            job_family="bpo_operations", probe_level=level,
+        )
+        assert "answer_leakage" not in v.violations, (
+            f"{level.value}: the base text itself leaks, which the claim prefix "
+            f"cannot explain"
+        )
+
+
+def _recall_without(rule: str | None) -> float:
+    """Recall with one rule's violations suppressed. Pure measurement — it does
+    not monkeypatch anything, it just drops the rule from the result."""
+    tp = fn = 0
+    for e in REJECTS:
+        violations = tuple(v for v in run_validator(e).violations if v != rule)
+        tp += bool(violations)
+        fn += not violations
+    return 100 * tp / (tp + fn)
+
+
+@pytest.mark.parametrize("rule", RULES)
+def test_every_rule_earns_its_place(rule):
+    """Ablation. A rule whose removal costs no recall is either redundant with
+    another rule or untested by the corpus, and both are defects.
+
+    THIS TEST FOUND A REAL GAP that M6a/M6b/M6c/M6h all missed at 100%:
+    `duplicate_content` was worth ZERO recall, because every entry authored for
+    it was an unanchored fallback-style string that rule 7 caught anyway. Three
+    anchored duplicates (q74-q76) were added so rule 2 is the only rule standing
+    between them and acceptance. Precision, recall and attribution can all read
+    100% while a rule does nothing; only necessity shows it.
+    """
+    baseline = _recall_without(None)
+    without = _recall_without(rule)
+    assert baseline - without > 0, (
+        f"disabling {rule} costs no recall — it is redundant with another rule, "
+        f"or the corpus has no entry that isolates it"
+    )
+
+
+def test_no_single_rule_carries_the_whole_corpus():
+    """The opposite failure: one rule doing 90% of the work means the other six
+    are decoration and the reject-rate histogram will be meaningless."""
+    baseline = _recall_without(None)
+    for rule in RULES:
+        lost = baseline - _recall_without(rule)
+        assert lost < 60, f"{rule} alone carries {lost:.1f} points of recall"
