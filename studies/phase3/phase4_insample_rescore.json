@@ -1,0 +1,27 @@
+{
+  "precision": 54.3,
+  "recall": 46.9,
+  "accuracy": 74.9,
+  "f1": 50.4,
+  "reject_rate_before": 25.5,
+  "reject_rate_after": 22.6,
+  "verdicts_moved": 14,
+  "unexplained": 0,
+  "per_rule_precision": {
+    "duplicate_content": 27.3,
+    "no_claim_anchor": 28.6,
+    "answer_leakage": 86.4,
+    "unsupported_metric": 100.0,
+    "multiple_fact_targets": 0.0,
+    "scope_drift": 0.0
+  },
+  "rule_fires_after": {
+    "answer_leakage": 51,
+    "no_claim_anchor": 14,
+    "duplicate_content": 27,
+    "unsupported_metric": 4,
+    "multiple_fact_targets": 9,
+    "scope_drift": 5
+  },
+  "caveat": "IN-SAMPLE. Changes were derived from these disagreements. Direction only."
+}
