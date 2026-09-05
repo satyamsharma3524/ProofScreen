@@ -1,0 +1,93 @@
+
+==========================================================================
+1. OVERLAP WITH THE EXISTING VALIDATOR  (all 364 examples)
+==========================================================================
+  by provenance — the mined column is the one that generalises:
+    observed      n=16    already rejected 11    NEW 5     (31% new)
+    mined         n=85    already rejected 31    NEW 54    (64% new)
+    constructed   n=263   already rejected 130   NEW 133   (51% new)
+
+sub-type                                      n  already   NEW   new %
+invented_artefact                            50       16    34     68%
+invented_condition                           50       48     2      4%
+invented_event                               50       19    31     62%
+invented_metric                              56       30    26     46%
+invented_outcome                             50       16    34     68%
+invented_tool/contested                       8        5     3     38%
+invented_tool/generally_entailed             50       13    37     74%
+invented_tool/specifically_unentailed        50       25    25     50%
+TOTAL                                       364      172   192     53%
+
+  which existing rule already catches them:
+    no_claim_anchor           142
+    unsupported_metric         55
+    answer_leakage              4
+
+==========================================================================
+2. DETERMINISM  (hand label vs the mechanical guess, MINED only)
+==========================================================================
+  items compared      106
+  machine agrees      80  (75.5%)
+  machine disagrees   26
+
+  invented_tool second level — hand (rows) vs machine (cols):
+                         contested   generally_en   specifically
+          contested              0              8              0
+       generally_en              0             46              4
+       specifically              0              6              3
+
+==========================================================================
+3. CEILINGS  (100 OBSERVED items, weighted to the population)
+==========================================================================
+  weighted confusion: TP 0.1378  FP 0.1174  FN 0.1341  TN 0.6108
+  validator precision 54.0%   recall 50.7%
+
+  the miss mass: 9 false negatives in the accept stratum,
+  of which 9 are premise rejections (100%).
+  THIS IS THE BUSINESS CASE: the validator's recall problem is not
+  spread across seven rules that each miss a little. It is one absent rule.
+
+  CEILINGS — a rule with NO false positives (no rule here achieves this;
+  the best, answer_leakage, runs at 86.4%):
+    today                                         precision  54.0%   recall  50.7%
+    a perfect rule catching all 9                 precision  69.8%   recall 100.0%
+
+  SCOPED CEILINGS, by sub-type of the miss mass (hand-typed from the
+  reviewer's own notes; the nine items are listed in the report):
+    invented_tool/specifically_unentailed only (2 of 9)precision  58.8%   recall  61.6%
+    invented_tool/contested only (2 of 9)         precision  58.8%   recall  61.6%
+    invented_event only (2 of 9)                  precision  58.8%   recall  61.6%
+    invented_metric only (1 of 9)                 precision  56.5%   recall  56.2%
+    invented_outcome only (1 of 9)                precision  56.5%   recall  56.2%
+    invented_artefact only (1 of 9)               precision  56.5%   recall  56.2%
+    invented_outcome + invented_metric together only (2 of 9)precision  58.8%   recall  61.6%
+
+  the naive predicate, recomputed mechanically
+  ('the/your <noun phrase>' whose head is absent from the claim):
+    fires on 22 of 100 sample items
+    true premise rejects 8 | other reason 3 | human ACCEPTED 11
+    naive precision 36.4%
+
+==========================================================================
+4. REJECT-RATE AND REGENERATION IMPACT  (population-weighted)
+==========================================================================
+  population: 486 judged questions, reject rate 25.5%
+  sample strata: 50 accepts, 50 rejects
+
+  A PERFECT rule (catches every premise miss, fires on nothing else)
+    9/50 of the accept stratum are premise misses  (18%)
+    new rejections            +13.4 points of the population
+    reject rate 25.5% -> 38.9%   (relative +53%)
+
+  THE MECHANICAL PREDICATE (definite noun phrase absent from the claim)
+    fires on 22% of the accept stratum, 22% of the reject stratum
+    new rejections            +16.4 points
+    of which correct          +8.9 points (55% precision on NEW rejections)
+    reject rate 25.5% -> 41.9%   (relative +64%)
+
+  REGENERATION AND FALLBACK
+    Every rejection buys one regeneration; the cap is one, so a
+    question failing twice lands on the FALLBACK, which is never
+    validated and is thin by design.
+    perfect rule           regenerations 25.5% -> 38.9%   fallback share 6.5% -> 15.1%
+    mechanical predicate   regenerations 25.5% -> 41.9%   fallback share 6.5% -> 17.6%

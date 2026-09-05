@@ -1,0 +1,203 @@
+item_id,sub_type,tool_level,note,in_tokens,out_tokens
+i001,invented_outcome,,"The question presupposes an improvement in coverage, which the claim does not state.",2480,41
+i002,invented_tool,specifically_unentailed,The speech analytics engine is a tool not required by the claim.,2479,42
+i003,invented_outcome,,"The question presupposes an improvement in disbursement turnaround, which the claim does not state.",2488,44
+i004,invented_tool,specifically_unentailed,"The question presupposes a specific tool for performance tracking, which is not entailed by managing rosters.",2483,51
+i005,invented_outcome,,"The question presupposes a 10% drop in reopen rate, which the claim does not state.",2485,45
+i006,none,,"The question solicits specific tasks and refers to systems generally, which are entailed by the work described in the claim.",2490,45
+i007,invented_tool,specifically_unentailed,"The question presupposes the existence of 'auto-triage rules', which are not entailed by the claim.",2482,53
+i008,invented_event,,"The question presupposes a specific incident that negatively impacted CSAT scores, which the claim does not establish.",2490,45
+i009,invented_metric,,The question presupposes tracking a specific measure not stated in the claim.,2483,38
+i010,invented_outcome,,"The question presupposes a change in conversion rates, which the claim does not state.",2492,42
+i011,none,,"The question asks about success, which is a nominalisation (P3), not an unsupported premise.",2486,41
+i012,invented_tool,specifically_unentailed,"The question presupposes a specific tool for performance tracking, which is not entailed by managing rosters.",2485,51
+i013,none,,"The question solicits criteria for tool selection, which is not an unsupported premise.",2495,37
+i014,invented_artefact,,"The question presupposes the existence of a coaching curriculum document, which the claim does not produce.",2478,45
+i015,invented_outcome,,"The question presupposes an improvement in closing rates, which the claim does not state.",2484,42
+i016,invented_outcome,,"The question presupposes a specific outcome from managing offer rollouts and follow-ups, which the claim does not state.",2501,48
+i017,none,,"The question solicits an incident without asserting one, so it is not an unsupported premise.",2493,39
+i018,invented_event,,The question presupposes 'the technical delays' which are not mentioned in the claim.,2493,41
+i019,none,,"The question solicits information about systems used, which is indefinite and does not assert a specific tool.",2522,41
+i020,none,,The system is generally entailed for processing transactions at a bank's back office.,2493,37
+i021,none,generally_entailed,Managing a quota generally entails using a CRM.,2488,36
+i022,invented_outcome,,"The question presupposes an impact on user retention, which the claim does not state.",2495,42
+i023,invented_metric,,The question presupposes the candidate tracks a specific measure (milestone slip rate) not mentioned in the claim.,2486,46
+i024,invented_artefact,,"The question presupposes the existence of a PRD, which the claim does not produce.",2483,44
+i025,invented_artefact,,"The question presupposes the existence of a marketing plan, which the claim does not establish.",2492,44
+i026,invented_metric,,"The question presupposes the candidate tracks or can compute 'roster efficiency', which the claim does not establish.",2478,46
+i027,invented_metric,,"The question presupposes tracking a specific measure, which is not stated in the claim.",2493,41
+i028,invented_condition,,The 75% nesting pass mark is a threshold not set by the claim.,2494,39
+i029,none,,The question does not presuppose an unsupported premise; it solicits how process optimization could be used in a different context.,2494,46
+i030,invented_tool,specifically_unentailed,"The question presupposes a system for maintaining occupancy, which is not entailed by the claim.",2497,49
+i031,invented_metric,,"The question presupposes a specific metric showed retention improvement, which the claim does not specify.",2494,42
+i032,invented_tool,generally_entailed,Managing leads at this scale generally entails using a CRM.,2496,40
+i033,invented_outcome,,"The question presupposes a result from resolving discrepancies, which the claim does not state.",2498,42
+i034,invented_event,,The question presupposes a layoff event which the claim does not mention.,2498,39
+i035,none,,"The question solicits information about systems used, which is indefinite and does not assert a specific tool.",2525,41
+i036,invented_outcome,,"The question presupposes an impact from the most valuable deal, which the claim does not state.",2490,44
+i037,invented_tool,generally_entailed,The workforce planning system is generally entailed for running workforce planning.,2485,42
+i038,invented_outcome,,"The question presupposes a reduction in reconciliation breaks, which the claim does not state.",2484,42
+i039,none,,"The question uses a nominalisation 'the success', which is covered by P3 and does not presuppose an unsupported premise.",2490,47
+i040,none,,The CRM is generally entailed for managing a sales funnel.,2501,33
+i041,invented_event,,"The question presupposes a specific incident of performance drop, which is not established in the claim.",2497,43
+i042,invented_outcome,,The question presupposes a result (success) that the claim does not state.,2486,41
+i043,none,,The question solicits an incident with 'a specific incident' and does not presuppose one occurred.,2492,42
+i044,invented_tool,specifically_unentailed,"The question presupposes a ticketing system, which is not entailed by writing macros.",2486,48
+i045,invented_tool,specifically_unentailed,The war-room bridge is a specific tool not entailed by leading an escalation desk.,2484,46
+i046,none,,"The question refers to the activation increase, which is stated in the claim.",2495,36
+i047,invented_event,,The question presupposes a specific incident of failure which the claim does not establish.,2484,40
+i048,invented_tool,specifically_unentailed,"The question presupposes a specific workforce planning system, which is not entailed by the claim.",2486,49
+i049,none,,"The question uses a nominalisation 'the success', which is covered by P3.",2483,38
+i050,invented_outcome,,The question presupposes a result (success) that the claim does not state.,2490,41
+i051,invented_tool,specifically_unentailed,"The question presupposes a system, which is not entailed by the claim.",2484,46
+i052,invented_metric,,"The question presupposes the candidate tracks a specific measure, payroll accuracy rate, which the claim does not establish.",2484,46
+i053,invented_artefact,,"The question presupposes the existence of an RCA deck, which the claim does not produce.",2480,44
+i054,invented_tool,generally_entailed,The CRM system is generally entailed for managing a sales funnel.,2499,42
+i055,invented_metric,,"The question presupposes the candidate tracks sprint predictability, which the claim does not establish.",2484,42
+i056,invented_event,,"The question presupposes a specific event, 'the power failure', which the claim does not establish.",2489,44
+i057,invented_outcome,,"The question presupposes a lift in audit scores, which the claim does not state.",2480,42
+i058,invented_event,,"The question presupposes a specific event, 'the shift clash over the festival week', which is not established in the claim.",2484,49
+i059,invented_event,,"The question presupposes a specific episode where the branch manager blocked access, which is not established in the claim.",2478,46
+i060,invented_outcome,,The question presupposes a result (jump in conversion rates) not stated in the claim.,2488,43
+i061,invented_outcome,,"The question presupposes an impact on processing times, which the claim does not state.",2490,42
+i062,none,,"The question uses a nominalisation 'the success' which is the topic of the question, not a business object.",2487,44
+i063,none,,The question is a transfer probe and does not presuppose an achievement.,2492,36
+i064,invented_event,,"The question presupposes a specific incident of attrition spiking, which the claim does not establish.",2494,44
+i065,invented_outcome,,The question presupposes a margin improvement which the claim does not state.,2477,39
+i066,invented_tool,specifically_unentailed,The customer-facing status page is a specific tool not entailed by owning resolution time for P1 issues.,2483,50
+i067,invented_outcome,,"The question presupposes an improvement in activation rates, which the claim does not state.",2488,42
+i068,invented_event,,The question presupposes a specific payment dispute event that the claim does not mention.,2488,40
+i069,invented_tool,specifically_unentailed,"The question presupposes the use of macros, which is a mechanism inside a category not required by the claim.",2482,52
+i070,invented_tool,specifically_unentailed,Storybook is a named vendor tool not entailed by the claim.,2482,43
+i071,none,generally_entailed,Managing 35 agents' attendance generally entails a system for tracking.,2493,40
+i072,invented_outcome,,"The question presupposes an improvement in conversion rates, which the claim does not state.",2484,42
+i073,invented_condition,,The 95% penalty threshold is a condition not set by the claim.,2492,38
+i074,invented_metric,,"The question presupposes the candidate tracks a '30% reopen rate', which the claim does not establish.",2484,45
+i075,invented_event,,The question presupposes a specific reporting error event that the claim does not establish.,2488,40
+i076,invented_event,,"The question presupposes a specific incident occurred, which is not established in the claim.",2493,41
+i077,invented_event,,The question presupposes a 'scope fight' event which the claim does not establish.,2486,41
+i078,invented_condition,,The 45-day threshold is an invented condition not set by the claim.,2482,38
+i079,none,,P4 says the tool is generally entailed; the reviewer rejected it.,2495,36
+i080,invented_event,,The question presupposes a specific 'high-pressure week' which is not mentioned in the claim.,2494,43
+i081,invented_outcome,,The question presupposes a result (success) that the claim does not state.,2491,41
+i082,invented_outcome,,The question presupposes a result (success of the new delivery schedule) that the claim does not state.,2489,46
+i083,invented_tool,specifically_unentailed,"The question presupposes a specific analytics tool, which is not entailed by the claim.",2494,48
+i084,invented_metric,,"The question presupposes the candidate tracks 'time-to-decision', a specific measure not named in the claim.",2489,46
+i085,invented_tool,specifically_unentailed,"The question presupposes a system, which is not entailed by the claim.",2493,46
+i086,invented_event,,"The question presupposes a specific incident occurred, which is not established in the claim.",2485,41
+i087,invented_condition,,The 200ms budget is a threshold not set in the claim.,2486,37
+i088,invented_artefact,,The question presupposes the existence of a 'nesting exit criteria document' which the claim does not produce.,2490,48
+i089,invented_event,,The question presupposes a specific event (fraudulent file) that the claim does not establish.,2486,44
+i090,none,,"The question asks about measuring success, which is a nominalisation (P3).",2502,38
+i091,invented_metric,,The question presupposes a measure 'speed to competency' which the claim does not establish.,2488,42
+i092,none,,The claim's own movement in other words is not invented; the reduction is stated in the claim.,2486,41
+i093,invented_tool,generally_entailed,The work of leading an escalation desk generally entails using a system.,2485,42
+i094,invented_event,,"The question presupposes a specific backfill event that corrupted the extracts, which is not established in the claim.",2491,46
+i095,invented_condition,,The 95% CSAT floor is a threshold not set by the claim.,2490,39
+i096,invented_outcome,,"The question presupposes an impact on user retention, which the claim does not state.",2493,42
+i097,invented_artefact,,"The question presupposes the existence of a model card, which the claim does not produce.",2479,44
+i098,invented_metric,,"The question presupposes the candidate tracks or can compute pipeline freshness, which is not stated in the claim.",2486,45
+i099,none,,The question does not presuppose an unsupported premise; it solicits application of process optimisation.,2494,40
+i100,invented_outcome,,"The question presupposes a 70% adoption rate, which the claim does not state.",2481,43
+i101,invented_artefact,,"The question presupposes the existence of a release checklist, which the claim does not produce.",2481,44
+i102,invented_tool,specifically_unentailed,The CRM is a specifically unentailed tool as the claim does not require a CRM for the work described.,2491,51
+i103,invented_metric,,"The question presupposes a measure of process efficiency, which the claim does not specify.",2487,41
+i104,none,,"The question solicits a hypothetical use of process optimisation, not presupposing an existing outcome or tool.",2488,42
+i105,none,,"The claim states the fourfold improvement in throughput, so the outcome is not invented.",2490,38
+i106,invented_condition,,The 90% adherence is a threshold not set by the claim.,2493,37
+i107,none,,"The claim states the increase in activation, so the outcome is not invented (P1).",2492,40
+i108,none,,"The question does not presuppose anything unsupported; it asks about the duration of the growth, which is in the claim.",2486,46
+i109,none,,"The question asks about success, which is a nominalisation (P3).",2480,37
+i110,invented_event,,"The question presupposes a specific event, 'the sale weekend that broke the queue', which is not mentioned in the claim.",2491,49
+i111,none,,"The question solicits an indefinite event, not a definite one.",2493,34
+i112,none,,"The question asks about measuring a reduction in attrition, which is stated in the claim.",2493,39
+i113,invented_outcome,,The question presupposes an outcome (impact) that the claim does not state.,2492,41
+i114,invented_tool,specifically_unentailed,"The question presupposes the use of a chatbot builder, which is not entailed by managing a support team.",2493,52
+i115,invented_tool,specifically_unentailed,The question presupposes a specific tool configuration not entailed by the claim.,2487,45
+i116,invented_event,,"The question presupposes a specific incident occurred, which the claim does not establish.",2491,40
+i117,invented_condition,,The 7-minute limit is a threshold not set by the claim.,2488,37
+i118,invented_metric,,"The question presupposes the candidate tracks pod-level utilisation, which the claim does not state.",2488,42
+i119,invented_tool,specifically_unentailed,The org-chart visualisation tool is not entailed by the onboarding process.,2489,44
+i120,none,,The question poses a hypothetical scenario and does not assert an unsupported premise.,2522,35
+i121,invented_outcome,,The question presupposes an improvement that the claim does not state.,2482,38
+i122,invented_artefact,,"The question presupposes the existence of a macro style guide, which the claim does not produce.",2478,45
+i123,invented_event,,"The question presupposes a specific incident occurred, which is not established in the claim.",2485,41
+i124,invented_tool,specifically_unentailed,The query scheduler's alerting rules are a mechanism inside a category not required by the claim.,2490,48
+i125,invented_tool,specifically_unentailed,"The question presupposes a specific data analytics tool, which is not entailed by the claim.",2491,49
+i126,invented_artefact,,"The question presupposes the existence of a runbook, which the claim does not produce.",2482,44
+i127,invented_tool,specifically_unentailed,The question presupposes a specific tracking system not entailed by the claim.,2488,45
+i128,none,,"The question refers to the reduction in time to offer, which is stated in the claim.",2494,39
+i129,invented_tool,specifically_unentailed,The question presupposes a specific tool (calibration screen) not entailed by the claim.,2488,49
+i130,invented_outcome,,"The question presupposes a year-on-year CSAT increase, which the claim does not state.",2487,44
+i131,none,,"The question refers to 'the latency reduction', which is in the claim.",2484,36
+i132,none,,"The question asks about success, which is a nominalisation (P3).",2479,37
+i133,invented_tool,generally_entailed,The CRM system is generally entailed for tracking and managing deals.,2482,42
+i134,none,,"The question solicits systems used, which is indefinite solicitation (P2).",2494,37
+i135,invented_tool,specifically_unentailed,The analytics tool is not entailed by the claim of rebuilding user onboarding.,2492,44
+i136,invented_tool,specifically_unentailed,"The question presupposes a specific system for pricing approval, which is not entailed by the claim.",2493,50
+i137,invented_tool,specifically_unentailed,The system for revenue forecast reviews is not entailed by the claim.,2489,43
+i138,invented_event,,"The question presupposes a specific incident with the CI/CD pipeline, which is not established in the claim.",2486,45
+i139,none,,The claim's own movement in other words is not invented (P1).,2489,37
+i140,invented_tool,specifically_unentailed,The CRM is a specifically unentailed tool as the claim does not require a CRM for coaching.,2485,49
+i141,none,,"The question refers to the claim's own movement in other words, which is not invented.",2491,39
+i142,invented_outcome,,"The question presupposes an improvement in P1 resolution, which the claim does not state.",2479,43
+i143,none,,"The question solicits an incident with 'a specific incident', which is indefinite and does not presuppose an event.",2487,45
+i144,invented_condition,,The 30-minute response SLA is a threshold not set by the claim.,2485,38
+i145,invented_outcome,,The question presupposes a result (success) that the claim does not state.,2490,41
+i146,none,,"The question refers to 'your team huddle approach', which is a nominalisation introduced by the question itself (P3).",2488,47
+i147,invented_outcome,,The question presupposes a result (success) that the claim does not state.,2490,41
+i148,none,,"The question refers to a reduction in time to offer, which is stated in the claim.",2487,39
+i149,invented_metric,,"The question presupposes a measure of success for resolving P1 issues, which the claim does not establish.",2482,45
+i150,invented_tool,specifically_unentailed,"The question presupposes a system for monitoring, which is not entailed by the claim.",2489,48
+i151,invented_artefact,,"The question presupposes the existence of a shrinkage RCA report, which the claim does not produce.",2485,46
+i152,invented_event,,"The question presupposes the event of losing an anchor account, which the claim does not establish.",2484,43
+i153,invented_outcome,,"The question presupposes an impact on customer satisfaction, which the claim does not state.",2482,42
+i154,invented_tool,specifically_unentailed,The canary dashboard is a specific tool not entailed by the claim.,2489,44
+i155,invented_tool,generally_entailed,UNDECIDED: Specification suggests tool is entailed but reviewer rejected it.,2495,45
+i156,invented_tool,specifically_unentailed,"The question presupposes a specific reporting system, which is not entailed by the claim.",2486,48
+i157,invented_tool,generally_entailed,Managing rosters for 42 agents across shifts entails a system.,2489,42
+i158,invented_artefact,,"The question presupposes the existence of a reconciliation SOP, which the claim does not produce.",2480,44
+i159,invented_metric,,"The question presupposes the candidate tracks a transfer rate, which the claim does not establish.",2483,42
+i160,invented_tool,specifically_unentailed,"The question presupposes a system for tracking deliverables, which is not entailed by the claim.",2491,50
+i161,invented_outcome,,The question presupposes an occupancy gain which the claim does not state.,2490,39
+i162,invented_event,,"The question presupposes a specific incident where script standardisation didn't work, which the claim does not establish.",2493,45
+i163,invented_metric,,"The question presupposes specific metrics are tracked, which the claim does not establish.",2480,40
+i164,invented_tool,specifically_unentailed,"The question presupposes specific systems were used, which the claim does not entail.",2518,46
+i165,invented_metric,,"The question presupposes the candidate tracks customer effort score, which is not mentioned in the claim.",2490,43
+i166,invented_tool,specifically_unentailed,The process mining tool is not entailed by the claim.,2489,41
+i167,invented_event,,"The question presupposes a specific payroll run was missed, which the claim does not establish.",2490,42
+i168,invented_condition,,The 7-day threshold is an invented condition not set by the claim.,2485,38
+i169,none,,"The question refers to the reduction stated in the claim, so it is not an unsupported premise.",2494,40
+i170,none,,"The question solicits an incident without presupposing one occurred, which is compliant with P2.",2499,41
+i171,invented_tool,specifically_unentailed,Zendesk is a named vendor not required by the claim.,2496,41
+i172,invented_metric,,"The question presupposes a measure of renewal uplift, which the claim does not establish.",2490,41
+i173,invented_condition,,The 3-exception limit is a threshold not set by the claim.,2488,38
+i174,invented_outcome,,"The question presupposes an improvement in conversion rates, which the claim does not state.",2484,42
+i175,invented_outcome,,The question presupposes a result (jump in conversion rates) not stated in the claim.,2488,43
+i176,invented_artefact,,The question presupposes the existence of a 'claims quality manual' which the claim does not produce.,2485,46
+i177,none,,The work of managing 35 agents' attendance generally entails a system.,2493,35
+i178,invented_outcome,,The question presupposes a result (success) that the claim does not state.,2488,41
+i179,invented_outcome,,"The question presupposes an impact on conversion rates, which the claim does not state.",2485,42
+i180,invented_event,,The question presupposes a specific event (campus cancellation) that the claim does not establish.,2488,43
+i181,invented_outcome,,The question presupposes a performance improvement that the claim does not state.,2490,39
+i182,invented_tool,specifically_unentailed,"The question presupposes a specific system for managing attrition, which is not entailed by the claim.",2485,51
+i183,invented_tool,specifically_unentailed,The analytics tool is not entailed by the claim of rebuilding onboarding.,2494,43
+i184,none,,The work of handling payroll generally entails using a payroll system.,2489,33
+i185,none,,"The question solicits a hypothetical application of process optimization, not presupposing an unsupported premise.",2495,40
+i186,none,,"The question uses a nominalisation 'your team management approach', which is covered by P3.",2487,40
+i187,invented_event,,"The question presupposes a specific incident of low engagement survey results, which is not established in the claim.",2486,45
+i188,invented_event,,"The question presupposes a specific incident where the callback SLA failed, which is not established in the claim.",2498,45
+i189,none,generally_entailed,A CRM system is generally entailed for carrying a quota.,2491,39
+i190,invented_event,,The question presupposes a specific incident of failure which the claim does not establish.,2483,40
+i191,invented_artefact,,"The question presupposes the existence of a 'success plan' for each account, which the claim does not produce.",2489,49
+i192,invented_event,,"The question presupposes the event of freezing the client's account, which is not established in the claim.",2485,44
+i193,invented_artefact,,The question presupposes the existence of a 'campus engagement calendar' which the claim does not produce.,2485,47
+i194,invented_event,,"The question presupposes a specific event, 'the flu outbreak', which is not established in the claim.",2487,45
+i195,invented_outcome,,The question presupposes a result (time saved) that the claim does not state.,2488,42
+i196,none,generally_entailed,The payroll system is generally entailed for handling payroll.,2488,38
+i197,invented_event,,"The question presupposes a specific episode of reporting slipping past Tuesday noon, which the claim does not establish.",2488,45
+i198,invented_condition,,The question presupposes a 90% CSAT contractual minimum which the claim does not set.,2490,43
+i199,invented_metric,,"The question presupposes the candidate tracks a 'roll-rate' metric, which the claim does not establish.",2491,45
+i200,invented_tool,generally_entailed,The CRM is generally entailed for tracking sales progress in growing ARR.,2489,43
+i201,invented_outcome,,"The question presupposes an improvement in recovery rate, which the claim does not state.",2491,42
+i202,invented_tool,generally_entailed,Managing rosters for 42 agents across shifts generally entails a system.,2489,43

@@ -1,0 +1,38 @@
+items scored: 202
+
+1. IS THERE AN UNSUPPORTED PREMISE AT ALL?
+   raw agreement 158/202 = 78.2%
+   Cohen's kappa 0.477
+   both defect 122 | both none 36 | R1 only 10 | RM only 34
+
+2. WHICH SUB-TYPE?
+   raw agreement 145/202 = 71.8%
+   Cohen's kappa 0.656
+
+   per sub-type — of R1's items, how many did RM place identically:
+     invented_tool          42/52      81%   none:10
+     invented_outcome       15/16      94%   invented_metric:1
+     invented_metric        13/23      57%   invented_outcome:8, invented_event:2
+     invented_event         14/14     100%   
+     invented_artefact      14/15      93%   invented_tool:1
+     invented_condition     11/12      92%   invented_event:1
+     none                   36/70      51%   invented_event:14, invented_outcome:14, invented_metric:5
+
+3. THE ENTAILMENT SPLIT  (invented_tool second level)
+   items 54   raw agreement 37/54 = 68.5%
+   Cohen's kappa 0.403
+   R1 (rows) vs RM (cols):
+                                      generally_entailed   specifically_unentaile
+          generally_entailed                       17                       15
+      specifically_unentaile                        2                       20
+
+4. ITEMS THE RULES DID NOT DECIDE (reviewer M said so): 1
+   i155 R1=invented_tool        RM=invented_tool        UNDECIDED: Specification suggests tool is entailed but reviewer rejected it.
+
+5. AGREEMENT BY PROVENANCE  (does real text behave like written text?)
+   observed        n=11   binary  63.6%   six-way  54.5%
+   mined           n=49   binary  87.8%   six-way  67.3%
+   mined_negative  n=70   binary  51.4%   six-way  51.4%
+   constructed     n=72   binary 100.0%   six-way  97.2%
+
+6. THE ITEMS I MARKED CONTESTED: 4, reviewer M agreed on 3
