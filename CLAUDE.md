@@ -259,7 +259,7 @@ Three things about that layer are load-bearing and easy to break:
 - **Rule 3 is not evaluated on TRANSFER.** A valid T1 probe pairs one claim's
   method with another's problem, so two fact targets is the mechanism working.
 
-`docs/PHASE_2_EXECUTION_PLAN.md` also holds **Phase 3** (D6–D10: Evaluation
+`docs/PHASE_2_EXECUTION_PLAN.md` also holds **Phase 4** (D6–D10: Evaluation
 entity, versioning, replay, tenant isolation, score history), re-designated
 because its own entry condition — M4a has produced a number — is still unmet.
 **Trigger for D9 tenant isolation: before the first customer's data lands.**

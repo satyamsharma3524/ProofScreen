@@ -96,7 +96,7 @@ repeat_rate`, computed from stored rows in `scripts/validation_report.py`.
 ## 5. Deferred Work
 
 - **D6–D10** (Evaluation entity, versioning, replay, tenant isolation, score
-  history) — now Phase 3, below. **Cost of deferring, stated honestly:** D9
+  history) — now Phase 4, below. **Cost of deferring, stated honestly:** D9
   argues tenant isolation is *"the only deliverable whose cost grows with every
   day of real data."* That cost is ~0 today — four seeded personas, no customer,
   no accumulating production data — and becomes real the week a customer
@@ -185,7 +185,7 @@ each task's acceptance depends on the previous one's output.
 
 **Not parallelisable across two developers**, and that is deliberate: all five
 tasks land in three files on the intelligence path. B's stream is idle for this
-phase. **If B needs work in parallel, take D9 (tenant isolation) from Phase 3** —
+phase. **If B needs work in parallel, take D9 (tenant isolation) from Phase 4** —
 it touches no file in this phase and its cost only grows.
 
 **One schema reset serves P2-03 and P2-04.** Land the `questions` columns once,
@@ -277,7 +277,15 @@ entries reactively — counter-metric C6.
 
 ---
 
-# Phase 3 Execution Plan — Make the Signal Durable and Sellable
+# Phase 4 Execution Plan — Make the Signal Durable and Sellable
+
+> **Renumbered 2026-09-05, from Phase 3.** `PHASE_3_VALIDATION_STUDY.md` took
+> Phase 3 (approved, Decision 1). Nothing about D6-D10 changed: same
+> deliverables, same entry condition (M4a has produced a number), still unmet.
+> **A second collision is open** — the Phase 4 brief of 2026-09-05 also
+> proposes *Interview Intelligence Quality* (E1-E4) as Phase 4. Recorded in
+> `PHASE_3_VALIDATION_STUDY.md` §0 B3; until it is ruled on, E1-E4 is
+> **Phase 5 (proposed)** and this file is Phase 4.
 
 > **Re-designated 2026-09-05.** This was the approved Phase 2 plan. It is
 > unchanged below — not one deliverable was cut and none of the reasoning is
@@ -448,6 +456,6 @@ Still explicitly out of scope after Phase 2:
 - **`evidence_nodes` / signal rows**; renaming `evidence` → `dimension_readings` (do at a schema reset)
 - **Event sourcing** — every analytics question on the roadmap is answerable from current tables
 - **Percentile calibration** — needs n ≥ 30 per cohort
-- **Data protection, retention, adverse-impact monitoring, candidate rights** — a Phase 3 workstream, and a *legal* gate rather than an engineering one. It becomes blocking the moment a real customer's contract is drafted
+- **Data protection, retention, adverse-impact monitoring, candidate rights** — a Phase 4 workstream, and a *legal* gate rather than an engineering one. It becomes blocking the moment a real customer's contract is drafted
 - **Embeddings, vector search** — permanently out of runtime
 - **Orchestrator/planner/ranking extraction, `api/contracts/`, observability subsystem** — code organisation with no customer-visible effect

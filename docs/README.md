@@ -44,8 +44,8 @@ edit what — see the ownership note below.
 | [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) | Before deploying anything |
 | [REPO_STRUCTURE.md](REPO_STRUCTURE.md) | Orienting in the tree; the data-flow one-liners |
 | [PLATFORM_ARCHITECTURE_REVIEW.md](PLATFORM_ARCHITECTURE_REVIEW.md) | Scaling questions — cohorts, families, multi-tenant |
-| [PHASE_3_VALIDATION_STUDY.md](PHASE_3_VALIDATION_STUDY.md) | **Active plan, awaiting approval.** Real Interview Validation Study — measures `question.validate()` against questions a live model actually generates, because the corpus is at 100% and can therefore only detect regression. **Naming collision, unresolved:** `PHASE_2_EXECUTION_PLAN.md` also calls D6–D10 "Phase 3". §0 B2 proposes this study takes Phase 3 and D6–D10 becomes Phase 4. Until that is ruled on, check which one a reference means |
-| [PHASE_2_EXECUTION_PLAN.md](PHASE_2_EXECUTION_PLAN.md) | **Active.** Phase 1 exited 2026-09-05. Phase 2 is Question Quality Infrastructure; the previously-approved D6–D10 plan is preserved in the same file as **Phase 3**, re-designated because its own entry condition (M4a has produced a number) is not met. Task specs in [tasks/](tasks/) |
+| [PHASE_3_VALIDATION_STUDY.md](PHASE_3_VALIDATION_STUDY.md) | **Active.** Phase 3 — Real Interview Validation Study. Measures `question.validate()` against questions a live model actually generates, because the corpus reads 100% and can therefore only detect regression. Approved 2026-09-05 |
+| [PHASE_2_EXECUTION_PLAN.md](PHASE_2_EXECUTION_PLAN.md) | **Active.** Phase 1 exited 2026-09-05. Phase 2 is Question Quality Infrastructure; the previously-approved D6–D10 plan is preserved in the same file as **Phase 4** (renumbered from Phase 3 on 2026-09-05), still blocked on its own entry condition — M4a has produced a number. Task specs in [tasks/](tasks/) |
 
 ## Superseded — history, not instructions
 

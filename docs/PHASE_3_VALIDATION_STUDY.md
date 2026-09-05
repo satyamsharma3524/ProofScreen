@@ -1,8 +1,10 @@
 # Phase 3 — Real Interview Validation Study
 
-**Status: PLAN. Awaiting approval. No code written.**
-`EXECUTION_STANDARD.md` §10 — "Coding begins only after approval." Two of the
-blockers below are not mine to clear.
+**Status: APPROVED 2026-09-05. In execution.**
+Five decisions ruled on; recorded verbatim in §0 D. Two amendments came with
+them (κ, and the bound on statistical machinery) and are folded in below —
+struck text is left visible rather than deleted, because a plan that quietly
+becomes what it ended up being is not a plan.
 
 Format: the ten-section §10 artifact, per C1 (phase level ⇒ full form).
 This is the phase's **only** new planning document — C2 budget: 1 document
@@ -14,9 +16,14 @@ against 5 tasks.
 
 Raised under §9 (*State · Why · Impact · Options · Recommendation*) and §12.
 
-### B1 — There is no `OPENAI_API_KEY`, and without one this study measures nothing
+### B1 — ~~There is no `OPENAI_API_KEY`~~ **CLEARED 2026-09-05**
 
-**State.** Measured, just now:
+**Key supplied.** `settings.llm_mode -> live`, `gpt-4o`. First live call
+measured: **417 in / 26 out**, a valid model question, `source="model"`,
+`attempts=1`, no violations. The section below is kept because it is why the
+fixture-mode smoke test proves plumbing and nothing else.
+
+**State (as measured before the key landed).**
 
 ```
 settings.llm_mode      -> fixture
@@ -42,15 +49,10 @@ validator.
    labelled, and hold the study until a key exists.
 3. Cancel the phase.
 
-**Recommendation: (1), with (2) as the interim.** The harness is worth building
-now — it is the same code either way, and fixture mode proves the plumbing.
-But the four deliverables cannot be produced without a key, and I will not
-generate a dataset that looks like a study and is not one.
+**Resolved: (1).** Key supplied. (2) survives as `--fixture`, which the smoke
+test uses and which is labelled in the file as measuring nothing.
 
-**Estimated cost of one full run** (order-of-magnitude, gpt-4o, ~500 questions
-≈ 500 turns × ~3–4 calls/turn ≈ 1,500–2,000 calls at 1–2k tokens):
-**roughly $15–40.** Worth confirming against your own billing before the first
-run; the harness prints a call count and supports `--limit` for a costed pilot.
+**Budget is now a first-class constraint** — see §0 C.
 
 ### B2 — "Phase 3" already means something else in this repo
 
@@ -63,11 +65,34 @@ re-designated there because its own entry condition — M4a has produced a numbe
 C3 exists to prevent, and the one that bites is a future session reading the
 wrong plan.
 
-**Recommendation.** This study takes **Phase 3**; D6–D10 becomes **Phase 4**,
-its entry condition unchanged. You assigned the number; the renumber follows
-from that, but it is a doc edit in a frozen-ish file and I am not doing it
-silently. One line in `docs/README.md` and one heading in
-`PHASE_2_EXECUTION_PLAN.md`. **Confirm or override.**
+**RESOLVED (Decision 1).** This study is **Phase 3**; D6–D10 is **Phase 4**,
+entry condition unchanged. Applied to `docs/README.md`, `CLAUDE.md` and
+`PHASE_2_EXECUTION_PLAN.md`, with a renumber banner on the heading so a reader
+arriving from an old link knows what moved.
+
+### B3 — "Phase 4" now collides too, and this one is new
+
+**State.** Decision 1 sends D6–D10 to Phase 4. The same message then sketches
+**"Phase 4 — Interview Intelligence Quality"** (E1 claim-extraction quality ·
+E2 scoring quality · E3 evaluation stability · E4 recruiter trust). Two Phase 4s.
+
+**Impact.** Identical to B2, one number along. Left alone it recreates the drift
+B2 was raised to kill, in the same week.
+
+**Applied, minimally and reversibly:** the explicit ruling wins, so D6–D10 **is**
+Phase 4 and E1–E4 is recorded as **Phase 5 (proposed)**.
+
+**But the recommendation runs the other way, and it is worth thirty seconds.**
+E1–E4 can start the day Phase 3 ends. D6–D10 cannot start at all — its entry
+condition is *M4a has produced a number*, and M4a is at n = 0. Numbering phases
+by when they can actually begin is the more useful convention, which argues for
+**E1–E4 = Phase 4, D6–D10 = Phase 5**. It is a two-line swap either way. Say the
+word and I do it; otherwise the explicit ruling stands.
+
+**E1–E4 is the right next question regardless of its number.** This phase closes
+`resume → claims → questions → validator`. It says nothing about
+`interview → evaluation`, which is where the business value and — as the brief
+says — the highest risk both sit. Noted here so it is not re-derived later.
 
 ### F1 — The rejected question text is never persisted, so the matrix cannot be built from stored rows
 
@@ -143,11 +168,63 @@ different numbers when they are not.
 ### F4 — One reviewer produces labels with no reliability estimate
 
 With a single human, reviewer noise and validator error are indistinguishable.
-**Recommendation:** a second reviewer labels a **20-item overlap** drawn from
-the same sample; report Cohen's κ. If κ < 0.6 the ground truth is too noisy to
-support the headline numbers and the study says so instead of reporting them.
-Cheap insurance — 20 items — against a confident wrong conclusion, which is
-exactly the M5c failure mode one level up.
+A second reviewer labels a **20-item overlap** drawn from the same sample;
+report Cohen's κ.
+
+**AMENDED (Decision 5). ~~If κ < 0.6 the headline numbers are withheld.~~**
+Metrics are **always published**; a low κ attaches a warning banner to the top
+of `confusion_matrix.md` and to every affected figure, and does not suppress
+anything.
+
+**The amendment is right and my original was wrong.** Withholding assumed the
+output is a verdict, so a noisy verdict is worse than none. The output is a
+*learning artifact*, and a noisy number that says so beats no number — you can
+still read it, you simply read it with the error bar the banner names. The
+suppression rule also had a failure mode I had not thought through: it makes
+the second reviewer's diligence able to *destroy* the study, which is a bad
+incentive to build into a measurement.
+
+The κ overlap stays, because κ is the thing that tells you how hard to squint.
+
+### C — Budget, and the bound on statistical machinery
+
+**C-i — Cost is a constraint, not a footnote.** The instruction is *"don't spend
+too much on testing, but I want a real run."* So:
+
+- Every model call is token-counted by wrapping the client from the harness
+  (**zero `api/` change**), and `generate` prints tokens and dollars at exit and
+  on every `--limit` pilot.
+- **A costed pilot runs before the full run, always.** `--limit 2` first, its
+  real cost reported, and the full run sized from that measured number rather
+  than from an estimate.
+- The study targets the **low end** of the 300–1000 band. 300–400 attempt rows
+  answers "is the validator behaving sensibly on real output" as well as 1000
+  does, and the blind sample is capped at 100 items either way — the human
+  review, not the dataset, is the binding constraint on what can be learned.
+- The **candidate simulator is not under test**, so it runs on the cheapest
+  adequate model. Question generation — the thing under test — stays on
+  `gpt-4o`, production's model, because a study of a cheaper model's questions
+  would be a study of a system nobody ships.
+
+**C-ii — Statistical machinery is bounded (Simplification 2).** Keep stratified
+sampling, reweighting and confidence intervals. Stop there. The estimator is
+~40 lines and is already specified in F3; it is not a research project, and no
+time goes into narrowing an interval from ±14 pp to ±11 pp.
+
+**The finding budget goes to `validator_disagreements.md`.** One example of the
+validator rejecting *"What did you decide and why?"* where a human accepts it
+teaches more than any interval ever will. D6 is the deliverable that gets the
+attention; D5 is arithmetic.
+
+### D — Decisions, as ruled 2026-09-05
+
+| # | Decision | Effect here |
+|---|---|---|
+| 1 | This study is Phase 3; D6–D10 → Phase 4 | §0 B2 resolved, renumber applied. **B3 raised** — E1–E4 collides |
+| 2 | Validator instrumentation; no production schema change | §0 F1 option 3. Guardrail: `git diff --stat api/` stays empty |
+| 3 | Candidate simulator for Tier B | §3 fork resolved to (b). Family-neutral pool survives as `--no-simulator` |
+| 4 | Stratified 50/50 sample, reweight at scoring | §0 F3 as written |
+| 5 | Publish metrics regardless of κ, warn if low | §0 F4 amended; acceptance criterion 12 rewritten |
 
 ---
 
@@ -273,11 +350,11 @@ Answers are study **input**; nothing in the study treats them as ground truth.
 |---|---|
 | **Rejects are scarce.** If the model is good, the reject stratum may hold < 50 rows | `sample` takes `min(50, available)`, prints both n's, and `score` widens every interval accordingly. If rejects < 20, the study reports precision only and says recall is unestimable |
 | **The 50/50 sample misleads** (F3) | Reweighted estimator + Wilson intervals, both tables published |
-| **One reviewer** (F4) | 20-item κ overlap; κ < 0.6 blocks the headline numbers |
+| **One reviewer** (F4) | 20-item κ overlap; low κ warns loudly, publishes anyway |
 | **Reviewer sees the validator's opinion** | `sample` writes only `claim · probe_level · question`. Column order is shuffled-stable, row order seeded-shuffled, and the un-blinding key is a separate file — `score` refuses to run if the reviewed file carries a validator column |
 | **Fallbacks read as accepts** (F2) | Excluded from the matrix; published as M7e coverage |
 | **Study becomes threshold-tuning** | No `api/` edit this phase. Any tuning is Phase 3's output, evidenced, applied after |
-| **Cost surprise** | `--limit` pilot, live call counter, cost printed at exit |
+| **Cost surprise** | `--limit` pilot **before every full run**, live token counter, dollars printed at exit; simulator on the cheap model, generator on production's |
 | **Non-determinism makes the run unreproducible** | Every row carries `run_seed`, `model`, `temperature`; `generate` is resumable and never overwrites an existing dataset without `--force` |
 | **A model outage mid-run** | Rows are flushed per interview; `--resume` continues from the last complete `interview_id` |
 
@@ -290,6 +367,11 @@ Answers are study **input**; nothing in the study treats them as ground truth.
   disagreement analysis names a defect class the corpus cannot express.
 - `extract._metric_of` seconds unit (owner A, known, unrelated).
 - D6–D10 → **Phase 4**, entry condition unchanged (M4a has produced a number).
+- **E1–E4 Interview Intelligence Quality** — claim-extraction quality, scoring
+  quality against recruiter judgement, evaluation stability across reruns,
+  recruiter trust. **Phase 5 (proposed)**, see §0 B3. This is the
+  `interview → evaluation` half, and E3 in particular (does the same candidate
+  score 82, 61, 77 across runs?) is a **deployability gate**, not a metric.
 
 ## 6. Success Metrics · Guardrails · Counter-metrics
 
@@ -304,7 +386,7 @@ are high.**
 | **M7d F1** | Harmonic mean of M7a/M7b | derived | **Reported** |
 | **M7e Coverage** | % of generated questions that received a validator decision | `validator_ran` | **≥ 90%.** Below that the pipeline is running on fallbacks and M7a–M7d describe a minority path |
 | **M7f Per-rule precision** | For each of the 7 rules, % of its rejects a human agrees with | `primary_rule` ⋈ labels | **Reported per rule.** A rule below 0.5 is a named finding |
-| **M7g Reviewer agreement** | Cohen's κ on the 20-item overlap | second reviewer | **≥ 0.6**, else M7a–M7d are withheld |
+| **M7g Reviewer agreement** | Cohen's κ on the 20-item overlap | second reviewer | **Reported.** < 0.6 warns, never withholds (Decision 5) |
 | **M7h Live reject rate** | % of first attempts the validator rejects, in the wild | dataset, `attempt_index=1` | **Reported.** This is M6d measured live for the first time |
 
 **Guardrails — must not regress**
@@ -385,8 +467,9 @@ the step most likely to contain an arithmetic error nobody catches.
     each with Wilson 95% intervals, and states n per stratum.
 11. `validator_disagreements.md` accounts for **100%** of disagreements, one
     root cause each, no row unclassified.
-12. κ is reported. If κ < 0.6, M7a–M7d are **withheld** and the document says
-    why.
+12. κ is reported, and **M7a–M7d are published whatever it says** (Decision 5).
+    κ < 0.6 adds a warning banner to `confusion_matrix.md` and to each affected
+    figure. No metric is ever suppressed.
 13. Re-running `generate --run-seed S` twice with the same key produces the same
     row **count** and the same interview/claim/probe skeleton. Wording will
     differ — temperature 0.4 — and that is recorded, not asserted away.
