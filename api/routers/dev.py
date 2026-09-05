@@ -7,6 +7,7 @@ POST /api/dev/sessions/{id}/answer    step one answer into a live session
 GET  /api/dev/fixture                 the hand-written sample graph
 GET  /api/dev/detect?text=...         why a resume routed where it did
 GET  /api/dev/llm                     cache hits, calls, fallbacks
+POST /api/dev/replay/{evaluation_id}  rescore from stored signals and diff
 POST /api/dev/tenants                 provision a tenant + its one API key
 POST /api/dev/reset                   drop and recreate every table
 
@@ -49,6 +50,7 @@ from api.schemas import (
     ProbeLevel,
     SessionOut,
     SessionState,
+    ReplayResultOut,
     SimulateIn,
     SimulateOut,
     TenantCreateIn,
@@ -352,6 +354,41 @@ async def provision_tenant(
     return TenantOut(
         id=tenant.id, name=tenant.name, slug=tenant.slug, api_key=raw_key
     )
+
+
+@router.post("/replay/{evaluation_id}", response_model=ReplayResultOut)
+async def replay(
+    evaluation_id: str,
+    db: AsyncSession = Depends(get_db),
+    scope: TenantScope = Depends(current_tenant),
+) -> ReplayResultOut:
+    """D8 — recompute the deterministic tail from stored signals and diff it.
+
+    A SUPPORT TOOL, not a recruiter feature, which is why it lives here. The
+    recruiter-facing question is "why is this candidate ranked #2", and the
+    graph answers that. This answers "is the number this evaluation recorded
+    still what the stored evidence produces?", which is a question you ask
+    during a dispute.
+
+    Read-only, and POST rather than GET only because it is a computation. It
+    never writes: the original evaluation is immutable, and replay does not
+    even try.
+
+    409, not 500, when the historical state is not there. "This cannot be
+    replayed and here is exactly what is missing" is an answer; a stack trace
+    is not, and a number computed from partial data is worse than either.
+    """
+    _guard()
+    from api.engine import evaluation as evaluation_engine
+    from api.engine.replay import ReplayUnavailable, replay_evaluation
+
+    evaluation = await evaluation_engine.get_evaluation(db, evaluation_id, scope)
+    if evaluation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "evaluation not found")
+    try:
+        return await replay_evaluation(db, evaluation, scope)
+    except ReplayUnavailable as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 @router.get("/provenance")
