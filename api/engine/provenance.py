@@ -79,6 +79,8 @@ FEATURE_FLAGS: tuple[str, ...] = (
     "voice_weight",
     "max_questions",
     "max_claims",
+    "claim_inventory",
+    "max_inventory_claims",
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

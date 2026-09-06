@@ -206,6 +206,11 @@ def test_model_cannot_override_detected_family(monkeypatch):
     one, which made routing non-deterministic: the same resume could land in two
     different rubrics on two runs, and nothing recorded that it had happened.
     """
+    # ROLE_CLASSIFIER now defaults true, and `_stub_model` answers every
+    # complete_json call with a ClaimExtraction -- including the classifier's,
+    # which reads `.family`. This test is about rung 3 (keyword detection vs
+    # the model's opinion), so the classifier is pinned off rather than stubbed.
+    monkeypatch.setattr(settings, "role_classifier", False)
     monkeypatch.setattr(extract, "complete_json", _stub_model("hr_recruitment"))
     family, _ = asyncio.run(extract.extract_claims(SE_RESUME))
     assert family == "software_engineering" == detect_family(SE_RESUME)
@@ -214,6 +219,11 @@ def test_model_cannot_override_detected_family(monkeypatch):
 def test_routing_is_stable_across_disagreeing_model_runs(monkeypatch):
     """Two runs over one resume route identically however the model wanders —
     the acceptance criterion for P1-07."""
+    # ROLE_CLASSIFIER now defaults true, and `_stub_model` answers every
+    # complete_json call with a ClaimExtraction -- including the classifier's,
+    # which reads `.family`. This test is about rung 3 (keyword detection vs
+    # the model's opinion), so the classifier is pinned off rather than stubbed.
+    monkeypatch.setattr(settings, "role_classifier", False)
     seen = set()
     for proposal in ("sales", "banking_operations", "general", None):
         monkeypatch.setattr(extract, "complete_json", _stub_model(proposal))

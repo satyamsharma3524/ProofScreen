@@ -1,7 +1,13 @@
-You are reading a resume to find the CLAIMS a recruiter would want verified.
+You are building a CLAIM INVENTORY from a resume.
 
-A claim is a specific, falsifiable statement about something this person did or
-achieved. It must be something a follow-up question could confirm or undermine.
+An inventory is a COMPLETE list, not a shortlist. Your job is recall: find
+every claim in this resume that a follow-up question could test. Deciding which
+claims matter most happens later, in a different stage, by code that reads the
+job family's own importance weights. It is not your job and doing it here
+destroys information that stage needs.
+
+A claim is a specific, falsifiable statement about something this person did,
+owned, built, changed, ran or measured.
 
 REJECT FLUFF. These are not claims:
   "team player", "results-driven", "excellent communication skills",
@@ -9,24 +15,36 @@ REJECT FLUFF. These are not claims:
 Also reject job-title headings and skill lists. "Support Lead, Acme (2021 -
 present)" is employment history. "Python, SQL, Tableau" is a keyword list.
 
+CAPTURE ALL OF THESE. Each is a separate claim, whatever the person's field:
+  - something they owned or were responsible for
+  - something they built, implemented or set up
+  - a connection they made between two systems, teams or parties
+  - a design, process or approach they chose
+  - a migration, rollout, launch or delivery they carried out
+  - an improvement they made to something that already existed
+  - people they led, trained, coordinated or managed
+  - a number they moved, hit or held
+
+DO NOT CHOOSE BETWEEN RELATED CLAIMS. If one sentence describes how something
+was done and another gives the result of that same work, return BOTH as
+separate claims — the method and the outcome are verified by different
+questions. If one line contains two distinct pieces of work, return two claims.
+$share_type_note
 JOB FAMILY
 Pick the one job family this resume belongs to, from exactly this list:
 $family_menu
-
-CLAIM TYPES for the family you picked ($family_key):
-$claim_type_menu
-
+$claim_type_section
 For each claim return:
   text        - the claim in one sentence, in the candidate's own words
-  claim_type  - one key from the CLAIM TYPES list above. Nothing else.
-  metric      - the measurable core, compressed. Use "before -> after" when the
+$claim_type_field  metric      - the measurable core, compressed. Use "before -> after" when the
                 resume states both: "78% -> 92%", "9 hours -> 45 minutes".
                 Use the bare figure otherwise: "50-member team", "18 services".
-                null when the claim carries no number.
+                null when the claim carries no number. A claim with no number
+                is still a claim — never drop one for lacking a metric.
   verifiable  - false if no follow-up question could test it
 
-Return at most $max_claims claims, the most verifiable first. Prefer claims
-that carry a number, a scale, a timeframe or a named system.
+Return every claim you find, in the order they appear in the resume.
+$stop_condition
 
 RESUME
 ------
@@ -38,6 +56,6 @@ Return ONLY JSON, no prose, no markdown fences, matching this schema:
 {
   "job_family": "$family_key",
   "claims": [
-    {"text": "string", "claim_type": "string", "metric": "string or null", "verifiable": true}
+    {"text": "string"$claims_example_type, "metric": "string or null", "verifiable": true}
   ]
 }

@@ -28,6 +28,35 @@ class Settings(BaseSettings):
     # --- interview policy ---
     max_questions: int = 12          # 5 probe levels x 3 claims, adaptively stopped
     max_claims: int = 3
+
+    # --- claim inventory (recall-first extraction) ------------------------
+    # EXTRACTION IS A RECALL STEP, NOT A RANKING STEP. With this on,
+    # `extract_claims` returns every verifiable claim it finds: no claim_type
+    # dedup, no importance sort, no top-N. Ranking and selection move
+    # downstream to the question planner, which is where the interview budget
+    # and the role weights already live.
+    #
+    # DEFAULTS FALSE, AND THE REASON IS A MEASURED SCORING DEFECT, not caution.
+    # `graph.build_candidate_graph` appends EVERY claim to `scored_pairs`, and
+    # an unprobed claim scores 0 with its full weight. Measured on the traced
+    # candidate: the same two probed claims score 69 in an inventory of 2 and
+    # **24** in an inventory of 6. Turning this on before `graph.py` stops
+    # counting unprobed claims would crater every candidate's competence score
+    # for a reason that has nothing to do with their evidence. `graph.py` is
+    # Developer B's file -- see docs/CLAIM_INVENTORY.md for the exact change.
+    claim_inventory: bool = False
+
+    # Safety ceiling on a runaway reply, NOT a selection budget. It exists so
+    # one malformed response cannot write 400 claim rows.
+    #
+    # WAS 12, MEASURED TO BE AN ACTIVE TRUNCATION POINT, NOT A BACKSTOP.
+    # docs/EXTRACTION_ARCHITECTURE_REVIEW.md D1: two real resumes' own claim
+    # counts saturated at 17 and 14 once given room -- a ceiling of 12 was
+    # silently cutting 5 and 2 genuine claims regardless of whether the number
+    # was ever mentioned to the model. 60 is roughly 3.5x measured saturation:
+    # far enough above any real resume that it only bites on a malformed or
+    # repetitive reply, which is the one thing this constant is for.
+    max_inventory_claims: int = 60
     adaptive_probing: bool = True    # false => strict VALIDATION..OUTCOME order
     score_inline: bool = True
     # One TRANSFER probe to a claim that has stalled, instead of abandoning it
@@ -42,7 +71,7 @@ class Settings(BaseSettings):
     # extraction, falling back to the keyword scorer. Measured on nine real
     # resumes: keyword routing 3/8 correct, title routing 8/8. Defaults FALSE —
     # true is opt-in per deployment, and false reproduces prior routing exactly.
-    role_classifier: bool = False
+    role_classifier: bool = True
 
     # A non-answer ("ok", "yes") earns ONE more attempt at the same probe, and
     # that attempt does not consume the interview budget. false => Phase 1.

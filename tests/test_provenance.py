@@ -252,7 +252,7 @@ def test_the_flag_allowlist_cannot_admit_a_secret():
     banned = ("key", "token", "secret", "password", "url", "dsn")
     for name in pv.FEATURE_FLAGS:
         assert not any(word in name for word in banned), name
-    assert len(pv.FEATURE_FLAGS) == 8
+    assert len(pv.FEATURE_FLAGS) == 10
 
 
 def test_no_live_credential_value_appears_in_a_stamp(monkeypatch):

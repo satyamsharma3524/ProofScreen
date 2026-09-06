@@ -20,7 +20,9 @@ from api.schemas import ClaimExtraction, ExtractedClaim
 from api.taxonomy import (
     GENERAL,
     claim_type_menu,
+    claim_types,
     classify_claim,
+    default_claim_weights,
     detect_family,
     families,
     family_label,
@@ -43,6 +45,22 @@ _STRONG_VERBS = (
     "achieved", "exceeded", "processed", "supervised", "coached", "drove",
 )
 
+_INVENTORY_EXTRA_VERBS = (
+    "integrated", "developed", "implemented", "collaborated", "architected",
+    "enabled",
+)
+"""Recognised only by `_is_claim_line`, not `_score_line`.
+
+`_STRONG_VERBS` also drives `_has_strong_verb` -- `header_slice` and
+`_is_tenure_line` use it to tell a heading from a bullet -- so it stays as
+measured. These are implementation/integration verbs `_score_line` never
+scored (D2, docs/EXTRACTION_ARCHITECTURE_REVIEW.md): a resume line whose only
+verb is "integrated" or "developed" scored 0 for its verb and, being
+comma-heavy by nature (it lists the systems integrated), was misread as a
+skills list and rejected outright -- not deprioritised, dropped as not a
+claim at all.
+"""
+
 _FLUFF = (
     "team player", "hard working", "hard-working", "passionate", "self-motivated",
     "detail oriented", "detail-oriented", "results-driven", "results driven",
@@ -60,6 +78,19 @@ _PAREN_YEAR = re.compile(r"\((?:19|20)\d\d")
 _DATE_RANGE = re.compile(
     r"\b(?:19|20)\d\d\s*[-–—]\s*(?:present|current|(?:19|20)\d\d)\b", re.IGNORECASE
 )
+_WS_RUN = re.compile(r"\s+")
+
+
+def _dedupe_key(text: str) -> str:
+    """Two renderings of one sentence collapse to one claim.
+
+    Deliberately crude and prefix-based -- the same shape `heuristic_claims`
+    already uses for its own `seen` set, so the model path and the fallback
+    path agree about what counts as a repeat. This is NOT claim selection: a
+    resume that states the same achievement in a summary line and again in a
+    bullet has made one claim, and inventory mode still wants it once.
+    """
+    return _WS_RUN.sub(" ", (text or "").lower()).strip()[:60]
 
 
 def _metric_of(text: str) -> str | None:
@@ -102,49 +133,119 @@ def _score_line(line: str) -> int:
     return score
 
 
+def _is_claim_line(line: str) -> bool:
+    """Inventory-mode predicate: is this line a distinct verifiable claim at all?
+
+    Unlike `_score_line`, this never ranks and never eliminates on precision --
+    there is no `MIN_CLAIM_SCORE` here. Recall-first extraction has nothing to
+    rank for; a line either is a claim (something owned, built, integrated,
+    delivered, run) or it is a heading, a skills list or fluff. Those three
+    rejections are the only ones extraction is allowed to make
+    (docs/EXTRACTION_ARCHITECTURE_REVIEW.md §4).
+
+    Uses `_INVENTORY_EXTRA_VERBS` on top of `_STRONG_VERBS` so an
+    implementation/integration bullet with no outcome verb and no number --
+    "Integrated Twilio's SDK to enable SMS, voice, and WhatsApp
+    communications..." -- has a recognised verb and is not misread as a
+    comma-heavy skills list (D2). The comma rule also requires the line to
+    have no digits, not just no verb -- a metric with no recognised verb
+    should still survive as a claim.
+    """
+    low = line.lower()
+    if any(f in low for f in _FLUFF):
+        return False
+    verbs = _STRONG_VERBS + _INVENTORY_EXTRA_VERBS
+    has_verb = any(re.search(rf"\b{v}\b", low) for v in verbs)
+    if _PAREN_YEAR.search(line):
+        return False
+    if _DATE_RANGE.search(line) and not has_verb:
+        return False
+    has_digit = any(c.isdigit() for c in line)
+    if line.count(",") >= 3 and not has_verb and not has_digit:
+        return False
+    return True
+
+
 def heuristic_claims(
     resume_text: str, job_family: str, limit: int | None = None
 ) -> list[ExtractedClaim]:
     """No-LLM claim extraction. Deterministic, and good enough to demo on."""
-    limit = limit or settings.max_claims
-    candidates: list[tuple[int, str]] = []
+    limit = limit or (
+        settings.max_inventory_claims if settings.claim_inventory
+        else settings.max_claims
+    )
+    lines: list[str] = []
     for raw in (resume_text or "").split("\n"):
         line = _BULLET.sub("", raw).strip(" .;")
         if not (25 <= len(line) <= 300) or line.endswith(":"):
             continue
-        score = _score_line(line)
-        if score >= MIN_CLAIM_SCORE:
-            candidates.append((score, line))
-
-    candidates.sort(key=lambda pair: (-pair[0], len(pair[1])))
+        lines.append(line)
 
     claims: list[ExtractedClaim] = []
-    seen: set[str] = set()
-    seen_types: set[str] = set()
-
-    # Two passes: first take the strongest line of each distinct claim type, so
-    # a resume with four latency bullets does not produce four latency claims
-    # and leave team handling unprobed.
-    for require_new_type in (True, False):
-        for _, line in candidates:
-            if len(claims) >= limit:
-                break
-            key = line.lower()[:60]
+    if settings.claim_inventory:
+        # RECALL-FIRST: every line that survives `_is_claim_line`, in resume
+        # order -- no score, no rank, no type spread, no top-N. Selection is a
+        # planning decision (`orchestrator.plan_next`), not an extraction one.
+        # `limit` is a safety ceiling on a runaway document, not a budget: it
+        # only bites far above any real resume, and it logs when it does.
+        seen: set[str] = set()
+        for line in lines:
+            if not _is_claim_line(line):
+                continue
+            key = _WS_RUN.sub(" ", line.lower()).strip()
             if key in seen:
                 continue
-            claim_type = classify_claim(line, job_family)
-            if require_new_type and claim_type in seen_types:
-                continue
             seen.add(key)
-            seen_types.add(claim_type)
             claims.append(
                 ExtractedClaim(
                     text=line,
-                    claim_type=claim_type,
+                    claim_type=classify_claim(line, job_family),
                     metric=_metric_of(line),
                     verifiable=True,
                 )
             )
+        if len(claims) > limit:
+            log.warning(
+                "heuristic_claims: %d claims exceeds safety ceiling %d, truncating",
+                len(claims), limit,
+            )
+            claims = claims[:limit]
+    else:
+        # LEGACY, unchanged: score, rank by score, spread across claim types,
+        # cap at `limit`. This is the pre-inventory behaviour and it is what
+        # runs while CLAIM_INVENTORY=false.
+        candidates: list[tuple[int, str]] = []
+        for line in lines:
+            score = _score_line(line)
+            if score >= MIN_CLAIM_SCORE:
+                candidates.append((score, line))
+        candidates.sort(key=lambda pair: (-pair[0], len(pair[1])))
+
+        seen = set()
+        seen_types: set[str] = set()
+        # Two passes: first take the strongest line of each distinct claim
+        # type, so a resume with four latency bullets does not produce four
+        # latency claims and leave team handling unprobed.
+        for require_new_type in (True, False):
+            for _, line in candidates:
+                if len(claims) >= limit:
+                    break
+                key = line.lower()[:60]
+                if key in seen:
+                    continue
+                claim_type = classify_claim(line, job_family)
+                if require_new_type and claim_type in seen_types:
+                    continue
+                seen.add(key)
+                seen_types.add(claim_type)
+                claims.append(
+                    ExtractedClaim(
+                        text=line,
+                        claim_type=claim_type,
+                        metric=_metric_of(line),
+                        verifiable=True,
+                    )
+                )
 
     if not claims:
         snippet = (resume_text or "").strip().replace("\n", " ")[:200]
@@ -388,13 +489,79 @@ async def extract_claims(
     else:
         routed = await classify_role(trimmed, detect_family(trimmed))
 
+    # HOW MANY TO ASK FOR. In inventory mode: NONE. No number reaches the
+    # model at all -- extraction is a recall step, the number of claims a
+    # resume contains is a property of the resume, and a cardinality target in
+    # the prompt is an anchor even when phrased as "stop at N only if more
+    # exist" (measured, docs/EXTRACTION_ARCHITECTURE_REVIEW.md D1: raising the
+    # rendered ceiling from 12 to 40 raised the model's own count from 12 to
+    # 17 and 14 on two real resumes -- the lower number was not a true count,
+    # it was the model satisficing near what it was told). `ceiling` still
+    # exists, but only as a Python-side safety ceiling (`max_inventory_claims`,
+    # below) and as the offline heuristic fallback's limit -- it is never
+    # rendered into the prompt in this mode.
+    #
+    # In legacy mode this is unchanged: a small overshoot over `limit`, capped
+    # at the family's own type count, still told to the model, so the weight
+    # sort below has something to choose among. That is the pre-inventory
+    # behaviour and it is what runs while `CLAIM_INVENTORY=false`.
+    ceiling = (
+        settings.max_inventory_claims if settings.claim_inventory
+        else min(limit + 3, len(claim_types(routed)))
+    )
+    stop_condition = (
+        "There is no fixed number to return -- a short resume may hold three "
+        "claims, a long one twenty or more. Do not stop early because you "
+        "reached a round number; do not hold back a real claim to keep the "
+        "count small."
+        if settings.claim_inventory
+        else f"Stop at {ceiling} only if the resume genuinely contains more than that."
+    )
+
+    # DISCOVERY VS TYPING, split at the prompt level. In inventory mode the
+    # model is never asked for a claim_type at all -- not even as a soft,
+    # non-gating label -- because whether that ask is truly inert is
+    # unmeasured (docs/EXTRACTION_ARCHITECTURE_REVIEW.md D5, docs/
+    # PARSE_EXTRACT_MERGE_REVIEW.md's "what must be checked before committing
+    # to D"). `normalise_claim_type` below already assigns a type from `None`
+    # exactly as it does today from an invented key -- this is not a new code
+    # path, only a more frequent one. Legacy mode is unchanged: the four
+    # `$claim_type_*` / `$share_type_note` placeholders below render byte-for-
+    # byte what used to be static text (verified in tests/test_extract.py).
+    if settings.claim_inventory:
+        share_type_note = ""
+        claim_type_section = ""
+        claim_type_field = ""
+        claims_example_type = ""
+    else:
+        share_type_note = (
+            "\nSEVERAL CLAIMS MAY SHARE A CLAIM TYPE. That is expected and "
+            "correct. Never drop\na real claim because you already returned "
+            "one of its type, and never stretch a\nclaim onto a type it does "
+            "not fit in order to spread the types out.\n"
+        )
+        claim_type_section = (
+            f"\nCLAIM TYPES for the family you picked ({routed}):\n"
+            f"{claim_type_menu(routed)}\n\n"
+            "The importance number beside each type is for a LATER stage. Use "
+            "the list ONLY\nto label a claim you have already decided to "
+            "include. It must never decide\nwhether to include one.\n"
+        )
+        claim_type_field = (
+            "  claim_type  - one key from the CLAIM TYPES list above. Nothing else.\n"
+        )
+        claims_example_type = ', "claim_type": "string"'
+
     prompt = load_prompt(
         "extract_claims",
         resume_text=trimmed,
-        max_claims=limit,
+        stop_condition=stop_condition,
+        share_type_note=share_type_note,
+        claim_type_section=claim_type_section,
+        claim_type_field=claim_type_field,
+        claims_example_type=claims_example_type,
         family_key=routed,
         family_menu=_family_menu(),
-        claim_type_menu=claim_type_menu(routed),
     )
 
     result = await complete_json(
@@ -402,7 +569,7 @@ async def extract_claims(
         ClaimExtraction,
         temperature=settings.llm_temperature_extract,
         fallback=lambda: ClaimExtraction(
-            job_family=routed, claims=heuristic_claims(trimmed, routed, limit)
+            job_family=routed, claims=heuristic_claims(trimmed, routed, ceiling)
         ),
     )
 
@@ -419,17 +586,38 @@ async def extract_claims(
         )
     family = routed
 
-    kept: list[ExtractedClaim] = []
+    # WHAT SURVIVES, AND WHY THE TWO MODES DIFFER.
+    #
+    # Three filters run in BOTH modes, and none of them is a ranking decision:
+    #   * `verifiable=false` -- the model says no question could test it
+    #   * text shorter than 15 chars -- not a sentence
+    #   * duplicate TEXT -- one sentence stated twice is one claim
+    #
+    # INVENTORY MODE stops there. No claim_type dedup and no top-N, because
+    # both are SELECTION, and selection belongs downstream where the interview
+    # budget and the role weights live. Resume order is preserved so
+    # `Claim.order_index` still means "where this appeared on the page".
+    #
+    # LEGACY MODE additionally keeps one claim per type and ranks by the
+    # family's importance weights. It is the pre-inventory behaviour and it is
+    # what runs while `CLAIM_INVENTORY=false`.
+    candidates: list[ExtractedClaim] = []
     seen_types: set[str] = set()
+    seen_text: set[str] = set()
     for claim in result.claims:
         text = (claim.text or "").strip()
         if not claim.verifiable or len(text) < 15:
             continue
+        key = _dedupe_key(text)
+        if key in seen_text:
+            continue
+        seen_text.add(key)
         claim_type = normalise_claim_type(family, claim.claim_type, text)
-        if claim_type in seen_types:
-            continue           # one claim per type: breadth beats depth here
-        seen_types.add(claim_type)
-        kept.append(
+        if not settings.claim_inventory:
+            if claim_type in seen_types:
+                continue       # one claim per type: breadth beats depth here
+            seen_types.add(claim_type)
+        candidates.append(
             ExtractedClaim(
                 text=text,
                 claim_type=claim_type,
@@ -437,12 +625,28 @@ async def extract_claims(
                 verifiable=True,
             )
         )
-        if len(kept) >= limit:
-            break
+
+    if settings.claim_inventory:
+        # Not a top-N -- a warning-logged backstop against a pathological
+        # reply, the same shape as `heuristic_claims`'s own safety ceiling.
+        # `max_inventory_claims` must stay well above any real resume's claim
+        # count (measured saturation: 17) or this silently reproduces the
+        # exact defect removing the prompt-side number was meant to fix.
+        if len(candidates) > ceiling:
+            log.warning(
+                "extract_claims: model returned %d claims, exceeds safety "
+                "ceiling %d, truncating",
+                len(candidates), ceiling,
+            )
+        kept = candidates[:ceiling]
+    else:
+        weights = default_claim_weights(family)
+        candidates.sort(key=lambda c: -weights.get(c.claim_type, 0.0))
+        kept = candidates[:limit]
 
     if not kept:
         log.warning("model returned no usable claims, using heuristic")
-        kept = heuristic_claims(trimmed, family, limit)
+        kept = heuristic_claims(trimmed, family, ceiling)
 
     log.info(
         "extracted %d claims for %s (%s)",

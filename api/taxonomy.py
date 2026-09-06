@@ -475,10 +475,19 @@ def normalise_claim_type(
 
 
 def claim_type_menu(family_key: str | None = None) -> str:
-    """Rendered into the claim-extraction prompt so the model picks a real key."""
+    """Rendered into the claim-extraction prompt so the model picks a real key.
+
+    Sorted highest-importance first, purely so the model reads the family's
+    own priority order top to bottom instead of having to compare numbers
+    scattered through the list. The importance values are unchanged and still
+    live in data, not here.
+    """
+    ordered = sorted(
+        claim_types(family_key).items(), key=lambda kv: -kv[1]["weight"]
+    )
     return "\n".join(
         f"  {key} — {cfg['label']} (importance {cfg['weight']})"
-        for key, cfg in claim_types(family_key).items()
+        for key, cfg in ordered
     )
 
 
