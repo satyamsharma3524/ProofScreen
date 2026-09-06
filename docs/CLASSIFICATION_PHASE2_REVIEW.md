@@ -110,7 +110,33 @@ Three isolated commits, each independently revertable:
    `microservice`, `node`, `react js`.
 3. `tech_depth`: `integrat` (isolated per the precision-audit finding above).
 
-See the fixture/measurement diff appended below once seeded.
+### Measured result (real `classify_claim`, post-ship)
+
+| | Fallback rate | Distribution | Distinct types used |
+|---|---|---|---|
+| **Before** | 70% (30/43) | `system_ownership` 95%, `reliability` 1, `delivery` 1 | 3 of 6 |
+| **After** | 30% (13/43) | `system_ownership` 56% (24), `tech_depth` 26% (11), `performance_work` 9% (4), `delivery` 7% (3), `reliability` 2% (1) | 5 of 6 |
+
+Per resume (the more direct planning-quality proxy — `probe_focus` diversity
+is what determines how many of the six interview dimensions a resume's
+claims can steer toward):
+
+| Resume | Distinct types before | Distinct types after |
+|---|---|---|
+| Abhishek (frontend) | 1 | 4 |
+| Sathiya (Java backend) | 3 | 5 |
+
+`mentoring` is the only type neither resume ever reaches — expected, not a
+defect: neither resume contains mentoring content.
+
+`taxonomy_hash` moved `4e0f5b9b2fae` → `5b4792f3f7bc`, moving
+`evaluation_version` for every future evaluation (D7). `python seed.py
+--reset && python scripts/dump_fixture.py` was re-run; the resulting
+`fixtures/sample_graph.json` diff is entirely the pre-existing id/ordering
+nondeterminism CLAUDE.md already documents — the seeded demo candidates are
+not `software_engineering`, so this specific fixture was never going to
+reflect these keyword changes. Competence scores are unchanged (56/46/14/61,
+matching the documented baseline). 500/500 tests passing.
 
 ## Not shipped this phase, and why
 
