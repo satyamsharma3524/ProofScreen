@@ -591,6 +591,28 @@ def test_tech_depth_recognises_the_mainstream_stack(text):
     assert classify_claim(text, "software_engineering") == "tech_depth"
 
 
+# ---------------------------------------------------------------------------
+# `integrat` (C3): isolated from the rest of tech_depth's expansion in its
+# own commit -- docs/CLASSIFICATION_PHASE2_REVIEW.md's precision audit found
+# its matches measurably less clean than the other nine keywords (some
+# integration claims are really business-outcome or system-ownership stories
+# that happen to use the word "integration"), so it should be revertable
+# independently of the rest.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Collaborate with RESTful API contracts, data flow, JBOSS, SQL and integration patterns with external/internal systems.",
+        "Responsible for integrating java applications using Ikasan framework.",
+        "Integrated Twilio's SDK to enable SMS, voice, and WhatsApp communications.",
+    ],
+)
+def test_integrat_recognises_named_integration_work(text):
+    assert classify_claim(text, "software_engineering") == "tech_depth"
+
+
 def test_a_measured_tie_resolves_to_the_other_new_keyword_not_tech_depth():
     """Not every added keyword wins its claim outright. This exact sentence,
     from the traced Sathiya resume, ties `hibernate` (tech_depth) against

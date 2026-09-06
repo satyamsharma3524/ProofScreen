@@ -845,7 +845,8 @@
             "typescript",
             "microservice",
             "node",
-            "react js"
+            "react js",
+            "integrat"
           ],
           "probe_focus": [
             "TOOL_FAMILIARITY",
