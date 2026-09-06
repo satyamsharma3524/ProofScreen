@@ -1000,8 +1000,11 @@ MOVE_BRIEFS: dict[Move, tuple[str, str]] = {
     Move.OWNERSHIP_BOUNDARY: (
         "Ask where their ownership of this ENDED — what they controlled "
         "directly versus what belonged to someone else. Not how much they "
-        "owned; where the edge was.",
-        "the edge of their remit, and who held the other side of it",
+        "owned; where the edge was. Never lead with 'who reviewed your "
+        "work' or 'who signed off' — a name is not the target, the "
+        "boundary is. Ask what they could decide themselves, or a specific "
+        "call that was theirs alone to make.",
+        "the edge of their remit, told as a decision they made or didn't",
     ),
     Move.OPERATING_CONTEXT: (
         "Ask what they were LOOKING AT while doing this — the screen, the "
@@ -1023,10 +1026,13 @@ MOVE_BRIEFS: dict[Move, tuple[str, str]] = {
         "the deliberate omission and the constraint behind it",
     ),
     Move.DEPENDENCY: (
-        "Ask who or what they had to go through to get this done — the team "
-        "they waited on, the approval they needed, the system they could not "
-        "change themselves.",
-        "an external dependency they did not control",
+        "Ask for the specific MOMENT a dependency mattered — what they were "
+        "blocked on, what they couldn't do until something else was ready, "
+        "or what changed once it was. Never lead with 'who did you rely on' "
+        "or 'who did you coordinate with' alone — that names a team and "
+        "stops there. Ask for the moment the dependency bit, not the org "
+        "chart.",
+        "the moment a dependency actually blocked or changed the work",
     ),
     Move.PEOPLE: (
         "Ask about a specific person or role in this work — who pushed back, "
@@ -1410,6 +1416,36 @@ def _ledger_summary(ledger: "Sequence[LedgerFact]", limit: int = 12) -> str:
     return "\n".join(lines)
 
 
+_ORIENTATION_FIRST = (
+    "This is the FIRST question about this claim -- the candidate has no "
+    "context yet. Open with one short reminder of which piece of work you "
+    "mean, 5-12 words, before the question itself -- \"You mentioned "
+    "<fragment>.\" or \"On the work where you <fragment>,\". Use only what's "
+    "already given above, never a number or duration. This reminder is "
+    "exempt from the word count in RULES below; the question that follows "
+    "it is not."
+)
+_ORIENTATION_LATER = (
+    "The candidate has already been asked about this claim and has that "
+    "context from an earlier question. Do NOT add a reminder sentence -- "
+    "open directly with the question itself."
+)
+
+
+def _orientation_note(is_first_question: bool) -> str:
+    """Python decides whether a reminder is due, the model is not asked to.
+
+    A live check (`/tmp/check_orientation.py`, this session) showed the model
+    reproduces the SAME reminder sentence whether or not the prompt told it
+    evidence was already established for this claim -- the same "brief
+    carrying more than one ask" failure `MOVE_BRIEFS`'s docstring already
+    documents (question.py:914-917), just in a different clause. Handing it
+    a single precomputed sentence instead of a condition to evaluate is the
+    fix, matching the pattern `$claim_graph_context` already uses below.
+    """
+    return _ORIENTATION_FIRST if is_first_question else _ORIENTATION_LATER
+
+
 def _forensic_prompt(
     claim_text: str,
     move: Move,
@@ -1448,6 +1484,7 @@ def _forensic_prompt(
         move_brief=brief,
         target=target,
         ledger=_ledger_summary(ledger),
+        orientation_note=_orientation_note(not ledger),
         forbidden=forbidden,
     )
 
@@ -1600,4 +1637,213 @@ async def generate_forensic_question(
     return QuestionAttempt(
         text, probe_level, "fallback", 2, first_violations,
         move.value, MOVE_BRIEFS[move][1], "python fallback: model unavailable or rejected twice",
+    )
+
+
+# ===========================================================================
+# v2 — evidence-category question generation (api/prompts/v2_forensic_question.txt)
+#
+# Wires the EvidenceCategory planner (api/engine/v2_evidence_planner.py) to its
+# own prompt, alongside the Move path above rather than in place of it. Same
+# shape as generate_forensic_question: two attempts, the second retargets to a
+# different category rather than rewording the first draft; same response
+# schema (ForensicQuestion); same validate(). Gated behind
+# `EVIDENCE_PLANNER_V2` in orchestrator.py, off by default — the Move path is
+# unchanged and is what ships without it.
+#
+# Deferred on purpose: CROSS_CLAIM_LINK. It needs `claim_graph.txt` run as a
+# real LLM call and its local claim ids reconciled against the actual `Claim`
+# rows, which is a second extraction pipeline in its own right. The orchestrator
+# never offers it as a target for now, so `linked_claim_text` stays None and
+# the prompt's LINKED CLAIM section always renders its "none" branch — which is
+# the behaviour the prompt itself already specifies for every other target.
+# ===========================================================================
+
+from api.engine import v2_evidence_planner as evidence_planner
+
+# Storage-compatibility label only, same role as MOVE_PROBE_LEVEL above:
+# `questions.probe_level` is NOT NULL and the evidence graph keys off it, so an
+# EvidenceCategory question still records one. Categories with no direct
+# analogue take the nearest family match (CONSTRAINT -> EXCLUSION's DECISION,
+# ARTIFACT -> OWNERSHIP_BOUNDARY's VALIDATION, CROSS_CLAIM_LINK -> PERTURB's
+# TRANSFER, on the same reasoning MOVE_PROBE_LEVEL used for each).
+EVIDENCE_PROBE_LEVEL: dict["evidence_planner.EvidenceCategory", ProbeLevel] = {
+    evidence_planner.EvidenceCategory.OWNERSHIP: ProbeLevel.VALIDATION,
+    evidence_planner.EvidenceCategory.PROCESS: ProbeLevel.OPERATIONAL,
+    evidence_planner.EvidenceCategory.METRIC_DEFINITION: ProbeLevel.OUTCOME,
+    evidence_planner.EvidenceCategory.DECISION: ProbeLevel.DECISION,
+    evidence_planner.EvidenceCategory.DEPENDENCY: ProbeLevel.OPERATIONAL,
+    evidence_planner.EvidenceCategory.INCIDENT: ProbeLevel.INCIDENT,
+    evidence_planner.EvidenceCategory.CONSTRAINT: ProbeLevel.DECISION,
+    evidence_planner.EvidenceCategory.CAUSAL_CHAIN: ProbeLevel.OUTCOME,
+    evidence_planner.EvidenceCategory.ARTIFACT: ProbeLevel.VALIDATION,
+    evidence_planner.EvidenceCategory.CROSS_CLAIM_LINK: ProbeLevel.TRANSFER,
+}
+
+
+def _known_evidence_summary(
+    coverage: "dict[evidence_planner.EvidenceCategory, evidence_planner.CoverageState]",
+    ledger: "Sequence[LedgerFact]",
+) -> str:
+    """`$known_evidence` — coverage per category, then the actual established
+    facts with their quotes. The category line alone cannot satisfy the
+    prompt's own ANCHORING requirement (it needs a specific person, tool,
+    system or event, not a category label), so this reuses `_ledger_summary`,
+    the same renderer the Move path already uses for its `$ledger` slot.
+    """
+    lines = [
+        f"  {category.value}: {state.value}"
+        for category, state in coverage.items()
+        if state is not evidence_planner.CoverageState.MISSING
+    ]
+    header = "\n".join(lines) if lines else "  (nothing established yet)"
+    return f"{header}\n\n{_ledger_summary(ledger)}"
+
+
+def _evidence_fallback(category: "evidence_planner.EvidenceCategory", claim_text: str) -> str:
+    """Generic and deliberately unvalidated — the same pattern CLAUDE.md
+    documents for the probe-level fallback: it quotes the claim, trips
+    `answer_leakage` by construction, and exists so a path always exists even
+    when the model is unavailable or rejected twice (rule 5).
+    """
+    topic = category.value.lower().replace("_", " ")
+    return f'On "{claim_text}" — tell me more about the {topic} involved.'
+
+
+def _evidence_prompt(
+    claim_text: str,
+    category: "evidence_planner.EvidenceCategory",
+    anatomy: ClaimAnatomy,
+    coverage: "dict[evidence_planner.EvidenceCategory, evidence_planner.CoverageState]",
+    ledger: "Sequence[LedgerFact]",
+    linked_claim_text: str | None,
+) -> str:
+    forbidden = ", ".join(f'"{f}"' for f in anatomy.forbidden) or "(no figures in this claim)"
+    is_first_question = all(
+        state is evidence_planner.CoverageState.MISSING for state in coverage.values()
+    )
+    return load_prompt(
+        "v2_forensic_question",
+        claim_text=claim_text,
+        mechanism=anatomy.mechanism or "(not stated)",
+        object=anatomy.object or "(not stated)",
+        metric_name=anatomy.metric_name or "(this claim names no metric — do not invent one)",
+        target_evidence=category.value,
+        known_evidence=_known_evidence_summary(coverage, ledger),
+        claim_graph_context=(
+            f"Linked claim: {linked_claim_text}" if linked_claim_text
+            else "(none — no linked claim for this target)"
+        ),
+        orientation_note=_orientation_note(is_first_question),
+        forbidden=forbidden,
+    )
+
+
+async def generate_evidence_question(
+    claim_text: str,
+    category: "evidence_planner.EvidenceCategory",
+    *,
+    anatomy: ClaimAnatomy,
+    coverage: "dict[evidence_planner.EvidenceCategory, evidence_planner.CoverageState]",
+    ledger: "Sequence[LedgerFact]" = (),
+    alt_categories: "Sequence[evidence_planner.EvidenceCategory]" = (),
+    linked_claim_text: str | None = None,
+    claim_type: str | None = None,
+    claim_metric: str | None = None,
+    job_family: str = "general",
+    prior_questions: "Sequence[str]" = (),
+    prior_answers: "Sequence[str]" = (),
+    other_claims: "Sequence[str]" = (),
+) -> QuestionAttempt:
+    """Same two-attempt/retarget/fallback shape as generate_forensic_question.
+
+    `alt_categories` is expected pre-filtered by the caller (the orchestrator's
+    planner already excludes established, unavailable and just-touched
+    categories when it builds this list) — unlike the Move path, nothing here
+    re-checks a precondition before offering a retarget.
+    """
+    probe_level = EVIDENCE_PROBE_LEVEL[category]
+
+    def check(text: str, for_category: "evidence_planner.EvidenceCategory") -> tuple[bool, tuple[str, ...]]:
+        if violates_prohibition(text, ledger):
+            return False, ("prohibited_shape",)
+        result = validate(
+            text,
+            claim_text=claim_text,
+            claim_type=claim_type,
+            claim_metric=claim_metric,
+            job_family=job_family,
+            probe_level=EVIDENCE_PROBE_LEVEL[for_category],
+            prior_questions=list(prior_questions),
+            prior_answers=list(prior_answers),
+            other_claims=list(other_claims),
+        )
+        return result.accepted, result.violations
+
+    async def ask(for_category: "evidence_planner.EvidenceCategory") -> ForensicQuestion | None:
+        sentinel = ForensicQuestion(question="")
+        result = await complete_json(
+            _evidence_prompt(claim_text, for_category, anatomy, coverage, ledger, linked_claim_text),
+            ForensicQuestion,
+            temperature=settings.llm_temperature_question,
+            fallback=lambda: sentinel,
+            cache=False,
+        )
+        text = (result.question or "").strip()
+        if len(text) < 12:
+            return None
+        return ForensicQuestion(
+            question=text,
+            target_signal=(result.target_signal or "").strip()[:200],
+            reasoning=(result.reasoning or "").strip()[:400],
+        )
+
+    claim_ref = claim_text[:60]
+
+    # --- attempt 1 ------------------------------------------------------
+    first = await ask(category)
+    if first is not None:
+        accepted, violations = check(first.question, category)
+        log.info(
+            "evidence attempt 1/2 claim=%r category=%s draft=%r verdict=%s violations=%s",
+            claim_ref, category.value, first.question,
+            "passed" if accepted else "failed", list(violations),
+        )
+        if accepted:
+            return QuestionAttempt(
+                first.question, probe_level, "model", 1, (),
+                category.value, first.target_signal, first.reasoning,
+            )
+        first_violations = violations
+    else:
+        log.info("evidence attempt 1/2 claim=%r category=%s — no usable model output",
+                 claim_ref, category.value)
+        first_violations = ("model_unavailable",)
+
+    # --- attempt 2: a DIFFERENT CATEGORY, not a repair of attempt 1 -----
+    retarget = next((c for c in alt_categories if c is not category), None)
+    if retarget is not None:
+        second = await ask(retarget)
+        if second is not None:
+            accepted, violations = check(second.question, retarget)
+            log.info(
+                "evidence attempt 2/2 claim=%r category=%s (re-targeted from %s) "
+                "draft=%r verdict=%s violations=%s",
+                claim_ref, retarget.value, category.value, second.question,
+                "passed" if accepted else "failed", list(violations),
+            )
+            if accepted:
+                return QuestionAttempt(
+                    second.question, EVIDENCE_PROBE_LEVEL[retarget], "regenerated", 2,
+                    first_violations, retarget.value,
+                    second.target_signal, second.reasoning,
+                )
+
+    # --- fallback ---------------------------------------------------------
+    text = _evidence_fallback(category, claim_text)
+    log.info("evidence fallback claim=%r category=%s question=%r",
+             claim_ref, category.value, text)
+    return QuestionAttempt(
+        text, probe_level, "fallback", 2, first_violations,
+        category.value, "", "python fallback: model unavailable or rejected twice",
     )

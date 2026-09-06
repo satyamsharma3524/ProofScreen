@@ -50,6 +50,7 @@ from api.engine import evidence as evidence_engine
 from api.engine import question as question_engine
 from api.engine import scoring
 from api.engine import signals as signal_rubrics
+from api.engine import v2_evidence_planner as evidence_planner
 from api.engine.extract import extract_claims
 from api.models import (
     Candidate,
@@ -103,6 +104,11 @@ class Plan:
     alt_moves: tuple["question_engine.Move", ...] = ()
     anatomy: "anatomy_engine.ClaimAnatomy | None" = None
     ledger: tuple["question_engine.LedgerFact", ...] = ()
+    # --- v2 evidence-category selection. Defaulted for the same reason: three
+    # planners now coexist behind two flags, and only one of move/
+    # evidence_category is ever set on a given Plan.
+    evidence_category: "evidence_planner.EvidenceCategory | None" = None
+    alt_categories: tuple["evidence_planner.EvidenceCategory", ...] = ()
 
 
 @dataclass
@@ -121,6 +127,14 @@ class ClaimState:
     # else comes from `responses.signals_json`, which was already being parsed.
     moves_used: set[str] = field(default_factory=set)
     dear_by_answer: list[int] = field(default_factory=list)
+    # --- v2 evidence-category state. `questions.move` holds EvidenceCategory
+    # values instead of Move values when EVIDENCE_PLANNER_V2 is on — same
+    # column, never mixed within one session. Ordered, parallel to
+    # `answer_signals`, because `evidence_state` below has to replay
+    # `update_coverage()` turn by turn (PARTIAL -> ESTABLISHED and the
+    # EXHAUST_AFTER counter are both turn-order-dependent), unlike `moves_used`
+    # above which only needs a flat set.
+    targeted_sequence: list[str | None] = field(default_factory=list)
 
     @property
     def saturated(self) -> bool:
@@ -185,6 +199,30 @@ class ClaimState:
         """This claim's established facts. `answer_signals` is already parsed
         from `responses.signals_json`; nothing new is read or stored."""
         return question_engine.build_ledger(self.answer_signals)
+
+    @property
+    def evidence_state(self) -> "evidence_planner.EvidenceState":
+        """v2 planner coverage, replayed fresh from stored rows — same
+        derive-don't-persist approach as `ledger` above, just turn-sequential
+        because coverage state and the exhaustion counter both depend on order.
+
+        `targeted_sequence` may hold Move-vocabulary strings for a claim asked
+        under the OTHER planner (the column is shared) — `EvidenceCategory(mv)`
+        raises on those, caught and treated as untargeted, same as the
+        `ProbeLevel(question.probe_level)` guard already does in
+        `build_claim_states` for the same kind of foreign value.
+        """
+        state = evidence_planner.new_state(self.claim.id)
+        for mv, sig in zip(self.targeted_sequence, self.answer_signals):
+            targeted = None
+            if mv:
+                try:
+                    targeted = evidence_planner.EvidenceCategory(mv.split(",")[0])
+                except ValueError:
+                    targeted = None
+            observed = evidence_planner.coverage_from_signals(sig.model_dump())
+            state = evidence_planner.update_coverage(state, observed, targeted=targeted)
+        return state
 
     @property
     def dear_total(self) -> int:
@@ -392,6 +430,7 @@ async def build_claim_states(
         # answer from the candidate and suppressing it would lose signal.
         sig = evidence_engine.signals_of(response.signals_json)
         state.answer_signals.append(sig)
+        state.targeted_sequence.append(question.move)
         if question.move:
             state.moves_used.update(question.move.split(","))
 
@@ -889,14 +928,74 @@ def _moves_spent(plan: Plan, generated: "question_engine.QuestionAttempt") -> st
     """Which ladder slots this question consumed. Comma-joined, planner-facing.
 
     `build_claim_states` splits this back into `moves_used`, so a move recorded
-    here is never selected again for this claim.
+    here is never selected again for this claim. Same column, same
+    both-planned-and-delivered convention, for whichever of `plan.move` /
+    `plan.evidence_category` is set — never both.
     """
-    if plan.move is None:
+    primary = plan.move.value if plan.move is not None else (
+        plan.evidence_category.value if plan.evidence_category is not None else None
+    )
+    if primary is None:
         return generated.move or None
-    spent = [plan.move.value]
-    if generated.move and generated.move != plan.move.value:
+    spent = [primary]
+    if generated.move and generated.move != primary:
         spent.append(generated.move)
     return ",".join(spent)
+
+
+def plan_next_evidence(states: list[ClaimState], index: int) -> Plan | None:
+    """v2 planner selection: EvidenceCategory instead of Move.
+
+    Per claim, heaviest-first (already the order `states` arrives in),
+    `evidence_planner.plan_next()` picks the highest-priority category that
+    isn't ESTABLISHED, exhausted, escalation-locked or just-touched. First
+    claim with a target wins — a fresh claim's state starts all-MISSING, so
+    this naturally opens every claim before deepening any one of them, the
+    same breadth-then-depth shape `plan_next_forensic` gets from its explicit
+    two-phase loop.
+
+    `graph_edges` is always empty here: CROSS_CLAIM_LINK needs `claim_graph.txt`
+    run as a real LLM call and its local ids reconciled against actual `Claim`
+    rows, which is deferred. `evidence_planner.plan_next()` already treats an
+    empty graph as "no edge to hang it on" and falls through to the next
+    category, so CROSS_CLAIM_LINK is simply never offered — not a crash, not a
+    stuck category.
+    """
+    if index >= settings.max_questions or not states:
+        return None
+
+    for state in states:
+        anatomy = state.anatomy
+        ev_state = state.evidence_state
+        target = evidence_planner.plan_next(ev_state, has_metric=anatomy.has_metric)
+        if target is None:
+            continue
+        # Escalation-gated the same way plan_next() itself gates the primary
+        # choice — a retarget must not reach a harder category than the claim
+        # has unlocked. `target.escalation_level` is plan_next()'s own unlocked
+        # ceiling at selection time (never above it, by construction); using it
+        # here rather than re-deriving `_unlocked_level` keeps this in sync
+        # with that private function without depending on it directly.
+        # CAUGHT LIVE: without this, a rejected PROCESS draft on a fresh claim
+        # retargeted straight to INCIDENT (escalation level 3) — the backdoor
+        # this filter closes.
+        alt = tuple(
+            c for c in evidence_planner.PRIORITY_ORDER
+            if c is not target.target_evidence
+            and c is not evidence_planner.EvidenceCategory.CROSS_CLAIM_LINK
+            and evidence_planner.ESCALATION_LEVEL[c] <= target.escalation_level
+            and ev_state.coverage.get(c) is not evidence_planner.CoverageState.ESTABLISHED
+        )
+        return Plan(
+            claim=state.claim,
+            probe_level=question_engine.EVIDENCE_PROBE_LEVEL[target.target_evidence],
+            reason=target.reason,
+            evidence_category=target.target_evidence,
+            alt_categories=alt,
+            anatomy=anatomy,
+            ledger=state.ledger,
+        )
+    return None
 
 
 async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
@@ -914,7 +1013,9 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
 
     states = await build_claim_states(db, session)
     plan = (
-        plan_next_forensic(states, session.questions_asked)
+        plan_next_evidence(states, session.questions_asked)
+        if settings.evidence_planner_v2
+        else plan_next_forensic(states, session.questions_asked)
         if settings.forensic_questions
         else plan_next(states, session.questions_asked)
     )
@@ -945,6 +1046,7 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
                 "claim_id": plan.claim.id,
                 "probe_level": plan.probe_level.value,
                 "move": plan.move.value if plan.move else None,
+                "evidence_category": plan.evidence_category.value if plan.evidence_category else None,
                 "archetype": plan.anatomy.archetype.value if plan.anatomy else None,
                 "dear_facts": sum(1 for f in plan.ledger if f.is_dear),
                 "target_dimension": plan.target_dimension.value if plan.target_dimension else None,
@@ -969,7 +1071,30 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         )
         target_claim = target.text if target else None
 
-    if plan.move is not None:
+    if plan.evidence_category is not None:
+        # v2 evidence-category path. Same anatomy/ledger inputs as the
+        # forensic path below, rendered against v2_forensic_question.txt with
+        # the EvidenceCategory vocabulary instead of Move.
+        planned_state = next(s for s in states if s.claim.id == plan.claim.id)
+        generated = await question_engine.generate_evidence_question(
+            plan.claim.text,
+            plan.evidence_category,
+            anatomy=plan.anatomy,
+            coverage=planned_state.evidence_state.coverage,
+            ledger=plan.ledger,
+            alt_categories=plan.alt_categories,
+            claim_type=plan.claim.claim_type,
+            claim_metric=plan.claim.metric,
+            job_family=session.job_family,
+            prior_questions=[q for q, _ in prior],
+            prior_answers=[a for _, a in prior],
+            other_claims=[s.claim.text for s in states if s.claim.id != plan.claim.id],
+        )
+        log.info(
+            "evidence question chosen claim=%s category=%s source=%s target=%r",
+            plan.claim.id, generated.move, generated.source, generated.target_signal,
+        )
+    elif plan.move is not None:
         # Forensic path. The generator receives the claim DECOMPOSED and the
         # ledger of what the candidate has already established — neither of
         # which the probe-level generator could see, though both already
@@ -1533,6 +1658,30 @@ async def find_active_session_by_phone(
 # ---------------------------------------------------------------------------
 
 
+def _rotate_session_fresh(
+    moves: list["question_engine.Move"], session_used: set[str]
+) -> list["question_engine.Move"]:
+    """LIVE_INTERVIEW_QUALITY_AUDIT F2/P3 — prefer a move not already spent on
+    ANY claim this session, not just this one.
+
+    Two same-archetype claims (e.g. two "built X" claims, both `BUILD`) open on
+    the identical ladder entry, `OPERATING_CONTEXT`, and its wording is
+    formulaic enough that the second draft trips `duplicate_content` against
+    the first. The retarget that follows then picks the next ladder entry —
+    `DEPENDENCY` for `BUILD` — independently for every claim that lands here,
+    so a third same-archetype claim repeats the exact same collision. Filtering
+    by what the SESSION has already spent, not just this claim, breaks that:
+    once one claim has used a move, a sibling claim's turn skips straight past
+    it to whatever is next on its own ladder.
+
+    Falls back to the unfiltered list when every remaining move has already
+    been used elsewhere this session — a repeated move is still better than
+    skipping this claim's turn entirely.
+    """
+    fresh = [m for m in moves if m.value not in session_used]
+    return fresh or moves
+
+
 def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     """Choose (claim, move) for question `index`.
 
@@ -1549,8 +1698,14 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     if index >= settings.max_questions or not states:
         return None
 
+    # F2/P3 — moves already spent anywhere this session, across every claim.
+    # Read fresh each call from `moves_used`, which `build_claim_states` already
+    # populates from the persisted `questions.move` column — no new storage.
+    session_used: set[str] = set().union(*(s.moves_used for s in states))
+
     def brief(state: ClaimState, move: "question_engine.Move", reason: str) -> Plan:
         left = [m for m in state.forensic_moves_left() if m is not move]
+        rotated = _rotate_session_fresh(left, session_used)
         return Plan(
             claim=state.claim,
             probe_level=question_engine.MOVE_PROBE_LEVEL[move],
@@ -1559,8 +1714,9 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
             move=move,
             # Attempt two re-targets to one of these rather than re-wording the
             # rejected draft. TRANSFER is excluded: it is earned by a stall, not
-            # reached by falling through a rejection.
-            alt_moves=tuple(m for m in left if m is not question_engine.Move.PERTURB),
+            # reached by falling through a rejection. Session-fresh first, so
+            # the retarget does not repeat a move a sibling claim already spent.
+            alt_moves=tuple(m for m in rotated if m is not question_engine.Move.PERTURB),
             anatomy=state.anatomy,
             ledger=state.ledger,
         )
@@ -1568,7 +1724,7 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     # 1 — breadth. Heaviest-first ordering is already applied by the caller.
     for state in states:
         if not state.moves_used:
-            moves = state.forensic_moves_left()
+            moves = _rotate_session_fresh(state.forensic_moves_left(), session_used)
             if moves:
                 return brief(
                     state, moves[0],
@@ -1591,7 +1747,7 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     for state in states:
         if state.forensic_closed:
             continue
-        moves = [m for m in state.forensic_moves_left()
+        moves = [m for m in _rotate_session_fresh(state.forensic_moves_left(), session_used)
                  if m is not question_engine.Move.PERTURB]
         if moves:
             return brief(

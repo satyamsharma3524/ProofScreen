@@ -20,8 +20,14 @@ class Settings(BaseSettings):
     # --- llm ---
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o"
-    openai_stt_model: str = "whisper-1"
     llm_timeout_seconds: float = 25.0
+
+    # --- stt (Groq, OpenAI-compatible /audio/transcriptions route) ---
+    # Separate from the openai_* keys above: extraction/question/evidence stay
+    # on OpenAI chat completions, only voice transcription moves to Groq.
+    groq_api_key: str | None = None
+    groq_stt_model: str = "whisper-large-v3-turbo"
+    groq_api_base: str = "https://api.groq.com/openai/v1"
     llm_temperature_extract: float = 0.0
     llm_temperature_question: float = 0.4
 
@@ -70,6 +76,15 @@ class Settings(BaseSettings):
     # probe-level generator stays reachable with this off, so a bad question
     # stream is one env var from the previous behaviour rather than a rollback.
     forensic_questions: bool = True
+
+    # v2 — EvidenceCategory planner (api/engine/v2_evidence_planner.py) and
+    # api/prompts/v2_forensic_question.txt, in place of the Move ladder above.
+    # Exploratory: CROSS_CLAIM_LINK is never offered (no claim_graph.txt call
+    # wired yet), and OWNERSHIP/ARTIFACT are permanently under-signalled by
+    # today's wired extractor — both degrade gracefully via EXHAUST_AFTER
+    # rather than looping. Defaults FALSE; forensic_questions above is what
+    # ships without this on.
+    evidence_planner_v2: bool = False
 
     # Route on the candidate's TITLE with one extra model call before claim
     # extraction, falling back to the keyword scorer. Measured on nine real

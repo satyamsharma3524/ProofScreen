@@ -1,0 +1,220 @@
+You are building a WORK GRAPH from a resume — not a list of claims, and not a
+keyword network. A work graph exists to answer exactly one question for the
+interviewer that comes after you:
+
+> Where does evidence about one piece of work change confidence in another?
+
+Nothing here is scored, ranked or rated. You return structure; deciding what
+to do with it happens later, in code that reads what you found.
+
+STEP 1 — CLAIMS ARE NODES
+--------------------------
+Read the resume once and extract every claim: a specific, falsifiable
+statement about something this person did, owned, built, changed, ran or
+measured.
+
+REJECT FLUFF. These are not claims:
+  "team player", "results-driven", "excellent communication skills",
+  "passionate about technology", "detail oriented", "strong work ethic"
+Job-title headings ("Support Lead, Acme, 2021 - present") and skill lists
+("Python, SQL, Tableau") are not claims either.
+
+CAPTURE ALL OF THESE, whatever the person's field:
+  - something they owned or were responsible for
+  - something they built, implemented or set up
+  - a connection they made between two systems, teams or parties
+  - a design, process or approach they chose
+  - a migration, rollout, launch or delivery they carried out
+  - an improvement they made to something that already existed
+  - people they led, trained, coordinated or managed
+  - a number they moved, hit or held
+
+This step is RECALL-FIRST: find every claim, do not decide which ones matter,
+do not merge two related claims into one. Give each claim a local id in the
+order it appears: c1, c2, c3, ...
+
+SPLIT COMPOUND BULLETS. A bullet joined by "by X-ing and Y-ing", "through A
+and B", or a semicolon splicing two actions together is usually TWO or THREE
+claims, not one — each piece is verified by a different question, and this
+step exists specifically so a later step can find the edge between them.
+"Spearheaded the RCA solution by generating synthetic datasets and training
+bespoke models" is THREE claims: the RCA solution (the outcome), generating
+the datasets (one method), training the models (a second method) — never one
+claim with the dataset squeezed into a field of another. When in doubt,
+split: a claim list with too many claims loses nothing downstream; one that
+silently merges two pieces of work loses the edge between them, which is
+this whole prompt's reason to exist.
+
+STEP 2 — DECOMPOSE EVERY CLAIM INTO ITS WORK OBJECT
+------------------------------------------------------
+A claim is a sentence. Before you can see how claims connect, break each one
+into the pieces that carry the connection:
+
+  action   - the verb: what they did. One word or short phrase.
+             "engineered", "migrated", "trained", "owned".
+  object   - the thing the action was done to.
+             "MoE models", "the RCA solution", "the onboarding flow".
+  artifact - a concrete, reusable thing this claim's work produced, if the
+             sentence implies one that exists separately from the claim
+             itself — a dataset, a framework, a pipeline, a document, a
+             trained model, a service. null if this claim is ownership,
+             process or volume work with no distinct output.
+  metric   - the measurable core, compressed. Use "before -> after" when the
+             resume states both: "78% -> 92%", "9 hours -> 45 minutes". Use
+             the bare figure otherwise: "50-member team", "18 services".
+             null when the claim carries no number.
+  systems  - every named system, tool, team, company or platform this claim
+             touches. [] if none.
+
+Example. Resume sentence: "Engineered and deployed production-grade MoE
+models used by enterprise teams for high-throughput inference" becomes:
+
+  {
+    "action": "engineered",
+    "object": "MoE models",
+    "artifact": "production-grade MoE model framework",
+    "metric": null,
+    "systems": ["enterprise teams"]
+  }
+
+Decompose every claim this way, even ones with no artifact and no systems —
+`artifact: null, systems: []` is a complete, correct decomposition for a
+claim that has neither.
+
+STEP 3 — PROMOTE SHARED WORK OBJECTS TO NODES
+------------------------------------------------
+A claim node is one sentence of self-reported work. Three other kinds of
+node exist, and each earns a place ONLY when the Step 2 decomposition shows
+the SAME thing recurring across more than one claim — something that shows
+up once, in one claim's decomposition, with nothing else pointing at it, is
+not a node.
+
+ENTITY   — a value that appears in more than one claim's `systems` list, or
+           in one claim's `systems` and is also the `object`/`artifact` of
+           another claim. Do NOT promote a generic programming language,
+           framework or commodity tool (React, Redux, Python, Docker, SQL,
+           Tailwind CSS) just because it recurs — a developer's own stack
+           repeats across nearly every bullet by definition, and that
+           repetition carries no connective information. Promote a system
+           only when its recurrence would be notable if said out loud: a
+           named integration partner, a specific internal platform, a named
+           client, vendor or product the resume treats as a distinct thing
+           rather than as tooling.
+ARTIFACT — one claim's `artifact` that is referenced again, by name or clear
+           equivalent, in another claim's `object`, `artifact` or `systems`.
+METRIC   — a `metric` NAME (not the value) that recurs, worded the same or
+           unmistakably the same measure, across more than one claim — e.g.
+           "average handle time" tracked in one role and again in another.
+
+When a node merges wording from two claims that named it slightly
+differently, use whichever wording is clearest and most complete as its
+`name`.
+
+Give each its own local id: entities e1, e2, ...; artifacts a1, a2, ...;
+metrics m1, m2, ...
+
+If nothing in this resume's decomposition genuinely recurs across claims,
+return an empty list for nodes. Inventing one to have something to connect
+is exactly the failure this step exists to prevent.
+
+STEP 4 — EDGES: EXACTLY FOUR TYPES, AND ONLY FOUR
+----------------------------------------------------
+An edge connects two nodes — claim to claim, or claim to entity/artifact/
+metric — using exactly one of these four types, and it must be grounded in
+the Step 2 decomposition of at least one side (a matching `artifact`,
+`object` or `systems` value, not a vibe). There is no fifth type, and there
+is no RELATED or MENTIONS type: if what you want to say does not fit one of
+the four below, it is not an edge.
+
+DEPENDS_ON — <from> requires <to>. <from> could not exist without <to> being
+true first. Typically: <from>'s `object` or `systems` names <to>'s
+`artifact`.
+  Example: "Built RCA solution" DEPENDS_ON "Generated synthetic reasoning
+  dataset" — no dataset, no model; no model, no RCA system.
+
+PRODUCED — <from> produced <to>. <from>'s `artifact` becomes a node, and
+<to> is that node or a claim that consumes it.
+  Example: "Generated synthetic reasoning dataset" PRODUCED "training
+  corpus" (an artifact node).
+
+EXTENDS — <from> improved or evolved <to>. <from> is a later, better version
+of work <to> already did — usually visible as the same `object` or
+`artifact` recurring with a changed `metric` or an upgraded `action`.
+  Example: "Fine-tuned model on production traffic" EXTENDS "Trained base
+  RCA model".
+
+ENABLED — <from> made <to> possible. <from> is a precondition for <to>, not
+an ingredient of it: <to> is not a refinement of <from> (that would be
+EXTENDS) and does not consume something <from> produced (that would be
+PRODUCED or DEPENDS_ON) — without <from>, <to> would not have been
+attempted at all.
+  Example: "Built anonymization service" ENABLED "Compliance pipeline".
+
+THE SENTENCE TEST — apply it before you write any edge down
+For every edge you propose, write out the literal sentence: "<from's text>
+<verb for this type> <to's text>." If that sentence is obviously true and
+specific, keep the edge. If it sounds forced, generic, or you had to squint
+to make it fit — delete the edge. Nothing downstream re-checks these edges
+against the resume; if the sentence is weak, the edge is wrong, full stop.
+
+WHAT IS NOT A VALID REASON FOR AN EDGE
+Two claims sharing a word is NOT a dependency, and it is not the same as
+sharing a Step 2 field value. "Built the RCA model" and "Presented RCA
+findings to leadership" both say "RCA" in their text, but neither's `object`
+is the other's `artifact` — that is not evidence one needed the other. The
+test is never "do these mention the same term", it is "would the LATER
+claim's work have been impossible, or meaningfully different, if the
+EARLIER one had not happened." If your only reason to connect two claims is
+shared vocabulary rather than a matching decomposed field, do not write the
+edge.
+
+DIRECTION IS NOT OPTIONAL
+Every edge has a direction, set by which node is the grammatical subject of
+the sentence above: <from> is whichever one is doing the requiring /
+producing / extending / enabling. Never emit an undirected pair, and never
+emit both directions between the same two nodes for the same type.
+
+PRECISION OVER RECALL
+Step 1 was recall-first: get every claim, even weak ones. Steps 3 and 4 are
+the opposite. An empty "nodes" or "edges" list is a complete and correct
+answer for a resume where nothing genuinely recurs or depends on anything
+else — most single-role, non-technical resumes will have few or zero edges,
+and that is fine. Do not invent structure to make the graph look richer than
+the resume actually is.
+
+MECHANICS
+  - No self-loops: from and to must be different nodes.
+  - No duplicate edges: the same (from, to, type) triple must not appear
+    twice.
+  - Reference nodes only by the local ids assigned in Steps 1 and 3 — never
+    inline claim text as an id.
+
+RESUME
+------
+$resume_text
+------
+
+Return ONLY JSON, no prose, no markdown fences, matching this schema:
+
+{
+  "claims": [
+    {
+      "id": "c1",
+      "text": "string",
+      "action": "string",
+      "object": "string",
+      "artifact": "string or null",
+      "metric": "string or null",
+      "systems": ["string"],
+      "verifiable": true
+    }
+  ],
+  "nodes": [
+    {"id": "e1", "type": "entity", "name": "string"},
+    {"id": "a1", "type": "artifact", "name": "string"},
+    {"id": "m1", "type": "metric", "name": "string"}
+  ],
+  "edges": [
+    {"from": "c1", "type": "DEPENDS_ON", "to": "a1", "reason": "one sentence completing the test above"}
+  ]
+}

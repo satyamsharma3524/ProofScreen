@@ -11,8 +11,8 @@ asyncpg>=0.29
 aiosqlite>=0.20          # tests only: lets the suite run without Postgres
 
 # --- llm / stt ---
-openai>=1.40             # chat completions + Whisper (verbose_json for duration)
-httpx>=0.27              # WhatsApp Cloud API calls and media download
+openai>=1.40             # chat completions only (extraction/question/evidence)
+httpx>=0.27              # WhatsApp Cloud API + media download + Groq STT (raw, no SDK)
 
 # --- resume ingest ---
 pymupdf>=1.24            # PDF  -> import pymupdf (falls back to fitz)

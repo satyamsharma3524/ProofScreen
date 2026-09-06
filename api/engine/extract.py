@@ -603,7 +603,7 @@ async def extract_claims(
     # family's importance weights. It is the pre-inventory behaviour and it is
     # what runs while `CLAIM_INVENTORY=false`.
     candidates: list[ExtractedClaim] = []
-    seen_types: set[str] = set()
+    pool: list[ExtractedClaim] = []
     seen_text: set[str] = set()
     # OBSERVABILITY ONLY: every raw claim the model proposed, tagged with why it
     # did or did not make `candidates`. None of this feeds a decision — it is
@@ -641,12 +641,7 @@ async def extract_claims(
             },
         )
 
-        if not settings.claim_inventory:
-            if claim_type in seen_types:
-                rejected.append((text, f"one-per-type cap: {claim_type} already kept"))
-                continue       # one claim per type: breadth beats depth here
-            seen_types.add(claim_type)
-        candidates.append(
+        pool.append(
             ExtractedClaim(
                 text=text,
                 claim_type=claim_type,
@@ -654,6 +649,34 @@ async def extract_claims(
                 verifiable=True,
             )
         )
+
+    if settings.claim_inventory:
+        candidates = pool
+    else:
+        # LIVE_INTERVIEW_QUALITY_AUDIT F4/P2 — rank by strength BEFORE the
+        # one-per-type cap decides who keeps the slot, not by document
+        # position. A resume lists jobs in reverse-chronological order, not in
+        # order of evidentiary strength, so the old cap kept whichever claim of
+        # a type happened to appear first on the page: the summary's own
+        # lead achievement lost its slot to an earlier, weaker line of the same
+        # type in both real interviews this session was measured against.
+        # Weight, then a metric beating no metric, then document position as
+        # the final tiebreak.
+        weights = default_claim_weights(family)
+        ranked = sorted(
+            enumerate(pool),
+            key=lambda iv: (-weights.get(iv[1].claim_type, 0.0), not iv[1].metric, iv[0]),
+        )
+        seen_types: set[str] = set()
+        for _, ranked_claim in ranked:
+            if ranked_claim.claim_type in seen_types:
+                rejected.append((
+                    ranked_claim.text,
+                    f"one-per-type cap: {ranked_claim.claim_type} already kept",
+                ))
+                continue       # one claim per type: breadth beats depth here
+            seen_types.add(ranked_claim.claim_type)
+            candidates.append(ranked_claim)
 
     if settings.claim_inventory:
         # Not a top-N -- a warning-logged backstop against a pathological
