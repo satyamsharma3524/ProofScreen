@@ -182,6 +182,7 @@ class WhatsAppCloudChannel(BaseChannel):
 
     async def send_text(self, to: str, text: str) -> bool:
         """Free-form message. Only valid inside the 24-hour window."""
+        log.info("whatsapp outbound: %s", text)
         return await self._post(
             {
                 "messaging_product": "whatsapp",

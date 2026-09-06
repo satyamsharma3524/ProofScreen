@@ -571,6 +571,14 @@ def select_transfer(
     )
     if others:
         target = others[0]
+        log.info(
+            "transfer selection: source_claim=%s(%s) target_claim=%s(%s) "
+            "strategy=T1 selection_method='first other claim by resume order_index' "
+            "semantic_similarity=not_computed (this architecture has no topical-"
+            "relevance check between claims — any other claim on the resume is a "
+            "valid T1 target by design, see select_transfer() docstring)",
+            claim.id, claim.claim_type, target.id, target.claim_type,
+        )
         return question_engine.TransferSpec(
             operator=question_engine.TransferOperator.T1,
             their_method=method,
@@ -582,6 +590,11 @@ def select_transfer(
             ),
         )
 
+    log.info(
+        "transfer selection: source_claim=%s(%s) target_claim=none strategy=T3 "
+        "selection_method='only claim on this resume, no T1 target available'",
+        claim.id, claim.claim_type,
+    )
     return question_engine.TransferSpec(
         operator=question_engine.TransferOperator.T3,
         their_method=method,
@@ -815,6 +828,39 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
 
     states = await build_claim_states(db, session)
     plan = plan_next(states, session.questions_asked)
+
+    log.info(
+        "=== INTERVIEW SNAPSHOT === session=%s turn=%d remaining_budget=%d claims=%s "
+        "chosen=%s",
+        session.id, session.questions_asked + 1,
+        settings.max_questions - session.questions_asked,
+        [
+            {
+                "claim_id": s.claim.id,
+                "claim_type": s.claim.claim_type,
+                "weight": s.weight,
+                "score": s.score,
+                "answers": s.answers,
+                "saturated": s.saturated,
+                "stalled": s.stalled,
+                "exhausted": s.exhausted,
+                "dimensions": {
+                    d.value: s.dimensions[d].score for d in s.dimensions
+                } if s.dimensions else {},
+            }
+            for s in states
+        ],
+        (
+            {
+                "claim_id": plan.claim.id,
+                "probe_level": plan.probe_level.value,
+                "target_dimension": plan.target_dimension.value if plan.target_dimension else None,
+                "reason": plan.reason,
+            }
+            if plan is not None
+            else "none — every claim saturated, exhausted or budget spent"
+        ),
+    )
     if plan is None:
         return None
 
@@ -878,6 +924,12 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         plan.probe_level.value, plan.reason,
         f" [{plan.transfer.basis}]" if plan.transfer else "",
     )
+    log.info(
+        "session %s Q%d text (source=%s, attempts=%d%s): %s",
+        session.id, question.order_index + 1, generated.source, generated.attempts,
+        f", violations={list(generated.violations)}" if generated.violations else "",
+        question.text,
+    )
     return question
 
 
@@ -894,6 +946,10 @@ async def _persist_evidence(
     response: Response,
 ) -> int:
     """Run B's engine over one answer and store everything it produced."""
+    log.info(
+        "session %s answer to Q%d (%s): %s",
+        session.id, question.order_index + 1, response.answered_by, response.answer_text,
+    )
     weights = default_claim_weights(session.job_family)
     voice = (
         VoiceSignals(
@@ -916,6 +972,22 @@ async def _persist_evidence(
             known_facts=await known_facts(db, session.id),
             voice=voice,
         )
+    )
+
+    log.info(
+        "answer scoring: response=%s claim=%s probe_level=%s answer_score=%d "
+        "signals_found=%d quotes_dropped=%d contradictions=%d dimensions=%s",
+        response.id, claim.id, question.probe_level, result.answer_score,
+        result.signals_found, result.quotes_dropped, len(result.contradictions),
+        [
+            {
+                "dimension": n.dimension.value,
+                "score": n.score,
+                "basis": n.basis,
+                "quotes": n.quotes,
+            }
+            for n in result.nodes
+        ],
     )
 
     for node in result.nodes:
@@ -1021,6 +1093,11 @@ async def recompute_claim(
             id=ids.score_id(), tenant_id=session.tenant_id, claim_id=claim.id
         )
         db.add(stored)
+        before_score: int | None = None
+        before_dims: dict[Dimension, DimensionScore] = {}
+    else:
+        before_score = stored.score
+        before_dims = _load_dimensions(stored.dimensions_json)
 
     stored.score = score
     stored.dimensions_json = _dump_dimensions(dimensions)
@@ -1029,6 +1106,17 @@ async def recompute_claim(
     summaries = [s.summary for s in answer_signals if s.summary]
     stored.summary = (summaries[-1] if summaries else "")[:400]
     stored.computed_at = utcnow()
+
+    log.info(
+        "claim recompute: claim=%s score_before=%s score_after=%d answers_count=%d "
+        "dimension_deltas=%s",
+        claim.id, before_score, score, len(rows),
+        {
+            d.value: f"{before_dims.get(d).score if d in before_dims else 0}->{dimensions[d].score}"
+            for d in dimensions
+            if (before_dims.get(d).score if d in before_dims else 0) != dimensions[d].score
+        },
+    )
 
     await db.commit()
     return stored
@@ -1209,9 +1297,29 @@ async def finalize(db: AsyncSession, session: ChatSession) -> None:
     # about what this interview concluded.
     from api.engine import evaluation as evaluation_engine
 
-    await evaluation_engine.finalize_evaluation(db, session, scope)
+    evaluation = await evaluation_engine.finalize_evaluation(db, session, scope)
 
     log.info("session %s complete after %d questions", session.id, session.questions_asked)
+
+    all_questions = await _questions_of(db, session.id)
+    all_claims = await _claims_of(db, session.candidate_id)
+    if evaluation is not None:
+        log.info(
+            "=== INTERVIEW SUMMARY === session=%s candidate=%s job_family=%s "
+            "claims_extracted=%d questions_asked=%d repairs=%d fallback_questions=%d "
+            "regenerated_questions=%d transfer_questions=%d resume_score=%d "
+            "weighted_evidence_score=%d competence_score=%d consistency_score=%d "
+            "contradiction_count=%d role_coverage=%d badge=%s",
+            session.id, session.candidate_id, session.job_family,
+            len(all_claims), session.questions_asked,
+            sum(1 for q in all_questions if q.is_repair),
+            sum(1 for q in all_questions if q.source == "fallback"),
+            sum(1 for q in all_questions if q.source == "regenerated"),
+            sum(1 for q in all_questions if q.probe_level == ProbeLevel.TRANSFER.value),
+            evaluation.resume_score, evaluation.weighted_evidence_score,
+            evaluation.competence_score, evaluation.consistency_score,
+            evaluation.contradiction_count, evaluation.role_coverage, evaluation.badge,
+        )
 
 
 # ---------------------------------------------------------------------------

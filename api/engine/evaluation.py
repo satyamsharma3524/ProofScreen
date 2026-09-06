@@ -183,6 +183,22 @@ async def finalize_evaluation(
     for column, value in provenance_engine.current().to_columns().items():
         setattr(evaluation, column, value)
 
+    log.info(
+        "final scoring: session=%s dimension_breakdown=%s claim_breakdown=%s",
+        session.id,
+        {d.dimension.value: d.score for d in graph.dimension_profile},
+        [
+            {
+                "claim_id": c.id,
+                "claim_type": c.claim_type,
+                "weight": c.weight,
+                "claim_score": c.claim_score,
+                "probed_dimensions": c.probed_dimensions,
+            }
+            for c in graph.claims
+        ],
+    )
+
     evaluation.status = EvaluationStatus.finalized.value
     evaluation.finalized_at = utcnow()
 

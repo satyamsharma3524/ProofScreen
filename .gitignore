@@ -8,3 +8,5 @@ venv/
 *.sqlite3
 uploads/
 _to_delete/
+certs/
+docker-compose.override.yml

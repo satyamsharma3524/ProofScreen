@@ -22,6 +22,7 @@ from api.taxonomy import (
     claim_type_menu,
     claim_types,
     classify_claim,
+    classify_claim_debug,
     default_claim_weights,
     detect_family,
     families,
@@ -604,17 +605,45 @@ async def extract_claims(
     candidates: list[ExtractedClaim] = []
     seen_types: set[str] = set()
     seen_text: set[str] = set()
+    # OBSERVABILITY ONLY: every raw claim the model proposed, tagged with why it
+    # did or did not make `candidates`. None of this feeds a decision — it is
+    # assembled from the same branches below, purely so a rejected claim is
+    # still visible in the log instead of vanishing silently.
+    rejected: list[tuple[str, str]] = []
     for claim in result.claims:
         text = (claim.text or "").strip()
-        if not claim.verifiable or len(text) < 15:
+        if not claim.verifiable:
+            rejected.append((text, "model marked not verifiable"))
+            continue
+        if len(text) < 15:
+            rejected.append((text, "shorter than 15 chars"))
             continue
         key = _dedupe_key(text)
         if key in seen_text:
+            rejected.append((text, "duplicate text"))
             continue
         seen_text.add(key)
-        claim_type = normalise_claim_type(family, claim.claim_type, text)
+
+        model_type = claim.claim_type
+        trusted = bool(model_type and model_type in claim_types(family))
+        claim_type = normalise_claim_type(family, model_type, text)
+        log.info(
+            "claim classification: text=%r family=%s model_type=%s trusted=%s "
+            "selected=%s scores=%s",
+            text[:80], family, model_type, trusted, claim_type,
+            {
+                k: v[0]
+                for k, v in sorted(
+                    classify_claim_debug(text, family).items(),
+                    key=lambda kv: -kv[1][0],
+                )
+                if v[0] > 0
+            },
+        )
+
         if not settings.claim_inventory:
             if claim_type in seen_types:
+                rejected.append((text, f"one-per-type cap: {claim_type} already kept"))
                 continue       # one claim per type: breadth beats depth here
             seen_types.add(claim_type)
         candidates.append(
@@ -639,17 +668,40 @@ async def extract_claims(
                 len(candidates), ceiling,
             )
         kept = candidates[:ceiling]
+        dropped_by_limit = candidates[ceiling:]
+        limit_reason = "max_inventory_claims ceiling"
     else:
         weights = default_claim_weights(family)
         candidates.sort(key=lambda c: -weights.get(c.claim_type, 0.0))
         kept = candidates[:limit]
+        dropped_by_limit = candidates[limit:]
+        limit_reason = "max_claims limit, ranked by claim_type weight"
+
+    for c in dropped_by_limit:
+        rejected.append((c.text, limit_reason))
 
     if not kept:
         log.warning("model returned no usable claims, using heuristic")
         kept = heuristic_claims(trimmed, family, ceiling)
 
+    if rejected:
+        log.info(
+            "claim ranking: %d claim(s) not selected: %s",
+            len(rejected),
+            [{"text": t[:70], "reason": r} for t, r in rejected],
+        )
+
     log.info(
         "extracted %d claims for %s (%s)",
         len(kept), family_label(family), ", ".join(c.claim_type or "?" for c in kept),
     )
+    claim_weights_for_log = default_claim_weights(family)
+    for i, c in enumerate(kept):
+        log.info(
+            "claim %d [%s] weight=%s%s: %s",
+            i + 1, c.claim_type or "?",
+            claim_weights_for_log.get(c.claim_type or "", 0.0),
+            f" metric={c.metric}" if c.metric else "",
+            c.text,
+        )
     return family, kept

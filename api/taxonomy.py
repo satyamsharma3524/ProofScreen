@@ -460,6 +460,19 @@ def classify_claim(text: str, family_key: str | None = None) -> str:
     return fallback_claim_type(family_key)
 
 
+def classify_claim_debug(
+    text: str, family_key: str | None = None
+) -> dict[str, tuple[int, tuple[str, ...]]]:
+    """Same keyword scoring as `classify_claim`, broken out per type for
+    observability. Not on the decision path — `classify_claim` does not call
+    this — so it cannot change what gets classified, only what gets logged."""
+    types = claim_types(family_key)
+    return {
+        key: (_hits(text, cfg.get("keywords", [])), _matched(text, cfg.get("keywords", [])))
+        for key, cfg in types.items()
+    }
+
+
 def normalise_claim_type(
     family_key: str | None, type_key: str | None, text: str = ""
 ) -> str:

@@ -508,6 +508,14 @@ async def recompute_profile(
             id=ids.profile_id(), tenant_id=scope.require(), candidate_id=candidate_id
         )
         db.add(profile)
+        before_competence: int | None = None
+        before_dims: dict[str, int] = {}
+    else:
+        before_competence = profile.competence_score
+        before_dims = {
+            d.get("dimension"): d.get("score")
+            for d in json.loads(profile.dimension_profile_json or "[]")
+        }
 
     profile.resume_score = graph.resume_score
     profile.weighted_evidence_score = graph.weighted_evidence_score
@@ -522,6 +530,17 @@ async def recompute_profile(
         [d.model_dump(mode="json") for d in graph.dimension_profile]
     )
     profile.computed_at = utcnow()
+
+    log.info(
+        "graph update: candidate=%s competence_before=%s competence_after=%d "
+        "dimension_deltas=%s",
+        candidate_id, before_competence, graph.competence_score,
+        {
+            d.dimension.value: f"{before_dims.get(d.dimension.value, 0)}->{d.score}"
+            for d in graph.dimension_profile
+            if before_dims.get(d.dimension.value, 0) != d.score
+        },
+    )
 
     await db.commit()
     return profile

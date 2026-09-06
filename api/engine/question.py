@@ -797,9 +797,16 @@ async def generate_question(
             target_claim_text=target_claim_text,
         )
 
+    claim_ref = claim_text[:60]
+
     # --- attempt 1 ----------------------------------------------------------
     text, from_fallback = await ask()
     if from_fallback:
+        log.info(
+            "generation attempt 1/1 claim=%r probe_level=%s draft=%r source=fallback "
+            "(model call failed or returned an unusable question)",
+            claim_ref, probe_level.value, text,
+        )
         # THE FALLBACK IS NEVER VALIDATED, and this is structural rather than an
         # exemption list. It is rendered as `On "<claim>" — <base>`, so it quotes
         # the claim including its figures and trips `answer_leakage` by
@@ -809,9 +816,19 @@ async def generate_question(
         return QuestionAttempt(text, probe_level, "fallback", 1, ())
 
     if not settings.question_validation:
+        log.info(
+            "generation attempt 1/1 claim=%r probe_level=%s draft=%r source=model "
+            "(QUESTION_VALIDATION=false, not checked)",
+            claim_ref, probe_level.value, text,
+        )
         return QuestionAttempt(text, probe_level, "model", 1, ())
 
     first = check(text)
+    log.info(
+        "generation attempt 1/2 claim=%r probe_level=%s draft=%r validator=%s violations=%s",
+        claim_ref, probe_level.value, text,
+        "passed" if first.accepted else "failed", list(first.violations),
+    )
     if first.accepted:
         return QuestionAttempt(text, probe_level, "model", 1, ())
 
@@ -825,9 +842,21 @@ async def generate_question(
     # PHASE_1_SUCCESS_METRICS.md — every turn already blocks on a model call.
     retry_text, retry_from_fallback = await ask(first.violations)
     if retry_from_fallback:
+        log.info(
+            "generation attempt 2/2 claim=%r probe_level=%s previous=%r draft=%r "
+            "source=fallback (regeneration call failed or returned an unusable question)",
+            claim_ref, probe_level.value, text, retry_text,
+        )
         return QuestionAttempt(retry_text, probe_level, "fallback", 2, first.violations)
 
-    if check(retry_text).accepted:
+    retry_check = check(retry_text)
+    log.info(
+        "generation attempt 2/2 claim=%r probe_level=%s previous=%r draft=%r "
+        "validator=%s violations=%s",
+        claim_ref, probe_level.value, text, retry_text,
+        "passed" if retry_check.accepted else "failed", list(retry_check.violations),
+    )
+    if retry_check.accepted:
         return QuestionAttempt(retry_text, probe_level, "regenerated", 2, first.violations)
 
     # Two strikes. The fallback is thin but it is anchored, cohort-neutral and
