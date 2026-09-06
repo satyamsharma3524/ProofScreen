@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # reproduces the Phase 1 question path exactly, question for question.
     question_validation: bool = True
 
+    # Route on the candidate's TITLE with one extra model call before claim
+    # extraction, falling back to the keyword scorer. Measured on nine real
+    # resumes: keyword routing 3/8 correct, title routing 8/8. Defaults FALSE —
+    # true is opt-in per deployment, and false reproduces prior routing exactly.
+    role_classifier: bool = False
+
     # A non-answer ("ok", "yes") earns ONE more attempt at the same probe, and
     # that attempt does not consume the interview budget. false => Phase 1.
     repair_turn: bool = True

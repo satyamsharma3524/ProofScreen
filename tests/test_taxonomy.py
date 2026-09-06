@@ -365,3 +365,156 @@ def test_detect_endpoint_surfaces_the_flag_and_the_floor(client):
     confident = client.get("/api/dev/detect", params={"text": PRODUCT_RESUME}).json()
     assert confident["low_confidence"] is False
 
+
+
+# ---------------------------------------------------------------------------
+# role classification — the LLM rung above the keyword scorer
+#
+# Every test here is deterministic and makes NO model call. The classifier's
+# accuracy is measured outside the suite, against real resumes, and recorded in
+# docs/ROLE_ROUTING_PROPOSAL.md; a suite that asserted on model output would be
+# asserting on the weather.
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+
+from api.config import settings  # noqa: E402
+from api.engine.extract import (  # noqa: E402
+    classify_role,
+    extract_claims,
+    header_slice,
+)
+
+_PM_RESUME = """Arshad Latif Saikia
+arshad@example.com | +91-9678463786
+
+PROFESSIONAL SUMMARY
+Product leader delivering strategic impact across Product, Experience and Design.
+
+Product Lead - Pync (Lifestyle Services Platform)
+Apr 2025 - Present | Bangalore, India
+- Scaled platform to 10,000 DAU in 6 months, driving 125% conversion improvement.
+- Scaled revenue to 40 Lakhs in 6 months through targeted acquisition.
+
+Sales & Analytics - ExxonMobil
+Jul 2017 - Aug 2021 | Mumbai, India
+- Managed B2B accounts with $40M yearly revenue, ensuring 20% margin growth.
+- Closed 4 new rebate contracts securing $7.8M in new business.
+
+CORE SKILLS
+Product Strategy | GTM Strategy | Cross-functional Leadership
+"""
+
+
+def test_header_slice_keeps_the_titles_and_drops_the_achievement_bullets():
+    """The bullets are where revenue/pipeline/conversion live, and that
+    vocabulary is exactly what routes a PM to sales. Excluding it is the fix."""
+    sliced = header_slice(_PM_RESUME)
+
+    assert "Product Lead - Pync" in sliced
+    assert "Sales & Analytics - ExxonMobil" in sliced
+    assert "Product leader delivering strategic impact" in sliced
+
+    for bullet_term in ("10,000 DAU", "125% conversion", "$40M yearly revenue",
+                        "$7.8M in new business", "20% margin growth"):
+        assert bullet_term not in sliced, f"achievement bullet leaked: {bullet_term}"
+
+
+def test_header_slice_of_a_resume_with_no_titles_is_too_thin_to_route_on():
+    """A file with a career objective and no job title -- a real shape in the
+    Shine corpus. There is nothing here a recruiter could route on either."""
+    from api.engine.extract import MIN_HEADER_CHARS
+
+    assert len(header_slice("")) < MIN_HEADER_CHARS
+    assert len(header_slice("   \n\n  \n")) < MIN_HEADER_CHARS
+
+
+def test_header_slice_is_bounded():
+    assert len(header_slice(_PM_RESUME * 40)) <= 1800
+
+
+def test_the_classifier_is_a_no_op_while_the_flag_is_off(monkeypatch):
+    """ROLE_CLASSIFIER=false must reproduce prior routing exactly -- it is the
+    rollback lever, so it has to be a true no-op and not merely a quiet one."""
+    monkeypatch.setattr(settings, "role_classifier", False)
+    assert asyncio.run(classify_role(_PM_RESUME, "sales")) == "sales"
+
+
+def test_a_thin_header_keeps_the_taxonomy_answer(monkeypatch):
+    monkeypatch.setattr(settings, "role_classifier", True)
+    assert asyncio.run(classify_role("", "bpo_operations")) == "bpo_operations"
+
+
+def test_fixture_mode_routes_exactly_as_the_taxonomy_does(monkeypatch):
+    """No key means complete_json serves the fallback, and the fallback IS the
+    taxonomy answer. The whole suite therefore routes as it did before."""
+    monkeypatch.setattr(settings, "role_classifier", True)
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    for family in ("sales", "product", "software_engineering", "general"):
+        assert asyncio.run(classify_role(_PM_RESUME, family)) == family
+
+
+def test_a_requisition_family_outranks_the_classifier(monkeypatch):
+    """P1-07 rung 1 is unchanged and still absolute. If this breaks, a recruiter
+    hiring for support stops getting the support rubric."""
+    monkeypatch.setattr(settings, "role_classifier", True)
+    called = False
+
+    async def _never(*args, **kwargs):
+        nonlocal called
+        called = True
+        return "product"
+
+    monkeypatch.setattr("api.engine.extract.classify_role", _never)
+    family, _claims = asyncio.run(
+        extract_claims(_PM_RESUME, job_family="customer_support")
+    )
+    assert family == "customer_support"
+    assert not called, "rung 1 must short-circuit before the model is consulted"
+
+
+def test_a_family_the_model_invents_becomes_general(monkeypatch):
+    """resolve_family() is the guard. A hallucinated key must not reach
+    claim_type_menu(), which would hand the extractor an empty menu."""
+    from api.engine import extract as extract_module
+
+    monkeypatch.setattr(settings, "role_classifier", True)
+
+    async def _hallucinate(*args, **kwargs):
+        return extract_module.RoleClassification(family="astronaut")
+
+    monkeypatch.setattr(extract_module, "complete_json", _hallucinate)
+    assert asyncio.run(classify_role(_PM_RESUME, "sales")) == "general"
+
+
+def test_the_classifier_confidence_is_never_branched_on():
+    """CLAUDE.md rule 1: no rating, confidence or percentage parsed out of a
+    model response may drive a decision. The classifier RECORDS confidence and
+    seniority for later analysis, and routing must never read them.
+
+    Structural, like test_scoring_modules_never_import_the_llm -- a comment
+    saying 'we do not branch on this' is not a guarantee.
+    """
+    import ast
+    import pathlib as _pathlib
+
+    tree = ast.parse(_pathlib.Path("api/engine/extract.py").read_text())
+    offenders = []
+
+    for node in ast.walk(tree):
+        # `x.confidence > 0.8`, `x.seniority == "senior"`
+        if isinstance(node, ast.Compare):
+            for operand in [node.left, *node.comparators]:
+                if isinstance(operand, ast.Attribute) and operand.attr in (
+                    "confidence", "seniority"
+                ):
+                    offenders.append(ast.unparse(node))
+        # `if x.confidence:` / `if not x.confidence:`
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Attribute):
+            if node.test.attr in ("confidence", "seniority"):
+                offenders.append(ast.unparse(node.test))
+
+    assert not offenders, (
+        "routing branched on a model-reported confidence or seniority: "
+        f"{offenders}"
+    )

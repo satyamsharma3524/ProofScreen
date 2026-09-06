@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 import re
 
+from pydantic import BaseModel, Field
+
 from api.config import settings
 from api.llm import complete_json, load_prompt
 from api.schemas import ClaimExtraction, ExtractedClaim
@@ -157,6 +159,192 @@ def heuristic_claims(
     return claims[:limit]
 
 
+# ---------------------------------------------------------------------------
+# ROLE CLASSIFICATION (LLM #0) — which profession should this person be
+# interviewed as?
+#
+# THE PROBLEM THIS SOLVES, MEASURED. `match_family()` scores keyword density,
+# and a product manager's achievements are written in the vocabulary of sales:
+# revenue, pipeline, conversion, GTM, ARR, funnel, B2B. On six real PM resumes
+# the keyword router chose `sales` three times and `data_analytics` twice.
+#
+# The damage is not the label. `extract_claims` builds its prompt with
+# `claim_type_menu(routed)`, so a resume routed to `sales` is handed the sales
+# claim types and asked to find claims that fit them -- and it obliges, from
+# whatever sales job is on the page. Four of those six resumes produced claims
+# from a job the candidate left in 2021. The interview then asked about it.
+#
+# So the family has to be right BEFORE extraction, not corrected after.
+# ---------------------------------------------------------------------------
+
+_SECTION_HEAD = re.compile(
+    r"^\s*(professional\s+summary|summary|profile|objective|about\s+me|"
+    r"career\s+objective|experience\s+summary|core\s+skills|skills|"
+    r"key\s+skills|technical\s+skills|technology\s+stack[^:]*|"
+    r"areas\s+of\s+expertise)\s*:?\s*$",
+    re.IGNORECASE,
+)
+# A WIDER date pattern than `_DATE_RANGE`, used ONLY here. `_DATE_RANGE` drives
+# `_score_line` and therefore `heuristic_claims`, so it is not being touched:
+# it requires year-dash-year and misses "Jul 2017 - Aug 2021", where a month
+# name sits between the dash and the year. That is the commonest way a resume
+# writes a tenure, and it is how job titles are found.
+_MONTH_YEAR = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s*(?:19|20)\d\d\b",
+    re.IGNORECASE,
+)
+HEADER_SLICE_CHARS = 1800
+MIN_HEADER_CHARS = 40
+
+
+def _has_strong_verb(line: str) -> bool:
+    low = line.lower()
+    return any(re.search(rf"\b{verb}\b", low) for verb in _STRONG_VERBS)
+
+
+def _is_tenure_line(line: str) -> bool:
+    """A dates-and-place line, not an achievement. The distinction is the verb —
+    the same one `_score_line` draws to tell a heading from a bullet."""
+    if _has_strong_verb(line):
+        return False
+    return bool(
+        _PAREN_YEAR.search(line) or _DATE_RANGE.search(line) or _MONTH_YEAR.search(line)
+    )
+
+
+def header_slice(text: str, max_chars: int = HEADER_SLICE_CHARS) -> str:
+    """The top of a resume: headline, title history, summary, skills.
+
+    ACHIEVEMENT BULLETS ARE EXCLUDED, and that is the entire point. They are
+    where the revenue-and-pipeline language lives, and that language is what
+    routes a product manager to sales. The fix is not to weigh the body more
+    cleverly; it is not to send the body.
+
+    Bullets are identified with `_score_line`, which already draws exactly this
+    line for `heuristic_claims`: a parenthesised year or a bare date range with
+    no verb is a HEADING, a comma-heavy line with no verb is a SKILLS LIST, and
+    anything with digits and strong verbs is an achievement. Reused rather than
+    re-derived, so the two cannot disagree about what a bullet is.
+
+    Deterministic. No model call.
+    """
+    lines = [line.strip() for line in (text or "").splitlines()]
+    parts: list[str] = []
+
+    # 1. the headline — name, contact, and whatever one-liner sits under it
+    head = [line for line in lines[:8] if line][:5]
+    if head:
+        parts.append("HEADER:\n" + "\n".join(head))
+
+    # 2. title history. A title and its dates are usually two lines ("Product
+    #    Lead - Pync" / "Apr 2025 - Present | Bangalore"), so a date line pulls
+    #    in the line above it.
+    titles: list[str] = []
+    seen: set[str] = set()
+    for index, line in enumerate(lines):
+        if not line or len(line) > 140 or not _is_tenure_line(line):
+            continue
+        # A title and its dates are usually two lines. Take the nearest
+        # non-empty line above, when it reads like a heading rather than a
+        # bullet, then the tenure line itself.
+        candidates: list[str] = []
+        previous = next((l for l in reversed(lines[max(0, index - 2):index]) if l), None)
+        if previous and len(previous) <= 140 and not _has_strong_verb(previous):
+            candidates.append(previous)
+        candidates.append(line)
+        for candidate in candidates:
+            key = candidate.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            titles.append(candidate)
+    if titles:
+        parts.append(
+            "JOB TITLES (in resume order):\n"
+            + "\n".join(f"- {t}" for t in titles[:8])
+        )
+
+    # 3. the summary and skills sections, achievement bullets removed
+    for index, line in enumerate(lines):
+        if not _SECTION_HEAD.match(line):
+            continue
+        body: list[str] = []
+        for following in lines[index + 1: index + 12]:
+            if _SECTION_HEAD.match(following):
+                break
+            if not following:
+                if body:
+                    break
+                continue
+            if _score_line(following) > 0:
+                continue                      # an achievement bullet
+            body.append(following)
+            if len(body) >= 6:
+                break
+        if body:
+            parts.append(f"{line.rstrip(':').upper()}:\n" + "\n".join(body))
+
+    return "\n\n".join(parts)[:max_chars]
+
+
+class RoleClassification(BaseModel):
+    """The classifier's reply. LOCAL TO THIS MODULE, deliberately.
+
+    Not in `api/schemas.py`: that file is frozen and is the contract with the
+    dashboard, and nothing outside this module reads any of these fields.
+
+    `confidence` and `seniority` are RECORDED AND NEVER BRANCHED ON.
+    CLAUDE.md rule 1 forbids parsing a rating or a confidence out of a model
+    response and acting on it, and there is no exemption for routing. They are
+    logged so a later change can be argued from data instead of from intuition.
+    Certainty comes from the precedence order, not from a number the model
+    made up about itself.
+    """
+
+    family: str | None = None
+    confidence: float | None = None
+    seniority: str | None = None
+    current_title: str | None = None
+    reasoning: list[str] = Field(default_factory=list)
+
+
+async def classify_role(resume_text: str, taxonomy_family: str) -> str:
+    """LLM #0. Returns a family key — never a score, never a probability.
+
+    Falls back to `taxonomy_family`, which is what routing did before this
+    existed. A model that is down, slow or unparseable therefore costs routing
+    ACCURACY and never costs the interview (CLAUDE.md rule 5).
+    """
+    if not settings.role_classifier:
+        return taxonomy_family
+
+    header = header_slice(resume_text)
+    if len(header) < MIN_HEADER_CHARS:
+        # No headline, no titles, no summary. There is nothing here a recruiter
+        # could route on either, and inventing one is worse than the keywords.
+        log.info("role classifier: header too thin, keeping taxonomy %s", taxonomy_family)
+        return taxonomy_family
+
+    result = await complete_json(
+        load_prompt("classify_role", family_menu=_family_menu(), header=header),
+        RoleClassification,
+        temperature=0.0,
+        fallback=lambda: RoleClassification(family=taxonomy_family),
+    )
+
+    chosen = resolve_family(result.family) if result.family else taxonomy_family
+    log.info(
+        "role classifier: %s (title=%r seniority=%s self-reported=%s) vs taxonomy %s%s",
+        chosen,
+        result.current_title,
+        result.seniority,
+        result.confidence,
+        taxonomy_family,
+        "" if chosen == taxonomy_family else "  [OVERRIDE]",
+    )
+    return chosen
+
+
 def _family_menu() -> str:
     return "\n".join(f"  {key} — {cfg['label']}" for key, cfg in families().items())
 
@@ -173,14 +361,32 @@ async def extract_claims(
     # P1-07 — ROUTING PRECEDENCE, decided here and nowhere else:
     #
     #   1. the requisition's job_family, when the caller supplied a real one
-    #   2. otherwise deterministic detection from the resume
+    #   2. the role classifier, on the TOP of the resume only        (LLM #0)
+    #   3. deterministic keyword detection from the whole resume
+    #   4. general
     #
-    # There is no third rung. The model's opinion is logged below, never
-    # honoured. A recruiter hiring for a support role gets the support rubric
-    # even when the resume reads like sales, because the requisition is a fact
-    # about the job and detection is only an inference about the candidate.
+    # Rung 1 is unchanged and still absolute: a recruiter hiring for a support
+    # role gets the support rubric even when the resume reads like sales,
+    # because the requisition is a fact about the job and everything below it
+    # is an inference about the candidate.
+    #
+    # Rung 2 was added because rung 3 routes on vocabulary, and a product
+    # manager's vocabulary is a salesperson's -- see `classify_role` above for
+    # the measurement. It is an ORDERED LIST, not a weighted blend: there is no
+    # threshold to tune, and no model-reported confidence is read (rule 1).
+    # Rung 3 is reached when the classifier is off, has too little to read, or
+    # fails -- `complete_json`'s fallback returns the rung-3 answer, so a dead
+    # model degrades to exactly the behaviour that shipped before this.
+    #
+    # The classifier runs BEFORE the prompt below is built, and that ordering
+    # is the whole point: `claim_type_menu(routed)` decides which claims the
+    # model is allowed to find, so a family corrected after extraction would
+    # leave sales claims wearing product labels.
     supplied = resolve_family(job_family) if job_family else GENERAL
-    routed = supplied if supplied != GENERAL else detect_family(trimmed)
+    if supplied != GENERAL:
+        routed = supplied
+    else:
+        routed = await classify_role(trimmed, detect_family(trimmed))
 
     prompt = load_prompt(
         "extract_claims",

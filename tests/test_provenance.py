@@ -40,8 +40,13 @@ def test_every_versioned_input_has_a_value():
     assert stamp.question_policy_version.startswith("qpol_")
     assert stamp.app_version
     assert stamp.code_version and stamp.code_version != ""
+    # Pinned as an EXACT set, not a subset: `prompt_versions()` discovers
+    # templates by globbing the directory, so a new prompt silently changes
+    # every evaluation_version minted afterwards. `classify_role` joined the
+    # set when routing gained its LLM rung, and that WAS a material pipeline
+    # change -- which is the argument for this assertion, not against it.
     assert set(stamp.prompt_versions) == {
-        "extract_claims", "extract_signals", "generate_question"
+        "classify_role", "extract_claims", "extract_signals", "generate_question"
     }
     assert all(len(h) == 12 for h in stamp.prompt_versions.values())
 
