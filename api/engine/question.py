@@ -20,6 +20,8 @@ from enum import Enum
 from string import Template
 from typing import NamedTuple, Sequence
 
+from pydantic import BaseModel
+
 from api.config import settings
 from api.llm import complete_json, load_prompt
 from api.schemas import Dimension, GeneratedQuestion, ProbeLevel
@@ -242,6 +244,11 @@ class QuestionAttempt(NamedTuple):
     source: str                       # "model" | "regenerated" | "fallback"
     attempts: int                     # 1 or 2, never higher
     violations: tuple[str, ...]       # what attempt 1 tripped, for M6d
+    # Forensic provenance. Defaulted so every existing positional construction
+    # above keeps working untouched; `move` is what the second attempt CHANGED.
+    move: str = ""
+    target_signal: str = ""
+    reasoning: str = ""
 
 
 class QuestionValidation(NamedTuple):
@@ -298,11 +305,18 @@ _STOP_SUBJECT = _STOP_PHRASING | frozenset(
 # nothing is mislabelled — but do not read `qpol_2` as "unchanged since Phase 2
 # exit". The next behavioural change to `validate()` is `qpol_3`.
 #
+# `qpol_3` is the FORENSIC shape: `planner -> claim anatomy + evidence ledger ->
+# move-specific prompt -> validate -> RE-TARGET (a different move, not a reworded
+# draft) -> anatomy-built fallback`. It changes which questions a candidate is
+# asked more completely than any previous bump, so evaluations either side of it
+# are not comparable question-for-question. `validate()` itself is byte-identical
+# to qpol_2 — what changed is everything that decides what reaches it.
+#
 # BUMP IT WHEN A RULE'S BEHAVIOUR CHANGES. Not for a comment, not for a
 # refactor. And it is NOT an invitation to tune `DUPLICATE_JACCARD` below
 # during Phase 3's study — that is counter-metric C7, the one move that makes
 # a study worthless while making it look successful.
-QUESTION_POLICY_VERSION = "qpol_2"
+QUESTION_POLICY_VERSION = "qpol_3"
 
 DUPLICATE_JACCARD = 0.37
 
@@ -863,3 +877,727 @@ async def generate_question(
     # never wrong about the probe level.
     log.info("regenerated question also rejected, using fallback")
     return QuestionAttempt(fallback.question, probe_level, "fallback", 2, first.violations)
+
+
+# ===========================================================================
+# FORENSIC GENERATION
+#
+# The objective is authorship verification: did this person do the work, or did
+# they write it down. Everything above this line is the probe-level generator,
+# which asks what a claim CONTAINS. Everything below asks what only its author
+# could know.
+#
+# The probe-level enums are not deleted — `questions.probe_level` and
+# `evidence.probe_level` are NOT NULL and the evidence graph keys off them — but
+# they no longer DECIDE anything. A move is chosen, and its probe level is
+# derived from it for storage (`MOVE_PROBE_LEVEL`).
+#
+# NO NEW MODEL CALL, NO NEW TABLE. Anatomy is derived in Python
+# (`engine/anatomy.py`); the ledger is the `AnswerSignals` this session already
+# stored on `responses.signals_json`, which `build_claim_states` already parses.
+# ===========================================================================
+
+from api.engine import anatomy as claim_anatomy
+from api.engine.anatomy import Archetype, ClaimAnatomy
+
+
+class Family(str, Enum):
+    ESTABLISH = "ESTABLISH"   # anchor the claim in their own operating language
+    PERIPHERY = "PERIPHERY"   # leave the headline: failure, exclusion, people
+    SEAM      = "SEAM"        # cross two facts they have already stated
+    TRANSFER  = "TRANSFER"    # their world, exactly one variable changed
+
+
+class Move(str, Enum):
+    """One move, one ask, one target.
+
+    Nine of them rather than five families with four asks each, because a brief
+    carrying several asks is a menu and the model orders the cheapest item —
+    which is how a four-ask OUTCOME brief came to ask "how did you measure it"
+    and nothing else.
+    """
+
+    METRIC_DEFINITION = "METRIC_DEFINITION"   # ESTABLISH
+    OWNERSHIP_BOUNDARY = "OWNERSHIP_BOUNDARY"  # ESTABLISH
+    OPERATING_CONTEXT = "OPERATING_CONTEXT"   # ESTABLISH
+    FAILURE = "FAILURE"                       # PERIPHERY
+    EXCLUSION = "EXCLUSION"                   # PERIPHERY
+    DEPENDENCY = "DEPENDENCY"                 # PERIPHERY
+    PEOPLE = "PEOPLE"                         # PERIPHERY
+    AUTHORITY = "AUTHORITY"                   # PERIPHERY
+    COHERENCE = "COHERENCE"                   # SEAM
+    PERTURB = "PERTURB"                       # TRANSFER
+
+
+MOVE_FAMILY: dict[Move, Family] = {
+    Move.METRIC_DEFINITION: Family.ESTABLISH,
+    Move.OWNERSHIP_BOUNDARY: Family.ESTABLISH,
+    Move.OPERATING_CONTEXT: Family.ESTABLISH,
+    Move.FAILURE: Family.PERIPHERY,
+    Move.EXCLUSION: Family.PERIPHERY,
+    Move.DEPENDENCY: Family.PERIPHERY,
+    Move.PEOPLE: Family.PERIPHERY,
+    Move.AUTHORITY: Family.PERIPHERY,
+    Move.COHERENCE: Family.SEAM,
+    Move.PERTURB: Family.TRANSFER,
+}
+
+# Compatibility only. The evidence graph and `claim_scores.probed_dimensions`
+# read `probe_level`, so every question still stores one — but nothing plans
+# with it. Chosen so the dimensions a move actually elicits are the dimensions
+# its recorded level claims to have probed.
+MOVE_PROBE_LEVEL: dict[Move, ProbeLevel] = {
+    Move.METRIC_DEFINITION: ProbeLevel.OUTCOME,      # METRIC_OWNERSHIP
+    Move.OWNERSHIP_BOUNDARY: ProbeLevel.VALIDATION,  # SPECIFICITY
+    Move.OPERATING_CONTEXT: ProbeLevel.OPERATIONAL,  # PROCESS, TOOL_FAMILIARITY
+    Move.FAILURE: ProbeLevel.INCIDENT,               # AUTHENTICITY
+    Move.EXCLUSION: ProbeLevel.DECISION,             # CAUSAL_REASONING
+    Move.DEPENDENCY: ProbeLevel.OPERATIONAL,         # TOOL_FAMILIARITY
+    Move.PEOPLE: ProbeLevel.INCIDENT,                # AUTHENTICITY, SPECIFICITY
+    Move.AUTHORITY: ProbeLevel.DECISION,             # CAUSAL_REASONING
+    Move.COHERENCE: ProbeLevel.OUTCOME,              # CAUSAL_REASONING
+    Move.PERTURB: ProbeLevel.TRANSFER,
+}
+
+# Which rubric dimensions a move actually elicits, keyed by Move.value so a
+# caller that only has the stored string (`questions.move`, possibly
+# comma-joined after a re-target) never needs the enum itself.
+#
+# This is what MOVE_PROBE_LEVEL's trailing comments above already state as
+# intent, made into a real table. It exists because MOVE_PROBE_LEVEL is a
+# many-to-one COMPATIBILITY label for storage/replay (COHERENCE and
+# METRIC_DEFINITION both record "OUTCOME"; FAILURE and PEOPLE both record
+# "INCIDENT"; EXCLUSION and AUTHORITY both record "DECISION") — crediting
+# probed dimensions from the stored probe_level, as `signals.score_claim` did
+# before this table existed, credits a move for whatever its unrelated
+# co-mapped sibling covers. `engine/signals.py` reads this directly (see
+# `moves_used` on `score_claim`) instead of `PROBE_LEVEL_DIMENSIONS` whenever
+# a move is on record, which is the decoupling FORENSIC_GENERATOR_DESIGN.md
+# §6 specifies and that was not carried into the shipped code.
+MOVE_DIMENSIONS: dict[str, tuple[Dimension, ...]] = {
+    Move.METRIC_DEFINITION.value: (Dimension.METRIC_OWNERSHIP,),
+    Move.OWNERSHIP_BOUNDARY.value: (Dimension.SPECIFICITY,),
+    Move.OPERATING_CONTEXT.value: (Dimension.PROCESS, Dimension.TOOL_FAMILIARITY),
+    Move.FAILURE.value: (Dimension.AUTHENTICITY,),
+    Move.EXCLUSION.value: (Dimension.CAUSAL_REASONING,),
+    Move.DEPENDENCY.value: (Dimension.TOOL_FAMILIARITY,),
+    Move.PEOPLE.value: (Dimension.AUTHENTICITY, Dimension.SPECIFICITY),
+    Move.AUTHORITY.value: (Dimension.CAUSAL_REASONING,),
+    Move.COHERENCE.value: (Dimension.CAUSAL_REASONING,),
+    Move.PERTURB.value: (Dimension.CAUSAL_REASONING, Dimension.PROCESS),
+}
+
+# One ask each. Never two. The `target` is what the question is hunting, and it
+# is shown to the model separately so the ask and the quarry cannot blur.
+MOVE_BRIEFS: dict[Move, tuple[str, str]] = {
+    Move.METRIC_DEFINITION: (
+        "Ask how the metric was DERIVED — who or what was counted, over what "
+        "window, against what baseline, and where the figure was read from. "
+        "Never ask what the value was. The value is on the resume; the "
+        "derivation is not.",
+        "how the number was produced, in their own operating language",
+    ),
+    Move.OWNERSHIP_BOUNDARY: (
+        "Ask where their ownership of this ENDED — what they controlled "
+        "directly versus what belonged to someone else. Not how much they "
+        "owned; where the edge was.",
+        "the edge of their remit, and who held the other side of it",
+    ),
+    Move.OPERATING_CONTEXT: (
+        "Ask what they were LOOKING AT while doing this — the screen, the "
+        "report, the queue, the thing that told them something needed "
+        "attention. Ask for the first thing they checked, not the routine.",
+        "the concrete artefact they worked from day to day",
+    ),
+    Move.FAILURE: (
+        "Ask about one specific occasion this did not go the way they "
+        "expected. Frame it so that 'it broke' is a completely acceptable "
+        "answer — a question with only one good answer collects only that "
+        "answer, from everyone.",
+        "a specific remembered episode with its incidental detail",
+    ),
+    Move.EXCLUSION: (
+        "Ask what they deliberately did NOT change, cover, include or fix, and "
+        "what made it stay that way. Every real piece of work has a leftover, "
+        "and the reason is usually specific and boring.",
+        "the deliberate omission and the constraint behind it",
+    ),
+    Move.DEPENDENCY: (
+        "Ask who or what they had to go through to get this done — the team "
+        "they waited on, the approval they needed, the system they could not "
+        "change themselves.",
+        "an external dependency they did not control",
+    ),
+    Move.PEOPLE: (
+        "Ask about a specific person or role in this work — who pushed back, "
+        "who they escalated to, who noticed first. A role is enough; never ask "
+        "for a name, and never for a headcount.",
+        "a named role in the loop and what they did",
+    ),
+    Move.AUTHORITY: (
+        "Ask what they could decide on their own here and what had to go "
+        "somewhere else. Authority boundaries are precise, memorable, and "
+        "specific to one organisation.",
+        "their decision rights and the escalation path",
+    ),
+    Move.COHERENCE: (
+        "The candidate has already stated the two facts below. Put them "
+        "against each other and ask how they hold together. Introduce NO new "
+        "subject matter — every noun in your question must come from those two "
+        "facts or from the claim. The question must be unanswerable by "
+        "repeating either fact.",
+        "whether two things they have said actually cohere",
+    ),
+    Move.PERTURB: (
+        "Change exactly ONE thing in the world they have just described, and "
+        "ask them to reason about it. Ask only where they would start and what "
+        "would rule a cause out. Do NOT ask for numbers, tools or results — "
+        "this did not happen, so there are none, and asking invites invention. "
+        "Never a generic hypothetical, never a role-play.",
+        "reasoning that a memorised resume cannot supply",
+    ),
+}
+
+# The order moves are tried in, per claim shape. First entry is the opening
+# question for that claim.
+#
+# METRIC_MOVE opens on METRIC_DEFINITION rather than on context: a quantified
+# claim earns its measurement question first, because the metric is the
+# falsifiable part and everything downstream is worth less if it is undefined.
+#
+# VOLUME opens on AUTHORITY because the count itself — the N — is exactly what
+# must not be asked. The forensic content of a volume claim is the boundary of
+# what the person was allowed to decide.
+ARCHETYPE_LADDER: dict[Archetype, tuple[Move, ...]] = {
+    Archetype.METRIC_MOVE: (
+        Move.METRIC_DEFINITION, Move.EXCLUSION, Move.FAILURE,
+        Move.COHERENCE, Move.DEPENDENCY, Move.PERTURB,
+    ),
+    Archetype.OWNERSHIP: (
+        Move.OWNERSHIP_BOUNDARY, Move.AUTHORITY, Move.FAILURE,
+        Move.PEOPLE, Move.COHERENCE, Move.PERTURB,
+    ),
+    Archetype.BUILD: (
+        Move.OPERATING_CONTEXT, Move.DEPENDENCY, Move.FAILURE,
+        Move.EXCLUSION, Move.COHERENCE, Move.PERTURB,
+    ),
+    Archetype.PROCESS: (
+        Move.OPERATING_CONTEXT, Move.AUTHORITY, Move.FAILURE,
+        Move.EXCLUSION, Move.COHERENCE, Move.PERTURB,
+    ),
+    Archetype.VOLUME: (
+        Move.AUTHORITY, Move.OPERATING_CONTEXT, Move.FAILURE,
+        Move.PEOPLE, Move.COHERENCE, Move.PERTURB,
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# the evidence ledger
+#
+# NO NEW STORAGE. This is `AnswerSignals` — already extracted by LLM #3, already
+# persisted on `responses.signals_json`, already parsed and grouped per claim by
+# `orchestrator.build_claim_states` into `ClaimState.answer_signals`. The only
+# thing that was missing is that nobody handed it to the generator.
+# ---------------------------------------------------------------------------
+
+CHEAP, MID, DEAR = "CHEAP", "MID", "DEAR"
+
+
+class LedgerFact(NamedTuple):
+    """One thing the candidate has established, with what it cost them to say.
+
+    `cost` is computed from STRUCTURE, never judged at runtime: a metric
+    definition either carries `how_measured` or it does not. That is what makes
+    "expensive for an impostor" a measurement rather than an opinion.
+    """
+
+    kind: str
+    text: str
+    quote: str
+    cost: str
+    answer_ix: int
+
+    @property
+    def is_dear(self) -> bool:
+        return self.cost == DEAR
+
+
+def build_ledger(answer_signals: "Sequence[object]") -> tuple[LedgerFact, ...]:
+    """Flatten this claim's answers into costed facts, oldest first.
+
+    `answer_ix` is list position, which is the answer's order in the interview.
+    SEAM needs two facts from DIFFERENT answers — a pair inside one answer tests
+    nothing, because the candidate already reconciled them as they spoke.
+    """
+    out: list[LedgerFact] = []
+    for index, sig in enumerate(answer_signals or ()):
+        for item in getattr(sig, "incident_markers", ()) or ():
+            out.append(LedgerFact("incident", item.detail, item.quote, DEAR, index))
+        for item in getattr(sig, "causal_links", ()) or ():
+            text = " -> ".join(p for p in (item.cause, item.action, item.outcome) if p)
+            out.append(LedgerFact(
+                "causal", text, item.quote,
+                DEAR if item.is_complete else MID, index,
+            ))
+        for item in getattr(sig, "metric_definitions", ()) or ():
+            out.append(LedgerFact(
+                "metric", f"{item.metric}: {item.how_measured}" if item.how_measured else item.metric,
+                item.quote, DEAR if item.how_measured else CHEAP, index,
+            ))
+        for item in getattr(sig, "tools", ()) or ():
+            out.append(LedgerFact(
+                "tool", f"{item.tool} ({item.usage})" if item.usage else item.tool,
+                item.quote, MID if item.usage else CHEAP, index,
+            ))
+        for item in getattr(sig, "quantities", ()) or ():
+            out.append(LedgerFact(
+                "quantity", f"{item.value} {item.refers_to}".strip(), item.quote,
+                MID if item.refers_to else CHEAP, index,
+            ))
+        for item in getattr(sig, "process_steps", ()) or ():
+            out.append(LedgerFact("step", item.step, item.quote, MID, index))
+        for item in getattr(sig, "entities", ()) or ():
+            out.append(LedgerFact("entity", f"{item.entity} ({item.kind})", item.quote, MID, index))
+    return tuple(out)
+
+
+def dear_count(ledger: "Sequence[LedgerFact]") -> int:
+    return sum(1 for f in ledger if f.is_dear)
+
+
+def seam_pair(ledger: "Sequence[LedgerFact]") -> tuple[LedgerFact, LedgerFact] | None:
+    """Two facts worth putting against each other, chosen in PYTHON.
+
+    Requirements, in order of what makes a seam work at all:
+      - different answers   — a pair the candidate stated in one breath is one
+                              thought, and testing it tests nothing
+      - both MID or DEAR    — two cheap facts have nothing to hold together
+      - shared referent     — otherwise the question is two questions
+
+    Preferred shapes first: a causal link against the metric it claims to have
+    moved is the seam a fabricated claim fails, because real systems have
+    counter-moving numbers and an invented one improves in every direction.
+    """
+    usable = [f for f in ledger if f.cost in (MID, DEAR)]
+    if len(usable) < 2:
+        return None
+
+    def words(text: str) -> set[str]:
+        return {w for w in _TOKEN.findall((text or "").lower()) if len(w) > 3}
+
+    ranked: list[tuple[int, LedgerFact, LedgerFact]] = []
+    for i, a in enumerate(usable):
+        for b in usable[i + 1:]:
+            if a.answer_ix == b.answer_ix:
+                continue
+            wa, wb = words(a.text), words(b.text)
+            if not (wa & wb):
+                continue
+            # Two statements of the SAME fact are not a seam. A candidate who
+            # repeats "about 12 endpoints" in two answers has not said two
+            # things, and asking how they fit together is incoherent.
+            if wa <= wb or wb <= wa:
+                continue
+            kinds = {a.kind, b.kind}
+            if kinds == {"causal", "metric"}:
+                rank = 0
+            elif kinds == {"metric"}:
+                rank = 1
+            elif kinds == {"incident", "causal"}:
+                rank = 2
+            elif "causal" in kinds or "incident" in kinds:
+                rank = 3
+            else:
+                rank = 4
+            ranked.append((rank, a, b))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda r: r[0])
+    return ranked[0][1], ranked[0][2]
+
+
+# ---------------------------------------------------------------------------
+# hard prohibitions
+#
+# The shapes measured to yield the least hard-to-invent evidence. These are
+# checked in PYTHON after generation, not left to the prompt: the prompt already
+# forbids them and a prompt is a request, not a guarantee.
+# ---------------------------------------------------------------------------
+
+_PROHIBITED = re.compile(
+    r"(?<!\w)(?:"
+    r"how\s+(?:long|many|much|often|big|large)"
+    r"|what\s+year|which\s+year|what\s+month"
+    r"|team\s+size|head\s?count"
+    r"|over\s+what\s+(?:period|timeframe)"
+    r"|for\s+how\s+long"
+    r"|what\s+was\s+the\s+(?:percentage|exact\s+number|total|headcount)"
+    r"|how\s+frequently"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def violates_prohibition(
+    text: str, ledger: "Sequence[LedgerFact]" = ()
+) -> bool:
+    """Is this one of the banned shapes, and did the candidate not open the door?
+
+    The exception is narrow and literal: a duration or a count may be REFERRED
+    to once the candidate has volunteered it, because at that point it is their
+    fact and not our fishing. It is established by a ledger quantity whose
+    subject the question actually names.
+    """
+    match = _PROHIBITED.search(text or "")
+    if not match:
+        return False
+    subject = _words(text, _STOP_SUBJECT, stem=True)
+    for fact in ledger or ():
+        if fact.kind != "quantity":
+            continue
+        if subject & _words(fact.text, _STOP_SUBJECT, stem=True):
+            return False        # they raised it; referring back is allowed
+    return True
+
+
+def move_available(
+    move: Move, anatomy: ClaimAnatomy, ledger: "Sequence[LedgerFact]"
+) -> bool:
+    """Can this move be asked at all against this claim, right now?
+
+    Preconditions are what stop the planner selecting a move the claim cannot
+    support — which is how a generator ends up producing a generic question and
+    calling it a probe.
+    """
+    if move is Move.METRIC_DEFINITION:
+        return anatomy.has_metric
+    if move is Move.EXCLUSION:
+        return bool(anatomy.object) and anatomy.object != "this work"
+    if move is Move.COHERENCE:
+        return seam_pair(ledger) is not None
+    if move is Move.PERTURB:
+        # Deliberately NOT gated on the ledger having produced anything. A claim
+        # that stalled produced nothing expensive to invent, and that is exactly
+        # when a perturbation is worth its question: the answers stopped saying
+        # what they did, so ask about something they did not do. Gating on
+        # MID/DEAR facts would withhold the probe from precisely the candidate
+        # it was designed for.
+        return bool(anatomy.object) and anatomy.object != "this work"
+    return True
+
+
+# ---------------------------------------------------------------------------
+# targeted fallbacks
+#
+# CLAUDE.md rule 5 requires every model call to have one. These are real
+# forensic questions rather than degraded generic ones, because anatomy gives
+# Python enough to build a specific question without a model.
+#
+# They interpolate `object`, `mechanism`, `metric_name` and ledger QUOTES only —
+# never `metric_value`, never `scope`. `anatomy._defigure()` guarantees the
+# first three carry no figure, so unlike the probe-level fallbacks these do not
+# trip `answer_leakage` and do not need an exemption from validation.
+# ---------------------------------------------------------------------------
+
+def _the(phrase: str) -> str:
+    """Give a bare noun phrase its article so the fallback reads as speech.
+
+    Skipped for a phrase that already has a determiner and for a proper noun
+    ("REST APIs", "Postgres") — "the REST APIs" is worse than "REST APIs", and
+    the fallbacks are read aloud on WhatsApp.
+    """
+    text = (phrase or "").strip()
+    if not text:
+        return "this work"
+    if _ARTICLED.match(text):
+        return text
+    if text[0].isupper():
+        return text
+    return f"the {text}"
+
+
+_ARTICLED = re.compile(r"^(?:the|a|an|our|their|its|my|your|this|these)\b", re.I)
+
+
+_PERTURB_SCALE = "PERTURB_SCALE"   # fallback variant key, never a Move
+
+MOVE_FALLBACKS: dict[object, Template] = {
+    Move.METRIC_DEFINITION: Template(
+        "You mentioned $metric_name. How was $metric_name actually worked out — "
+        "what counted and what did not?"
+    ),
+    Move.OWNERSHIP_BOUNDARY: Template(
+        "On $object — what was yours to run, and what belonged to someone else?"
+    ),
+    Move.OPERATING_CONTEXT: Template(
+        "When you were working on $object, what did you look at first?"
+    ),
+    Move.FAILURE: Template(
+        "Tell me about a time $object did not go the way you expected. "
+        "What happened?"
+    ),
+    Move.EXCLUSION: Template(
+        "Which part of $object did you leave alone, and what made you leave it?"
+    ),
+    Move.DEPENDENCY: Template(
+        "Who or what did you have to rely on most while working on $object?"
+    ),
+    Move.PEOPLE: Template(
+        "Who else was close to $object, and what did they do when it went wrong?"
+    ),
+    Move.AUTHORITY: Template(
+        "On $object, what could you decide yourself and what had to go to "
+        "someone else?"
+    ),
+    Move.COHERENCE: Template(
+        "You said $fact_a, and also $fact_b. How did those two fit together?"
+    ),
+    # Two forms. Substituting another line of the candidate's OWN resume is
+    # still "one variable inside their world", and it is the stronger probe: a
+    # memorised claim can be recited, but it cannot be applied to a different
+    # subject. The scale form is used when the resume offers nothing to swap in.
+    Move.PERTURB: Template(
+        "Suppose you had taken on $other_subject instead, with the same "
+        "approach you used on $object. Where would you start?"
+    ),
+    _PERTURB_SCALE: Template(
+        "Suppose $object had suddenly got much harder. What would you check "
+        "first, and what would rule a cause out?"
+    ),
+}
+
+
+def forensic_fallback(
+    move: Move,
+    anatomy: ClaimAnatomy,
+    ledger: "Sequence[LedgerFact]" = (),
+    other_subjects: "Sequence[str]" = (),
+) -> str:
+    """Deterministic, no model call, never a figure."""
+    obj = anatomy.object or "this work"
+    pair = seam_pair(ledger) if move is Move.COHERENCE else None
+    if move is Move.COHERENCE and pair is None:
+        move = Move.FAILURE                      # nothing to cross; ask beside it
+    key: object = move
+    other = next((o for o in other_subjects if o and o != obj), "")
+    if move is Move.PERTURB and not other:
+        key = _PERTURB_SCALE
+    template = MOVE_FALLBACKS[key]
+    return _WS.sub(" ", template.safe_substitute(
+        object=_the(obj),
+        mechanism=_the(anatomy.mechanism or obj),
+        metric_name=anatomy.metric_name or obj,
+        other_subject=_the(other) if other else "",
+        fact_a=_short(pair[0].quote or pair[0].text, 60) if pair else "",
+        fact_b=_short(pair[1].quote or pair[1].text, 60) if pair else "",
+    )).strip()
+
+
+def _ledger_summary(ledger: "Sequence[LedgerFact]", limit: int = 12) -> str:
+    """What the candidate has already established, in their own words.
+
+    Newest first — the last answer is the one a follow-up must not re-ask. The
+    quote is included because SEAM must build only from what was actually said.
+    """
+    if not ledger:
+        return "(nothing yet — this is the first question about this claim)"
+    lines = [
+        f"  [{f.cost}] {f.kind}: {_short(f.text, 90)}"
+        + (f'  — they said: "{_short(f.quote, 90)}"' if f.quote else "")
+        for f in list(ledger)[::-1][:limit]
+    ]
+    return "\n".join(lines)
+
+
+def _forensic_prompt(
+    claim_text: str,
+    move: Move,
+    anatomy: ClaimAnatomy,
+    ledger: "Sequence[LedgerFact]",
+    other_subjects: "Sequence[str]" = (),
+) -> str:
+    brief, target = MOVE_BRIEFS[move]
+    if move is Move.PERTURB and other_subjects:
+        swappable = ", ".join(f'"{o}"' for o in other_subjects if o)
+        if swappable:
+            brief = (
+                f"{brief}\n"
+                f"  You may swap in one of these, taken from another line of "
+                f"their OWN resume: {swappable}. Substituting a subject they "
+                f"claimed elsewhere is still their world, and it is the "
+                f"stronger probe — a recited claim cannot be applied to a "
+                f"different subject."
+            )
+    if move is Move.COHERENCE:
+        pair = seam_pair(ledger)
+        if pair:
+            brief = (
+                f"{brief}\n"
+                f'  FACT ONE: {pair[0].text}   — they said: "{pair[0].quote}"\n'
+                f'  FACT TWO: {pair[1].text}   — they said: "{pair[1].quote}"'
+            )
+    forbidden = ", ".join(f'"{f}"' for f in anatomy.forbidden) or "(no figures in this claim)"
+    return load_prompt(
+        "forensic_question",
+        claim_text=claim_text,
+        mechanism=anatomy.mechanism or "(not stated)",
+        object=anatomy.object or "(not stated)",
+        metric_name=anatomy.metric_name or "(this claim names no metric — do not invent one)",
+        move_name=f"{MOVE_FAMILY[move].value}:{move.value}",
+        move_brief=brief,
+        target=target,
+        ledger=_ledger_summary(ledger),
+        forbidden=forbidden,
+    )
+
+
+class ForensicQuestion(BaseModel):
+    """LLM #2's forensic response.
+
+    Engine-local rather than in `api/schemas.py`, which is frozen — the same
+    call `FamilyMatch` and `TransferSpec` already make.
+
+    `reasoning` is prose and is NEVER parsed for a rating, a confidence or a
+    score. It is stored so a question's separation argument is auditable: a
+    question whose reasoning cannot name what a copier would fail to produce has
+    been phrased, not designed. CLAUDE.md rule 1 is untouched — nothing here
+    becomes a number.
+    """
+
+    question: str
+    target_signal: str = ""
+    reasoning: str = ""
+
+
+async def generate_forensic_question(
+    claim_text: str,
+    move: Move,
+    *,
+    anatomy: ClaimAnatomy,
+    ledger: "Sequence[LedgerFact]" = (),
+    alt_moves: "Sequence[Move]" = (),
+    claim_type: str | None = None,
+    claim_metric: str | None = None,
+    job_family: str = "general",
+    prior_questions: "Sequence[str]" = (),
+    prior_answers: "Sequence[str]" = (),
+    other_claims: "Sequence[str]" = (),
+) -> QuestionAttempt:
+    """Two attempts, and THE SECOND ONE CHANGES THE TARGET, NOT THE WORDING.
+
+    This is the one behavioural difference that matters most. The probe-level
+    generator told a rejected model which rules it tripped and asked again, and
+    19% of those regenerations satisfied the validator by deleting the offending
+    token — "how long did you manage the team of 35 agents?" became "how long
+    did you manage the team of agents?", which is compliant, ungrammatical and
+    no more use than the original.
+
+    Handing the model a DIFFERENT MOVE makes that impossible: attempt two is a
+    different question hunting a different detail, not a patch of attempt one.
+    The rejected draft is never shown to the model, and no violation names are
+    ever fed back.
+
+    `validate()` is called unchanged. Nothing here relaxes a rule; the prompt
+    and `anatomy.forbidden` are what keep the output on its passing side.
+    """
+    probe_level = MOVE_PROBE_LEVEL[move]
+    # Subjects from the candidate's other claims, decomposed the same way so
+    # they carry no figures either.
+    other_subjects = tuple(
+        claim_anatomy.analyse(text).object for text in (other_claims or ())
+    )
+
+    def check(text: str, for_move: Move) -> tuple[bool, tuple[str, ...]]:
+        """Python decides. Prohibitions first, then the untouched validator."""
+        if violates_prohibition(text, ledger):
+            return False, ("prohibited_shape",)
+        result = validate(
+            text,
+            claim_text=claim_text,
+            claim_type=claim_type,
+            claim_metric=claim_metric,
+            job_family=job_family,
+            probe_level=MOVE_PROBE_LEVEL[for_move],
+            prior_questions=list(prior_questions),
+            prior_answers=list(prior_answers),
+            other_claims=list(other_claims),
+        )
+        return result.accepted, result.violations
+
+    async def ask(for_move: Move) -> ForensicQuestion | None:
+        """One model call. None => it failed or returned something unusable."""
+        sentinel = ForensicQuestion(question="")
+        result = await complete_json(
+            _forensic_prompt(claim_text, for_move, anatomy, ledger, other_subjects),
+            ForensicQuestion,
+            temperature=settings.llm_temperature_question,
+            # Rule 5: a fallback always exists. The empty sentinel means "the
+            # model did not answer", and the caller renders the Python fallback
+            # — which is a real forensic question, not a degraded one.
+            fallback=lambda: sentinel,
+            cache=False,
+        )
+        text = (result.question or "").strip()
+        if len(text) < 12:
+            return None
+        return ForensicQuestion(
+            question=text,
+            target_signal=(result.target_signal or "").strip()[:200],
+            reasoning=(result.reasoning or "").strip()[:400],
+        )
+
+    claim_ref = claim_text[:60]
+
+    # --- attempt 1 ----------------------------------------------------------
+    first = await ask(move)
+    if first is not None:
+        accepted, violations = check(first.question, move)
+        log.info(
+            "forensic attempt 1/2 claim=%r move=%s draft=%r verdict=%s violations=%s",
+            claim_ref, move.value, first.question,
+            "passed" if accepted else "failed", list(violations),
+        )
+        if accepted:
+            return QuestionAttempt(
+                first.question, probe_level, "model", 1, (),
+                move.value, first.target_signal, first.reasoning,
+            )
+        first_violations = violations
+    else:
+        log.info("forensic attempt 1/2 claim=%r move=%s — no usable model output",
+                 claim_ref, move.value)
+        first_violations = ("model_unavailable",)
+
+    # --- attempt 2: a DIFFERENT MOVE, not a repair of attempt 1 -------------
+    retarget = next(
+        (m for m in alt_moves if m is not move and move_available(m, anatomy, ledger)),
+        None,
+    )
+    if retarget is not None:
+        second = await ask(retarget)
+        if second is not None:
+            accepted, violations = check(second.question, retarget)
+            log.info(
+                "forensic attempt 2/2 claim=%r move=%s (re-targeted from %s) "
+                "draft=%r verdict=%s violations=%s",
+                claim_ref, retarget.value, move.value, second.question,
+                "passed" if accepted else "failed", list(violations),
+            )
+            if accepted:
+                return QuestionAttempt(
+                    second.question, MOVE_PROBE_LEVEL[retarget], "regenerated", 2,
+                    first_violations, retarget.value,
+                    second.target_signal, second.reasoning,
+                )
+
+    # --- fallback -----------------------------------------------------------
+    # Anatomy-built, figure-free and cohort-neutral. Unlike the probe-level
+    # fallbacks it is not exempt from validation by necessity — it simply passes.
+    text = forensic_fallback(move, anatomy, ledger, other_subjects)
+    log.info("forensic fallback claim=%r move=%s question=%r",
+             claim_ref, move.value, text)
+    return QuestionAttempt(
+        text, probe_level, "fallback", 2, first_violations,
+        move.value, MOVE_BRIEFS[move][1], "python fallback: model unavailable or rejected twice",
+    )

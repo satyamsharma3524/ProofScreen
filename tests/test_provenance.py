@@ -46,7 +46,12 @@ def test_every_versioned_input_has_a_value():
     # set when routing gained its LLM rung, and that WAS a material pipeline
     # change -- which is the argument for this assertion, not against it.
     assert set(stamp.prompt_versions) == {
-        "classify_role", "extract_claims", "extract_signals", "generate_question"
+        "classify_role", "extract_claims", "extract_signals", "generate_question",
+        # qpol_3. The forensic generator's prompt. `generate_question` stays in
+        # the set because the probe-level path is still reachable with
+        # FORENSIC_QUESTIONS=false, and a hash that ignored it would not
+        # describe an evaluation produced with the flag off.
+        "forensic_question",
     }
     assert all(len(h) == 12 for h in stamp.prompt_versions.values())
 
@@ -153,9 +158,9 @@ def test_the_same_material_inputs_produce_the_same_fingerprint():
     [
         ("taxonomy_version", "tax_2"),
         ("taxonomy_hash", "ffffffffffff"),
-        ("rubric_version", "rub_2"),
+        ("rubric_version", "rub_sentinel"),
         ("scoring_version", "score_2"),
-        ("question_policy_version", "qpol_3"),
+        ("question_policy_version", "qpol_sentinel"),
         ("code_version", "deadbeef"),
         ("app_version", "3.0.0"),
         ("llm_mode", "live"),
@@ -277,9 +282,9 @@ def test_health_reports_the_active_version_set(client):
     body = client.get("/api/health").json()
     assert body["taxonomy_version"].startswith("tax_")
     assert "@" in body["taxonomy_version"], "the content hash is missing"
-    assert body["rubric_version"] == "rub_1"
+    assert body["rubric_version"] == "rub_2"
     assert body["scoring_version"] == "score_1"
-    assert body["question_policy_version"] == "qpol_2"
+    assert body["question_policy_version"] == "qpol_3"
     assert body["code_version"]
     assert body["evaluation_version"].startswith("evx_")
 

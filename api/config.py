@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # Validate every generated question and regenerate ONCE on failure. false
     # reproduces the Phase 1 question path exactly, question for question.
     question_validation: bool = True
+    # Forensic generation: families and moves instead of probe levels. The
+    # probe-level generator stays reachable with this off, so a bad question
+    # stream is one env var from the previous behaviour rather than a rollback.
+    forensic_questions: bool = True
 
     # Route on the candidate's TITLE with one extra model call before claim
     # extraction, falling back to the keyword scorer. Measured on nine real

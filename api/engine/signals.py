@@ -30,6 +30,7 @@ from api.schemas import (
     DimensionScore,
     ProbeLevel,
 )
+from api.engine.question import MOVE_DIMENSIONS
 from api.taxonomy import family_vocabulary
 
 # D7 — the published rubrics, versioned.
@@ -40,7 +41,12 @@ from api.taxonomy import family_vocabulary
 # even though every stored signal is identical. A version nobody bumps is worse
 # than no version, so the test suite pins the constant against the structure it
 # describes: `test_rubric_version_covers_targets_gates_and_weights`.
-RUBRIC_VERSION = "rub_1"
+#
+# rub_2 — `score_claim` credits probed dimensions from a move's own
+# `MOVE_DIMENSIONS` entry when one is on record, instead of always reading
+# `PROBE_LEVEL_DIMENSIONS` off the stored (many-to-one) probe_level. Same
+# stored signals, different `probed` flags for any forensic-path claim.
+RUBRIC_VERSION = "rub_2"
 
 # ---------------------------------------------------------------------------
 # which dimensions each probe level is designed to elicit
@@ -396,11 +402,26 @@ def score_claim(
     answers: "Sequence[AnswerSignals]",
     levels_used: "Iterable[ProbeLevel]",
     job_family: str = "general",
+    moves_used: "Iterable[str | None] | None" = None,
 ) -> dict[Dimension, DimensionScore]:
     """Claim-level dimension scores: the rubric over the union of all answers.
 
-    `probed` is set from the probe levels actually asked, so a 0 on a dimension
-    nobody asked about is visibly different from a 0 the candidate earned.
+    `probed` is set from what was actually asked, so a 0 on a dimension nobody
+    asked about is visibly different from a 0 the candidate earned.
+
+    `moves_used`, when given, is parallel to `levels_used` -- one entry per
+    answer, in the same order, `None` where no move is on record. A move is
+    credited from its own `MOVE_DIMENSIONS` entry (comma-split, so a
+    re-targeted question credits both moves it actually spent) rather than
+    from its stored `probe_level`: `MOVE_PROBE_LEVEL` is a many-to-one
+    compatibility label kept for storage and replay, and crediting from it
+    would credit a move for whatever an unrelated co-mapped sibling covers
+    (COHERENCE and METRIC_DEFINITION both store "OUTCOME", for one). An index
+    with no usable move -- `moves_used` omitted, shorter than `levels_used`,
+    or `None`/unrecognised at that position -- falls back to
+    `PROBE_LEVEL_DIMENSIONS[level]` unchanged, which is what every
+    pre-forensic caller (including replay of a pre-forensic evaluation) still
+    is.
     """
     if not answers:
         return {
@@ -410,9 +431,20 @@ def score_claim(
 
     scores = score_answer(merge_signals(answers), job_family)
 
+    levels = list(levels_used)
+    moves = list(moves_used) if moves_used is not None else []
+
     probed: set[Dimension] = set()
-    for level in levels_used:
-        probed.update(PROBE_LEVEL_DIMENSIONS.get(level, ()))
+    for index, level in enumerate(levels):
+        move = moves[index] if index < len(moves) else None
+        credited = False
+        for token in (move or "").split(","):
+            dims = MOVE_DIMENSIONS.get(token.strip())
+            if dims:
+                probed.update(dims)
+                credited = True
+        if not credited:
+            probed.update(PROBE_LEVEL_DIMENSIONS.get(level, ()))
 
     for dimension, entry in scores.items():
         entry.probed = dimension in probed or entry.score > 0

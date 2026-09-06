@@ -258,6 +258,16 @@ class Question(Base):
     # cannot add a value to a Postgres enum, and a new question source should
     # not need a migration.
     source: Mapped[str] = mapped_column(String(16), default="model")
+
+    # The forensic move this question was generated from ("FAILURE",
+    # "METRIC_DEFINITION", ...). Nullable and defaulted, so `create_all()` is
+    # enough and pre-forensic rows stay readable as NULL.
+    #
+    # It is here rather than derived from `probe_level` because the mapping is
+    # many-to-one: FAILURE and PEOPLE both record INCIDENT, EXCLUSION and
+    # AUTHORITY both record DECISION. Without the column the planner cannot tell
+    # which moves a claim has already spent, and would re-ask one.
+    move: Mapped[str | None] = mapped_column(String(40), default=None)
     # 1 or 2. Never higher — the cap is structural in `generate_question()`.
     attempts: Mapped[int] = mapped_column(Integer, default=1)
     # Rules that tripped on ATTEMPT ONE, JSON list. Attempt one is what M6d is

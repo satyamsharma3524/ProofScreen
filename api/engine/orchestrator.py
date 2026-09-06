@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api import ids
 from api.config import settings
+from api.engine import anatomy as anatomy_engine
 from api.engine import evidence as evidence_engine
 from api.engine import question as question_engine
 from api.engine import scoring
@@ -96,6 +97,12 @@ class Plan:
     # whole decision is reproducible from stored evidence and `ask_next` has
     # nothing to do but forward it.
     transfer: question_engine.TransferSpec | None = None
+    # --- forensic selection. All defaulted, so every probe-level construction
+    # above stays valid and the two planners can coexist behind one flag.
+    move: "question_engine.Move | None" = None
+    alt_moves: tuple["question_engine.Move", ...] = ()
+    anatomy: "anatomy_engine.ClaimAnatomy | None" = None
+    ledger: tuple["question_engine.LedgerFact", ...] = ()
 
 
 @dataclass
@@ -109,6 +116,11 @@ class ClaimState:
     score: int = 0
     answers: int = 0
     last_answer_signals: int = 0
+    # --- forensic state, all derived in build_claim_states from rows that
+    # already exist. `moves_used` needs the `questions.move` column; everything
+    # else comes from `responses.signals_json`, which was already being parsed.
+    moves_used: set[str] = field(default_factory=set)
+    dear_by_answer: list[int] = field(default_factory=list)
 
     @property
     def saturated(self) -> bool:
@@ -162,6 +174,55 @@ class ClaimState:
             # pre-phase behaviour exactly.
             return not self.transfer_available
         return not self.levels_left
+
+    @property
+    def anatomy(self) -> "anatomy_engine.ClaimAnatomy":
+        """Derived, not stored — one sentence, parsed in Python, no model call."""
+        return anatomy_engine.analyse(self.claim.text, self.claim.metric)
+
+    @property
+    def ledger(self) -> tuple["question_engine.LedgerFact", ...]:
+        """This claim's established facts. `answer_signals` is already parsed
+        from `responses.signals_json`; nothing new is read or stored."""
+        return question_engine.build_ledger(self.answer_signals)
+
+    @property
+    def dear_total(self) -> int:
+        return sum(self.dear_by_answer)
+
+    @property
+    def dear_stalled(self) -> bool:
+        """Two answers running that produced nothing expensive to invent.
+
+        This replaces the old signal-count stall. A candidate can produce plenty
+        of cheap signal — a headcount, a tool name — while establishing nothing
+        only its author could know, and that claim should release its remaining
+        budget to a claim that is converting.
+        """
+        return len(self.dear_by_answer) >= 2 and sum(self.dear_by_answer[-2:]) == 0
+
+    def forensic_moves_left(self) -> list["question_engine.Move"]:
+        """Unspent moves from this claim's ladder whose precondition holds now.
+
+        Preconditions are re-evaluated every turn because the ledger grows:
+        COHERENCE is unavailable on an untouched claim and becomes available the
+        moment two crossable facts exist.
+        """
+        anatomy = self.anatomy
+        ledger = self.ledger
+        return [
+            mv for mv in question_engine.ARCHETYPE_LADDER[anatomy.archetype]
+            if mv.value not in self.moves_used
+            and question_engine.move_available(mv, anatomy, ledger)
+        ]
+
+    @property
+    def forensic_closed(self) -> bool:
+        if self.saturated:
+            return True
+        if self.dear_stalled:
+            return True
+        return not self.forensic_moves_left()
 
     def weakest_dimension(self) -> Dimension | None:
         """Lowest-scoring dimension, un-probed ones first, heaviest weight as
@@ -331,6 +392,8 @@ async def build_claim_states(
         # answer from the candidate and suppressing it would lose signal.
         sig = evidence_engine.signals_of(response.signals_json)
         state.answer_signals.append(sig)
+        if question.move:
+            state.moves_used.update(question.move.split(","))
 
         # P2-04 — but it does NOT count toward the stall signal. `stalled` is
         # "answers >= 2 and the last one produced nothing", and `stalled` is
@@ -343,6 +406,11 @@ async def build_claim_states(
             continue
         state.answers += 1
         state.last_answer_signals = response.signals_found or 0
+        # How much of THIS answer was expensive to invent. The forensic stall
+        # rule reads the last two entries.
+        state.dear_by_answer.append(
+            question_engine.dear_count(question_engine.build_ledger([sig]))
+        )
 
     # Also count questions asked but not yet answered, so the policy never
     # re-asks the level currently sitting unanswered in the candidate's chat.
@@ -353,6 +421,10 @@ async def build_claim_states(
                 state.levels_used.add(ProbeLevel(question.probe_level))
             except ValueError:
                 pass
+            # An unanswered question has still been sent, so its moves are
+            # spent — otherwise the policy re-asks what is sitting in the chat.
+            if question.move:
+                state.moves_used.update(question.move.split(","))
 
     scores = {
         s.claim_id: s
@@ -813,6 +885,20 @@ async def create_session(
     return session, claims
 
 
+def _moves_spent(plan: Plan, generated: "question_engine.QuestionAttempt") -> str | None:
+    """Which ladder slots this question consumed. Comma-joined, planner-facing.
+
+    `build_claim_states` splits this back into `moves_used`, so a move recorded
+    here is never selected again for this claim.
+    """
+    if plan.move is None:
+        return generated.move or None
+    spent = [plan.move.value]
+    if generated.move and generated.move != plan.move.value:
+        spent.append(generated.move)
+    return ",".join(spent)
+
+
 async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
     """Generate, persist and return the next question. None => interview over.
 
@@ -827,7 +913,11 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         return existing
 
     states = await build_claim_states(db, session)
-    plan = plan_next(states, session.questions_asked)
+    plan = (
+        plan_next_forensic(states, session.questions_asked)
+        if settings.forensic_questions
+        else plan_next(states, session.questions_asked)
+    )
 
     log.info(
         "=== INTERVIEW SNAPSHOT === session=%s turn=%d remaining_budget=%d claims=%s "
@@ -854,6 +944,9 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
             {
                 "claim_id": plan.claim.id,
                 "probe_level": plan.probe_level.value,
+                "move": plan.move.value if plan.move else None,
+                "archetype": plan.anatomy.archetype.value if plan.anatomy else None,
+                "dear_facts": sum(1 for f in plan.ledger if f.is_dear),
                 "target_dimension": plan.target_dimension.value if plan.target_dimension else None,
                 "reason": plan.reason,
             }
@@ -876,18 +969,41 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         )
         target_claim = target.text if target else None
 
-    generated = await question_engine.generate_question(
-        plan.claim.text,
-        plan.probe_level,
-        claim_type=plan.claim.claim_type,
-        claim_metric=plan.claim.metric,
-        job_family=session.job_family,
-        prior_qa=prior,
-        target_dimension=plan.target_dimension,
-        transfer=plan.transfer,
-        other_claims=[s.claim.text for s in states if s.claim.id != plan.claim.id],
-        target_claim_text=target_claim,
-    )
+    if plan.move is not None:
+        # Forensic path. The generator receives the claim DECOMPOSED and the
+        # ledger of what the candidate has already established — neither of
+        # which the probe-level generator could see, though both already
+        # existed one stack frame up.
+        generated = await question_engine.generate_forensic_question(
+            plan.claim.text,
+            plan.move,
+            anatomy=plan.anatomy,
+            ledger=plan.ledger,
+            alt_moves=plan.alt_moves,
+            claim_type=plan.claim.claim_type,
+            claim_metric=plan.claim.metric,
+            job_family=session.job_family,
+            prior_questions=[q for q, _ in prior],
+            prior_answers=[a for _, a in prior],
+            other_claims=[s.claim.text for s in states if s.claim.id != plan.claim.id],
+        )
+        log.info(
+            "forensic question chosen claim=%s move=%s source=%s target=%r",
+            plan.claim.id, generated.move, generated.source, generated.target_signal,
+        )
+    else:
+        generated = await question_engine.generate_question(
+            plan.claim.text,
+            plan.probe_level,
+            claim_type=plan.claim.claim_type,
+            claim_metric=plan.claim.metric,
+            job_family=session.job_family,
+            prior_qa=prior,
+            target_dimension=plan.target_dimension,
+            transfer=plan.transfer,
+            other_claims=[s.claim.text for s in states if s.claim.id != plan.claim.id],
+            target_claim_text=target_claim,
+        )
 
     question = Question(
         id=ids.question_id(),
@@ -895,7 +1011,15 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         claim_id=plan.claim.id,
         session_id=session.id,
         text=generated.question,
-        probe_level=plan.probe_level.value,
+        probe_level=generated.probe_level.value,
+        # BOTH MOVES WHEN A RE-TARGET HAPPENED, comma-joined.
+        #
+        # Storing only the delivered move leaves the planned one unspent and the
+        # planner re-selects it every turn — measured as COHERENCE chosen three
+        # turns running. Storing only the planned one leaves the DELIVERED move
+        # unspent, and it gets planned later and asks the same thing again —
+        # also measured. Both were spent, so both are recorded.
+        move=_moves_spent(plan, generated),
         target_dimension=plan.target_dimension.value if plan.target_dimension else None,
         # P2-04 — derived from a COUNT of this session's questions, not from
         # `questions_asked`. The two used to be the same number and therefore
@@ -1066,14 +1190,18 @@ async def recompute_claim(
         (q, r) for q, r in await _qa_rows(db, session.id) if q.claim_id == claim.id
     ]
     answer_signals = [evidence_engine.signals_of(r.signals_json) for _, r in rows]
-    levels = []
+    levels: list[ProbeLevel] = []
+    moves: list[str | None] = []
     for question, _ in rows:
         try:
             levels.append(ProbeLevel(question.probe_level))
         except ValueError:
             continue
+        moves.append(question.move)
 
-    dimensions = signal_rubrics.score_claim(answer_signals, levels, session.job_family)
+    dimensions = signal_rubrics.score_claim(
+        answer_signals, levels, session.job_family, moves_used=moves
+    )
 
     voice_efforts = [r.voice_effort for _, r in rows if r.answered_by == "voice" and r.voice_effort is not None]
     voice_effort = int(sum(voice_efforts) / len(voice_efforts)) if voice_efforts else None
@@ -1390,3 +1518,102 @@ async def find_active_session_by_phone(
             )
         )
     ).scalars().first()
+
+
+# ---------------------------------------------------------------------------
+# FORENSIC PLANNING
+#
+# The objective is authorship verification, so the planner no longer routes by
+# rubric dimension gap. It routes by CLAIM SHAPE (which moves are possible) and
+# by LEDGER COST (whether the claim is still producing anything expensive to
+# invent).
+#
+# Pure function, no model call, no randomness — the same session always produces
+# the same interview, which is what makes an evaluation replayable.
+# ---------------------------------------------------------------------------
+
+
+def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
+    """Choose (claim, move) for question `index`.
+
+    Order of preference, first match wins:
+
+      1. BREADTH   — every claim gets its opening move before any gets a second
+      2. SEAM      — a claim with two crossable facts earns a coherence test
+                     ahead of a third independent fact: putting two established
+                     things against each other is worth more than adding a third
+      3. DEPTH     — heaviest still-open claim, next move on its ladder
+      4. TRANSFER  — a claim that has stopped producing expensive detail gets
+                     one perturbation before it closes
+    """
+    if index >= settings.max_questions or not states:
+        return None
+
+    def brief(state: ClaimState, move: "question_engine.Move", reason: str) -> Plan:
+        left = [m for m in state.forensic_moves_left() if m is not move]
+        return Plan(
+            claim=state.claim,
+            probe_level=question_engine.MOVE_PROBE_LEVEL[move],
+            target_dimension=None,
+            reason=reason,
+            move=move,
+            # Attempt two re-targets to one of these rather than re-wording the
+            # rejected draft. TRANSFER is excluded: it is earned by a stall, not
+            # reached by falling through a rejection.
+            alt_moves=tuple(m for m in left if m is not question_engine.Move.PERTURB),
+            anatomy=state.anatomy,
+            ledger=state.ledger,
+        )
+
+    # 1 — breadth. Heaviest-first ordering is already applied by the caller.
+    for state in states:
+        if not state.moves_used:
+            moves = state.forensic_moves_left()
+            if moves:
+                return brief(
+                    state, moves[0],
+                    f"opening move on a {state.anatomy.archetype.value} claim",
+                )
+
+    # 2 — seam, preferred over further depth once it becomes possible.
+    for state in states:
+        if state.forensic_closed:
+            continue
+        if question_engine.Move.COHERENCE.value in state.moves_used:
+            continue
+        if question_engine.Move.COHERENCE in state.forensic_moves_left():
+            return brief(
+                state, question_engine.Move.COHERENCE,
+                f"crossing two established facts ({state.dear_total} hard-to-invent so far)",
+            )
+
+    # 3 — depth on the heaviest claim still producing.
+    for state in states:
+        if state.forensic_closed:
+            continue
+        moves = [m for m in state.forensic_moves_left()
+                 if m is not question_engine.Move.PERTURB]
+        if moves:
+            return brief(
+                state, moves[0],
+                f"next move on a {state.weight:g}-weight claim",
+            )
+
+    # 4 — one perturbation for a claim that has stopped paying.
+    if settings.transfer_probe:
+        for state in states:
+            if state.saturated or not state.moves_used:
+                continue
+            if question_engine.Move.PERTURB.value in state.moves_used:
+                continue
+            if not state.dear_stalled:
+                continue
+            if question_engine.move_available(
+                question_engine.Move.PERTURB, state.anatomy, state.ledger
+            ):
+                return brief(
+                    state, question_engine.Move.PERTURB,
+                    f"stalled after {state.answers} answers — one perturbation",
+                )
+
+    return None

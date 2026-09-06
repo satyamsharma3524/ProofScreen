@@ -293,11 +293,13 @@ async def replay_evaluation(
 
         answer_signals = [_signals_of(response.signals_json) for _q, response in rows]
         levels: list[ProbeLevel] = []
+        moves: list[str | None] = []
         for question, _response in rows:
             try:
                 levels.append(ProbeLevel(question.probe_level))
             except ValueError:
                 continue
+            moves.append(question.move)
 
         # `session.job_family`, not the evaluation's, and the difference is not
         # cosmetic: `recompute_claim` scored the stored claims under the
@@ -305,7 +307,7 @@ async def replay_evaluation(
         # evaluation's family comes from the candidate row and drives the
         # weights, one step later.
         dimensions = signal_rubrics.score_claim(
-            answer_signals, levels, session.job_family
+            answer_signals, levels, session.job_family, moves_used=moves
         )
 
         efforts = [
