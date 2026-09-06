@@ -41,6 +41,9 @@ edit what — see the ownership note below.
 |---|---|
 | [TRANSFER_DESIGN_AUDIT.md](TRANSFER_DESIGN_AUDIT.md) | Touching the TRANSFER probe. §3 is the family-invariance guarantee, §5 the brittleness table. Cited directly from `engine/signals.py` and `engine/question.py` |
 | [FAMILY_TAXONOMY_REVIEW.md](FAMILY_TAXONOMY_REVIEW.md) | Touching `taxonomy.py`, `detect_family`, or `data/claim_taxonomy.json` |
+| [CLAIM_INVENTORY.md](CLAIM_INVENTORY.md) | Recall-first extraction — the `CLAIM_INVENTORY` flag, blocked on `graph.py` |
+| [EXTRACTION_ARCHITECTURE_REVIEW.md](EXTRACTION_ARCHITECTURE_REVIEW.md) | Extraction ranking/budget/typing defects (E1–E7), measured and mostly fixed |
+| [CLASSIFICATION_PHASE2_REVIEW.md](CLASSIFICATION_PHASE2_REVIEW.md) | Touching `software_engineering`'s claim-type keywords — the fallback-collapse measurement, precision audit and what was deliberately not shipped |
 | [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) | Before deploying anything |
 | [REPO_STRUCTURE.md](REPO_STRUCTURE.md) | Orienting in the tree; the data-flow one-liners |
 | [PLATFORM_ARCHITECTURE_REVIEW.md](PLATFORM_ARCHITECTURE_REVIEW.md) | Scaling questions — cohorts, families, multi-tenant |

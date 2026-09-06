@@ -777,7 +777,8 @@
             "optimis",
             "optimiz",
             "cache",
-            "query"
+            "query",
+            "performance"
           ],
           "probe_focus": [
             "CAUSAL_REASONING",
@@ -813,7 +814,9 @@
             "released",
             "zero downtime",
             "rewrite",
-            "cutover"
+            "cutover",
+            "deliver",
+            "deploy"
           ],
           "probe_focus": [
             "PROCESS",

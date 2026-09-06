@@ -18,6 +18,7 @@ from api.taxonomy import (
     GENERAL,
     MARGIN_FLOOR,
     FamilyMatch,
+    classify_claim,
     detect_family,
     is_low_confidence,
     match_family,
@@ -528,3 +529,37 @@ def test_the_classifier_confidence_is_never_branched_on():
         "routing branched on a model-reported confidence or seniority: "
         f"{offenders}"
     )
+
+
+# ---------------------------------------------------------------------------
+# software_engineering claim-type keyword coverage (taxonomy Phase 2, C1)
+#
+# docs/EXTRACTION_ARCHITECTURE_REVIEW.md's fallback-collapse measurement found
+# `delivery` and `performance_work` missing their own name-verb: a claim
+# literally saying "Delivered..." or "...performance issues" fell all the way
+# through to `fallback_claim_type`'s heaviest type (`system_ownership`)
+# instead of the type it names. These are regression tests against real
+# claim text measured on the traced resumes, not synthetic examples.
+# ---------------------------------------------------------------------------
+
+
+def test_delivery_recognises_its_own_name_verb():
+    assert classify_claim(
+        "Delivered responsive designs using Material UI and Tailwind CSS.",
+        "software_engineering",
+    ) == "delivery"
+    assert classify_claim(
+        "Deployment of components in CloudFoundry environment using NodeJS.",
+        "software_engineering",
+    ) == "delivery"
+
+
+def test_performance_work_recognises_its_own_name():
+    assert classify_claim(
+        "Collaborate with DBAs to troubleshoot performance issues.",
+        "software_engineering",
+    ) == "performance_work"
+    assert classify_claim(
+        "Drove a 40% performance boost and a 35% increase in user engagement.",
+        "software_engineering",
+    ) == "performance_work"
