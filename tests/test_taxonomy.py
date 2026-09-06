@@ -563,3 +563,56 @@ def test_performance_work_recognises_its_own_name():
         "Drove a 40% performance boost and a 35% increase in user engagement.",
         "software_engineering",
     ) == "performance_work"
+
+
+# ---------------------------------------------------------------------------
+# tech_depth (C2): 0% hit rate on both traced resumes before this fix,
+# despite one resume's stack being entirely Spring/Hibernate/OAuth/JWT and
+# the other's being React/Redux/TypeScript. `tech_depth` is also the only
+# software_engineering type whose probe_focus (TOOL_FAMILIARITY, SPECIFICITY)
+# no other type carries -- at 0% those two interview dimensions were
+# unreachable for this family regardless of what a candidate actually did.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Design scalable, maintainable, and secure microservices architecture using Spring Boot.",
+        "Used Hibernate to write CRUD operations for retrieving and updating data.",
+        "Implementing OAuth token and JWT request handling for authentication flows.",
+        "Wrote Junit tests to cover the payment reconciliation flow.",
+        "Wrote the checkout flow in TypeScript across the whole application.",
+        "Design and development of Microservices using REST API and swagger.",
+        "Authentication was handled by Node and React JS.",
+    ],
+)
+def test_tech_depth_recognises_the_mainstream_stack(text):
+    assert classify_claim(text, "software_engineering") == "tech_depth"
+
+
+def test_a_measured_tie_resolves_to_the_other_new_keyword_not_tech_depth():
+    """Not every added keyword wins its claim outright. This exact sentence,
+    from the traced Sathiya resume, ties `hibernate` (tech_depth) against
+    `performance` (performance_work, shipped in the prior commit) 1-1;
+    `classify_claim`'s tie-break returns the first type in `claim_types()`'s
+    iteration order, and `performance_work` precedes `tech_depth` there. Both
+    answers are defensible for this claim -- pinned so a future keyword edit
+    that shifts this outcome is a deliberate decision, not a silent one."""
+    assert classify_claim(
+        "Responsible for hibernate-mapping and involved in performance of code.",
+        "software_engineering",
+    ) == "performance_work"
+
+
+def test_bare_react_is_not_a_keyword():
+    """`react` was deliberately shipped as the two-word phrase "react js", not
+    bare "react": the shared inflection suffixes (`ed`, `ing`) mean a bare
+    "react" keyword would also match "reacted"/"reacting" as an ordinary
+    English verb, with no relation to the framework
+    (docs/CLASSIFICATION_PHASE2_REVIEW.md). This pins the negative case so a
+    future edit can't silently reintroduce the bare form."""
+    assert classify_claim(
+        "Reacted quickly and calmly during the sprint planning meeting.",
+        "software_engineering",
+    ) != "tech_depth"

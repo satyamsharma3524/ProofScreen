@@ -836,7 +836,16 @@
             "grpc",
             "docker",
             "aws",
-            "gcp"
+            "gcp",
+            "spring",
+            "hibernate",
+            "oauth",
+            "jwt",
+            "junit",
+            "typescript",
+            "microservice",
+            "node",
+            "react js"
           ],
           "probe_focus": [
             "TOOL_FAMILIARITY",
