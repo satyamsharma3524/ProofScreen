@@ -60,6 +60,7 @@ from api.models import (
     ClaimScore,
     ContradictionRow,
     Evidence,
+    Profile,
     Question,
     Response,
     Resume,
@@ -83,6 +84,100 @@ from api.taxonomy import claim_type_label, default_claim_weights
 from api.tenancy import TenantScope, scoped
 
 log = logging.getLogger("proofscreen.orchestrator")
+
+
+def _trace_value(value: object) -> str:
+    """Render diagnostic values consistently without changing stored state."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str, sort_keys=True)
+
+
+def _question_turn_trace(
+    *,
+    session_id: str,
+    claim_id: str | None = None,
+    claim_text: str | None = None,
+    target_evidence: object = None,
+    known_evidence_before: object = None,
+    question: str | None = None,
+    candidate_answer: str | None = None,
+    extracted_evidence: object = None,
+    graph_updates: object = None,
+    known_evidence_after: object = None,
+    planner_reasoning: object = None,
+    next_target_selected: object = None,
+) -> None:
+    """Emit a complete, grep-friendly snapshot at each turn pipeline boundary.
+
+    These are deliberately logs only: the values are already-derived state and
+    no trace data is persisted or fed back into extraction, graph, or planning.
+    """
+    log.info(
+        "=== QUESTION TURN ===\n\n"
+        "session_id=%s\n"
+        "claim_id=%s\n\n"
+        "claim_text=%s\n"
+        "target_evidence=%s\n\n"
+        "known_evidence_before=%s\n\n"
+        "question=%s\n\n"
+        "candidate_answer=%s\n\n"
+        "extracted_evidence=%s\n\n"
+        "graph_updates=%s\n\n"
+        "known_evidence_after=%s\n\n"
+        "planner_reasoning=%s\n\n"
+        "next_target_selected=%s",
+        session_id,
+        claim_id or "",
+        claim_text or "",
+        _trace_value(target_evidence),
+        _trace_value(known_evidence_before),
+        question or "",
+        candidate_answer or "",
+        _trace_value(extracted_evidence),
+        _trace_value(graph_updates),
+        _trace_value(known_evidence_after),
+        _trace_value(planner_reasoning),
+        _trace_value(next_target_selected),
+    )
+
+
+def _known_evidence_trace(facts: list[ExtractedFact]) -> list[dict[str, object]]:
+    return [fact.model_dump(mode="json") for fact in facts]
+
+
+def _plan_trace(plan: Plan | None, states: list[ClaimState]) -> dict[str, object]:
+    """Explain the already-made planner decision; never participate in it."""
+    if plan is None:
+        return {"selected": None, "reason": "no viable claim or budget remaining"}
+    state = next((item for item in states if item.claim.id == plan.claim.id), None)
+    target = (
+        plan.evidence_category.value if plan.evidence_category else
+        plan.move.value if plan.move else
+        plan.target_dimension.value if plan.target_dimension else
+        plan.probe_level.value
+    )
+    return {
+        "selected_claim": plan.claim.id,
+        "candidate_claim_reason": {
+            "planner_reason": plan.reason,
+            "weight": state.weight if state else None,
+            "score": state.score if state else None,
+            "answers": state.answers if state else None,
+            "levels_used": sorted(level.value for level in state.levels_used) if state else [],
+            "stalled": state.stalled if state else None,
+            "exhausted": state.exhausted if state else None,
+        },
+        "target_evidence_reason": {
+            "selected": target,
+            "probe_level": plan.probe_level.value,
+            "target_dimension": plan.target_dimension.value if plan.target_dimension else None,
+            "move": plan.move.value if plan.move else None,
+            "evidence_category": plan.evidence_category.value if plan.evidence_category else None,
+        },
+    }
 
 
 class SessionClosed(RuntimeError):
@@ -1141,6 +1236,19 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         return None
 
     prior = [(q.text, r.answer_text) for q, r in qa_rows]
+    known_before = await known_facts(db, session.id)
+    plan_trace = _plan_trace(plan, states)
+    target_evidence = plan_trace["target_evidence_reason"]
+    # Boundary 1: the exact state supplied to the generator. This happens
+    # after selection and before any generator branch is entered.
+    _question_turn_trace(
+        session_id=session.id,
+        claim_id=plan.claim.id,
+        claim_text=plan.claim.text,
+        target_evidence=target_evidence,
+        known_evidence_before=_known_evidence_trace(known_before),
+        planner_reasoning=plan_trace,
+    )
 
     # P2-03 — the validator needs the claims it must NOT drift to, and on a
     # TRANSFER probe the one it MUST reference. Both are already in hand: the
@@ -1222,6 +1330,17 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
             other_claims=[s.claim.text for s in states if s.claim.id != plan.claim.id],
             target_claim_text=target_claim,
         )
+
+    # Boundary 2: wording returned by the actual selected generator.
+    _question_turn_trace(
+        session_id=session.id,
+        claim_id=plan.claim.id,
+        claim_text=plan.claim.text,
+        target_evidence=target_evidence,
+        known_evidence_before=_known_evidence_trace(known_before),
+        question=generated.question,
+        planner_reasoning=plan_trace,
+    )
 
     question = Question(
         id=ids.question_id(),
@@ -1317,6 +1436,7 @@ async def _persist_evidence(
         if response.answered_by == "voice"
         else None
     )
+    known_before = await known_facts(db, session.id)
 
     result = await evidence_engine.score_response(
         ScoreRequest(
@@ -1326,7 +1446,7 @@ async def _persist_evidence(
             answer_text=response.answer_text,
             response_id=response.id,
             job_family=session.job_family,
-            known_facts=await known_facts(db, session.id),
+            known_facts=known_before,
             voice=voice,
         )
     )
@@ -1412,6 +1532,41 @@ async def _persist_evidence(
     response.answer_score = result.answer_score
     response.signals_found = result.signals_found
     await db.flush()
+
+    categories = {
+        name: len(items)
+        for name, items in result.signals.model_dump(mode="json").items()
+        if isinstance(items, list) and items
+    }
+    # Boundary 3: extraction is complete and the validated output is now the
+    # exact payload being persisted.  The raw model response is intentionally
+    # not available beyond evidence.score_response(); this is its post-
+    # verbatim-enforcement output, which is what can affect the graph.
+    _question_turn_trace(
+        session_id=session.id,
+        claim_id=claim.id,
+        claim_text=claim.text,
+        target_evidence={
+            "probe_level": question.probe_level,
+            "move": question.move,
+            "target_dimension": question.target_dimension,
+        },
+        known_evidence_before=_known_evidence_trace(known_before),
+        question=question.text,
+        candidate_answer=response.answer_text,
+        extracted_evidence={
+            "raw_extraction_output": result.signals.model_dump(mode="json"),
+            "evidence_categories_discovered": categories,
+            "evidence_entities_discovered": [
+                entity.model_dump(mode="json") for entity in result.signals.entities
+            ],
+            "evidence_nodes": [node.model_dump(mode="json") for node in result.nodes],
+            "facts": [fact.model_dump(mode="json") for fact in result.facts],
+            "signals_found": result.signals_found,
+            "quotes_dropped": result.quotes_dropped,
+        },
+        known_evidence_after=_known_evidence_trace(await known_facts(db, session.id)),
+    )
     return result.answer_score
 
 
@@ -1532,11 +1687,75 @@ async def submit_answer(
         from api.engine import graph as graph_engine
 
         scope = TenantScope.of(session.tenant_id)
+        prior_claim_score = (
+            await db.execute(select(ClaimScore).where(ClaimScore.claim_id == claim.id))
+        ).scalar_one_or_none()
+        prior_dimensions = _load_dimensions(
+            prior_claim_score.dimensions_json if prior_claim_score else None
+        )
+        prior_profile = (
+            await db.execute(select(Profile).where(Profile.candidate_id == session.candidate_id))
+        ).scalar_one_or_none()
+        prior_competence = prior_profile.competence_score if prior_profile else 0
+        prior_known_fact_keys = {fact.key for fact in await known_facts(db, session.id)}
         await _persist_evidence(db, session, claim, question, response)
         await db.commit()
-        await recompute_claim(db, session, claim)
+        updated_claim_score = await recompute_claim(db, session, claim)
         contradictions = await graph_engine.session_contradictions(db, session.id, scope)
-        await graph_engine.recompute_profile(db, session.candidate_id, scope)
+        updated_profile = await graph_engine.recompute_profile(db, session.candidate_id, scope)
+        turn_evidence = (
+            await db.execute(select(Evidence).where(Evidence.response_id == response.id))
+        ).scalars().all()
+        updated_dimensions = _load_dimensions(updated_claim_score.dimensions_json)
+        dimension_deltas = {
+            dimension.value: {
+                "before": prior_dimensions[dimension].score if dimension in prior_dimensions else 0,
+                "after": updated_dimensions[dimension].score if dimension in updated_dimensions else 0,
+            }
+            for dimension in scoring.DIMENSION_ORDER
+            if (prior_dimensions[dimension].score if dimension in prior_dimensions else 0)
+            != (updated_dimensions[dimension].score if dimension in updated_dimensions else 0)
+        }
+        # Boundary 4: both the claim aggregate and candidate graph have been
+        # recomputed and committed. Nothing in this block feeds the planner.
+        _question_turn_trace(
+            session_id=session.id,
+            claim_id=claim.id,
+            claim_text=claim.text,
+            target_evidence={
+                "probe_level": question.probe_level,
+                "move": question.move,
+                "target_dimension": question.target_dimension,
+            },
+            question=question.text,
+            candidate_answer=response.answer_text,
+            graph_updates={
+                "claim_score": {
+                    "before": prior_claim_score.score if prior_claim_score else 0,
+                    "after": updated_claim_score.score,
+                },
+                "dimension_deltas": dimension_deltas,
+                "competence_score": {
+                    "before": prior_competence,
+                    "after": updated_profile.competence_score if updated_profile else None,
+                },
+                "newly_established_evidence": [
+                    {
+                        "dimension": item.dimension,
+                        "score": item.score,
+                        "basis": item.basis,
+                        "quotes": json.loads(item.quotes_json or "[]"),
+                    }
+                    for item in turn_evidence
+                ],
+                "newly_established_facts": [
+                    fact.model_dump(mode="json") for fact in await known_facts(db, session.id)
+                    if fact.key not in prior_known_fact_keys
+                ],
+                "contradictions_added": [item.model_dump(mode="json") for item in contradictions],
+            },
+            known_evidence_after=_known_evidence_trace(await known_facts(db, session.id)),
+        )
 
     # P2-04 — a non-answer earns one more go at the SAME probe, off-budget.
     #
@@ -1664,6 +1883,68 @@ async def finalize(db: AsyncSession, session: ChatSession) -> None:
 
     all_questions = await _questions_of(db, session.id)
     all_claims = await _claims_of(db, session.candidate_id)
+    qa_rows = await _qa_rows(db, session.id)
+    claim_by_id = {claim.id: claim for claim in all_claims}
+    claim_scores = {
+        score.claim_id: score
+        for score in (
+            await db.execute(
+                select(ClaimScore).where(ClaimScore.claim_id.in_([claim.id for claim in all_claims]))
+            )
+        ).scalars().all()
+    } if all_claims else {}
+    facts_by_response: dict[str, list[dict[str, object]]] = {}
+    for fact in (
+        await db.execute(select(SessionFact).where(SessionFact.session_id == session.id))
+    ).scalars().all():
+        facts_by_response.setdefault(fact.source_response_id, []).append(
+            {
+                "key": fact.key,
+                "value_num": fact.value_num,
+                "value_text": fact.value_text,
+                "unit": fact.unit,
+                "quote": fact.quote,
+            }
+        )
+    evidence_count = int((
+        await db.execute(
+            select(func.count()).select_from(Evidence).join(Response).where(Response.session_id == session.id)
+        )
+    ).scalar_one())
+    fact_count = sum(len(items) for items in facts_by_response.values())
+    # The graph is materialized as nested claim -> Q&A -> evidence/fact data,
+    # not a separate nodes/edges table. These counts make that representation
+    # explicit for the trace without altering its public contract.
+    graph_nodes = len(all_claims) + len(all_questions) + len(qa_rows) + evidence_count + fact_count
+    graph_edges = len(all_questions) + len(qa_rows) + evidence_count + fact_count
+    dimensions_verified = sum(
+        1
+        for score in claim_scores.values()
+        for dimension in _load_dimensions(score.dimensions_json).values()
+        if dimension.probed
+    )
+    claims_verified = sum(1 for score in claim_scores.values() if score.score > 0)
+    summary_lines = ["=== INTERVIEW TRACE SUMMARY ===", ""]
+    for position, (question, response) in enumerate(qa_rows, start=1):
+        claim = claim_by_id.get(question.claim_id)
+        summary_lines.extend((
+            f"Q{position}",
+            f"claim={claim.id if claim else question.claim_id}",
+            f"target={question.move or question.target_dimension or question.probe_level}",
+            f"question={question.text}",
+            f"answer={response.answer_text}",
+            f"new_evidence={_trace_value(facts_by_response.get(response.id, []))}",
+            "",
+        ))
+    summary_lines.extend((
+        "FINAL",
+        f"claims_verified={claims_verified}",
+        f"dimensions_verified={dimensions_verified}",
+        f"graph_nodes={graph_nodes}",
+        f"graph_edges={graph_edges}",
+        f"competence_score={evaluation.competence_score if evaluation is not None else ''}",
+    ))
+    log.info("\n".join(summary_lines))
     if evaluation is not None:
         log.info(
             "=== INTERVIEW SUMMARY === session=%s candidate=%s job_family=%s "

@@ -33,16 +33,22 @@ tool — with no story attached — has failed its target regardless of category
                      a name is not the target, the boundary is. Ask what
                      they could decide themselves versus what needed someone
                      else, or a specific call that was theirs alone to make.
-  PROCESS           For PROCESS, do not automatically ask for the
-                    entire workflow.
+  
+  PROCESS           Do not ask for the whole workflow.
 
-                    Avoid asking for the entire process unless the
-                    claim itself is specifically about designing,
-                    owning, or improving the process.
-                    When targeting PROCESS, prefer a step, transition, handoff, checkpoint, investigation, or action already mentioned in ALREADY ESTABLISHED. If none exist, choose the most consequential step implied by the claim.
+                      Prefer the step where:
 
-                    A specific step often produces stronger evidence
-                    than a request for the whole process.
+                      - something was investigated
+                      - something changed hands
+                      - something failed
+                      - something was verified
+                      - something was compared
+
+                      A good PROCESS question should
+                      normally produce a concrete noun,
+                      artifact, system, checkpoint,
+                      or decision that can later become
+                      a follow-up seam.
   METRIC_DEFINITION Ask how the named metric was actually computed or
                      captured — the counting method, the source system, the
                      window. Never ask for its value, and never lead with
