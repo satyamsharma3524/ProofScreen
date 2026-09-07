@@ -109,6 +109,11 @@ class Plan:
     # evidence_category is ever set on a given Plan.
     evidence_category: "evidence_planner.EvidenceCategory | None" = None
     alt_categories: tuple["evidence_planner.EvidenceCategory", ...] = ()
+    # --- hackathon demo: lightweight answer threading. Set only by
+    # _thread_plan() below; when set, ask_next skips both generators entirely
+    # and renders a canned per-entity question (question_engine.
+    # thread_followup_question) -- no model call, same reasoning as REPAIR_PROMPTS.
+    thread_entity: str | None = None
 
 
 @dataclass
@@ -252,13 +257,40 @@ class ClaimState:
             mv for mv in question_engine.ARCHETYPE_LADDER[anatomy.archetype]
             if mv.value not in self.moves_used
             and question_engine.move_available(mv, anatomy, ledger)
+            # Hackathon demo: EXCLUSION and AUTHORITY off entirely
+            # (settings.demo_mode). AUTHORITY measured as the single highest-
+            # variance move in real logs this session -- richest answer AND
+            # emptiest answer of any move, and the most junior-unfriendly
+            # (an honest "not much was mine to decide" reads identically to
+            # evasion). Removing it also fixes two findings from the same
+            # audit as a side effect: PROCESS-archetype claims that lose
+            # OPERATING_CONTEXT to a session-fresh rotation collision now
+            # fall through to FAILURE instead of AUTHORITY, and VOLUME no
+            # longer opens cold on a zero-grounding authority question.
+            # PERTURB is excluded from this list already -- it is offered only
+            # by plan_next_forensic's separate stall branch -- and disabled
+            # for the demo via settings.transfer_probe, which already gates
+            # that whole branch; no new flag needed for PERTURB.
+            and not (
+                settings.demo_mode
+                and mv in (question_engine.Move.EXCLUSION, question_engine.Move.AUTHORITY)
+            )
         ]
+
+    @property
+    def demo_capped(self) -> bool:
+        """Hackathon demo: hard stop at N questions per claim, independent of
+        the ladder. `answers` already excludes repairs (see build_claim_states),
+        so this counts only budgeted questions, matching demo_max_questions_per_claim."""
+        return settings.demo_mode and self.answers >= settings.demo_max_questions_per_claim
 
     @property
     def forensic_closed(self) -> bool:
         if self.saturated:
             return True
         if self.dear_stalled:
+            return True
+        if self.demo_capped:
             return True
         return not self.forensic_moves_left()
 
@@ -322,7 +354,8 @@ async def _question_count(db: AsyncSession, session_id: str) -> int:
 
 
 async def _repair_already_used(db: AsyncSession, question: Question) -> bool:
-    """One repair per parent question, hard.
+    """One repair per parent question, hard -- one repair per CLAIM when
+    settings.demo_mode (hackathon demo req #3).
 
     Without the cap a disengaged candidate loops inside a single probe forever
     and the interview never terminates — the same class of bug as unbounded
@@ -330,16 +363,20 @@ async def _repair_already_used(db: AsyncSession, question: Question) -> bool:
     """
     if question.is_repair:
         return True          # a repair is never itself repaired
+    conditions = [
+        Question.session_id == question.session_id,
+        Question.claim_id == question.claim_id,
+        Question.is_repair.is_(True),
+        Question.order_index > question.order_index,
+    ]
+    if not settings.demo_mode:
+        # Ordinarily one repair PER PROBE LEVEL -- a claim can still get a
+        # repair on its second question if the first repair was for a
+        # different probe. Hackathon demo (req #3): one repair per CLAIM,
+        # full stop, so this filter is dropped only when demo_mode is on.
+        conditions.append(Question.probe_level == question.probe_level)
     later = (
-        await db.execute(
-            select(Question).where(
-                Question.session_id == question.session_id,
-                Question.claim_id == question.claim_id,
-                Question.probe_level == question.probe_level,
-                Question.is_repair.is_(True),
-                Question.order_index > question.order_index,
-            )
-        )
+        await db.execute(select(Question).where(*conditions))
     ).scalars().first()
     return later is not None
 
@@ -1012,7 +1049,12 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         return existing
 
     states = await build_claim_states(db, session)
+    qa_rows = await _qa_rows(db, session.id)
     plan = (
+        _thread_plan(states, session, qa_rows)
+        if settings.demo_mode and settings.forensic_questions and not settings.evidence_planner_v2
+        else None
+    ) or (
         plan_next_evidence(states, session.questions_asked)
         if settings.evidence_planner_v2
         else plan_next_forensic(states, session.questions_asked)
@@ -1059,7 +1101,7 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
     if plan is None:
         return None
 
-    prior = [(q.text, r.answer_text) for q, r in await _qa_rows(db, session.id)]
+    prior = [(q.text, r.answer_text) for q, r in qa_rows]
 
     # P2-03 — the validator needs the claims it must NOT drift to, and on a
     # TRANSFER probe the one it MUST reference. Both are already in hand: the
@@ -1071,7 +1113,19 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         )
         target_claim = target.text if target else None
 
-    if plan.evidence_category is not None:
+    if plan.thread_entity is not None:
+        # Hackathon demo: answer threading. No model call -- same canned-line
+        # reasoning as the repair path -- so nothing here can trip validate()
+        # or need a fallback.
+        generated = question_engine.QuestionAttempt(
+            question_engine.thread_followup_question(plan.thread_entity),
+            plan.probe_level, "thread", 1, (),
+            "", plan.thread_entity, "answer-thread follow-up",
+        )
+        log.info(
+            "thread question chosen claim=%s entity=%s", plan.claim.id, plan.thread_entity,
+        )
+    elif plan.evidence_category is not None:
         # v2 evidence-category path. Same anatomy/ledger inputs as the
         # forensic path below, rendered against v2_forensic_question.txt with
         # the EvidenceCategory vocabulary instead of Move.
@@ -1680,6 +1734,56 @@ def _rotate_session_fresh(
     """
     fresh = [m for m in moves if m.value not in session_used]
     return fresh or moves
+
+
+def _thread_plan(
+    states: list[ClaimState], session: ChatSession, prior_qa: list[tuple[Question, Response]]
+) -> Plan | None:
+    """Hackathon demo: planner priority 1 (answer threading), ahead of
+    everything plan_next_forensic does. Reuses existing state only --
+    `session.current_claim_id` (already set every turn), `state.answers`
+    (already excludes repairs), and the raw answer text already fetched by
+    the caller. No new table, no new column, no model call.
+
+    Fires only right after a claim's FIRST budgeted answer: with
+    demo_max_questions_per_claim=2 that is the only point a thread can open
+    and still leave room for its own follow-up, which is also why a claim
+    can never need more than the one threaded question `detect_thread_entity`
+    finds -- the per-claim cap (ClaimState.demo_capped) closes the claim right
+    after.
+    """
+    if not settings.demo_mode or not session.current_claim_id:
+        return None
+    if session.questions_asked >= settings.max_questions:
+        return None
+    state = next((s for s in states if s.claim.id == session.current_claim_id), None)
+    if state is None or state.answers != 1 or state.demo_capped:
+        return None
+    last = next(
+        (
+            (q, r) for q, r in reversed(prior_qa)
+            if q.claim_id == session.current_claim_id and not q.is_repair
+        ),
+        None,
+    )
+    if last is None:
+        return None
+    question, response = last
+    entity = question_engine.detect_thread_entity(response.answer_text)
+    if entity is None:
+        return None
+    try:
+        probe_level = ProbeLevel(question.probe_level)
+    except ValueError:
+        probe_level = ProbeLevel.OPERATIONAL
+    return Plan(
+        claim=state.claim,
+        probe_level=probe_level,
+        reason=f"answer-thread follow-up: {entity}",
+        anatomy=state.anatomy,
+        ledger=state.ledger,
+        thread_entity=entity,
+    )
 
 
 def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:

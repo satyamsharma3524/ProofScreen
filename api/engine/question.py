@@ -661,13 +661,14 @@ REPAIR_PROMPTS: dict[ProbeLevel, str] = {
         "Can you think of one specific occasion? What happened, and when?"
     ),
     ProbeLevel.DECISION: (
-        "What was the call you made, and what did you turn down to make it?"
+        "What did you decide, and what else could you have done instead?"
     ),
     ProbeLevel.OUTCOME: (
         "What happened in the end, and how did you know?"
     ),
     ProbeLevel.TRANSFER: (
-        "Take a guess — what would you look at first, and what would rule it out?"
+        "Take a guess — what would you check first, and how would you know "
+        "that wasn't the problem?"
     ),
 }
 
@@ -681,6 +682,64 @@ def repair_question(probe_level: ProbeLevel, claim_text: str | None = None) -> s
     """
     base = REPAIR_PROMPTS[probe_level]
     return f'On "{_short(claim_text)}" — {base}' if claim_text else base
+
+
+# Hackathon demo -- lightweight answer threading. Pure keyword match, no
+# model call, no new extraction pipeline: the same "fixed line is easier to
+# defend on stage than a generated one" reasoning as REPAIR_PROMPTS above,
+# just triggered by an entity in the candidate's own last answer instead of a
+# non-answer. Order matters -- it is match PRIORITY, first hit wins, so a
+# more specific word ("approval") is checked before a more generic one that
+# might co-occur in the same sentence ("manager").
+THREAD_ENTITY_ORDER: tuple[str, ...] = (
+    "approval", "documentation", "metric", "dashboard", "ticket", "jira",
+    "release", "api", "customer", "report", "sdk", "library", "service",
+    "bug", "meeting", "team", "manager",
+)
+
+THREAD_ENTITY_QUESTIONS: dict[str, str] = {
+    "approval": "What approval was needed?",
+    "documentation": "Which documentation did you check?",
+    "metric": "Which metric were you looking at?",
+    "dashboard": "Which metric were you looking at on the dashboard?",
+    "ticket": "What was in the ticket?",
+    "jira": "What did the Jira ticket say?",
+    "release": "What happened with the release?",
+    "api": "Which API was that?",
+    "customer": "What did the customer need?",
+    "report": "What did the report show?",
+    "sdk": "What part of the SDK was involved?",
+    "library": "Which library was that?",
+    "service": "Which service was that?",
+    "bug": "What was the bug?",
+    "meeting": "What came out of that meeting?",
+    "team": "What were you waiting for from them?",
+    "manager": "What did they need before approving it?",
+}
+
+
+def detect_thread_entity(answer_text: str, exclude: "Sequence[str]" = ()) -> str | None:
+    """First entity this answer names, in priority order, or None.
+
+    Word-boundary, case-insensitive substring match against a fixed list --
+    deliberately not a model call and not a new signal-extraction path. Skips
+    anything already threaded on this claim (`exclude`) so a claim never asks
+    about the same entity twice.
+    """
+    text = answer_text or ""
+    skip = {e.lower() for e in exclude}
+    for entity in THREAD_ENTITY_ORDER:
+        if entity in skip:
+            continue
+        # Trailing `s?` for the common plural (tickets, reports, managers) --
+        # not a real stemmer, just enough for the demo's fixed word list.
+        if re.search(rf"\b{re.escape(entity)}s?\b", text, re.IGNORECASE):
+            return entity
+    return None
+
+
+def thread_followup_question(entity: str) -> str:
+    return THREAD_ENTITY_QUESTIONS[entity]
 
 
 def _retry_brief(violations: tuple[str, ...]) -> str:
@@ -998,13 +1057,17 @@ MOVE_BRIEFS: dict[Move, tuple[str, str]] = {
         "how the number was produced, in their own operating language",
     ),
     Move.OWNERSHIP_BOUNDARY: (
-        "Ask where their ownership of this ENDED — what they controlled "
-        "directly versus what belonged to someone else. Not how much they "
-        "owned; where the edge was. Never lead with 'who reviewed your "
-        "work' or 'who signed off' — a name is not the target, the "
-        "boundary is. Ask what they could decide themselves, or a specific "
-        "call that was theirs alone to make.",
-        "the edge of their remit, told as a decision they made or didn't",
+        "Ask what part of this THEY personally handled, or what happened "
+        "once their part was done and it moved on. This is a contribution "
+        "question, not an org-chart question — never ask who approved it, "
+        "who signed off, or what authority they had; those invite a name or "
+        "a shrug, not a description of the work. 'What part did you build?' "
+        "or 'what happened after your part was finished?' is right; 'who "
+        "reviewed your work' or 'what could you decide independently' is "
+        "wrong, even phrased gently. A plain, complete answer ('I built X, "
+        "then it went to the release team') is exactly the target -- it "
+        "does not need a tradeoff or a decision in it to count.",
+        "the specific piece that was theirs, described as work not rank",
     ),
     Move.OPERATING_CONTEXT: (
         "Ask what they were LOOKING AT while doing this — the screen, the "
@@ -1080,7 +1143,14 @@ ARCHETYPE_LADDER: dict[Archetype, tuple[Move, ...]] = {
         Move.COHERENCE, Move.DEPENDENCY, Move.PERTURB,
     ),
     Archetype.OWNERSHIP: (
-        Move.OWNERSHIP_BOUNDARY, Move.AUTHORITY, Move.FAILURE,
+        # OPERATING_CONTEXT opens even an OWNERSHIP-archetype claim now --
+        # measured this session: "what decisions were solely yours" as a
+        # claim's FIRST question, with zero grounding, is a senior-sounding
+        # question a junior candidate can find genuinely hard to answer
+        # despite having done the work. AUTHORITY itself is removed under
+        # demo_mode (see forensic_moves_left()); OWNERSHIP_BOUNDARY is kept,
+        # reworded, and now asked second, after some concrete detail exists.
+        Move.OPERATING_CONTEXT, Move.OWNERSHIP_BOUNDARY, Move.AUTHORITY, Move.FAILURE,
         Move.PEOPLE, Move.COHERENCE, Move.PERTURB,
     ),
     Archetype.BUILD: (
@@ -1334,7 +1404,8 @@ MOVE_FALLBACKS: dict[object, Template] = {
         "what counted and what did not?"
     ),
     Move.OWNERSHIP_BOUNDARY: Template(
-        "On $object — what was yours to run, and what belonged to someone else?"
+        "On $object — what part did you personally handle, and what happened "
+        "once it left your hands?"
     ),
     Move.OPERATING_CONTEXT: Template(
         "When you were working on $object, what did you look at first?"

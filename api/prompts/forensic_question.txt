@@ -69,6 +69,13 @@ RULES
     architecture" just restates the resume and collects the rehearsed
     answer. Use the claim as the launching point, then probe beside it.
   - Never comment on their English. Evidence, never presentation.
+  - A plain, concrete description of what happened is a COMPLETE answer —
+    do not write a question whose only good answer includes a tradeoff, a
+    justification, or a decision reasoned through. Asking WHAT they did and
+    HOW is not a weaker question than asking WHY; it is just a different
+    one, and it is the one that a candidate at any experience level,
+    junior included, can answer fully from real work. Save an explicit
+    tradeoff/reasoning ask for a move whose target is specifically that.
 
 BEFORE YOU ANSWER — all three must hold, not just one
   1. Two people reply: one did this work, one read this resume ten minutes
@@ -78,9 +85,11 @@ BEFORE YOU ANSWER — all three must hold, not just one
      context. If they would need to ask "what do you mean?" or "which
      project?", rewrite it so the context is obvious immediately.
   3. A strong question produces a short story — an action, a decision, an
-     incident, a tradeoff. A weak one produces a name, a title or a single
-     word. If your draft's best honest answer is a name or a tool, it is
-     the wrong question for this move, not just badly worded.
+     incident, or a plain description of what was done and what happened
+     next. A weak one produces a name, a title or a single word. A story
+     does not require a tradeoff or a justification to count as strong —
+     if your draft's best honest answer is a name or a tool, THAT is the
+     failure, not the absence of a dilemma.
 
 Return ONLY JSON, no prose, no markdown fences, matching this schema:
 

@@ -32,8 +32,23 @@ class Settings(BaseSettings):
     llm_temperature_question: float = 0.4
 
     # --- interview policy ---
-    max_questions: int = 12          # 5 probe levels x 3 claims, adaptively stopped
+    # WAS 12. Hackathon demo asks for a short, human-feeling interview: 3
+    # claims (max_claims below) x 2 questions each (demo_max_questions_per_claim).
+    # `MAX_QUESTIONS=12` in the env restores the old budget without a code change.
+    max_questions: int = 6
     max_claims: int = 3
+
+    # --- hackathon demo mode -------------------------------------------------
+    # One flag for the whole "make the interview feel human, not exhaustive"
+    # bundle: caps per claim, one repair per claim instead of one per probe,
+    # EXCLUSION/PERTURB moves off, and lightweight answer-threading (see
+    # question.detect_thread_entity). All additive to the existing Move
+    # planner -- nothing here touches extraction, scoring, the claim graph or
+    # the evidence categories. DEMO_MODE=false reverts every one of these at
+    # once; PERTURB is disabled via the existing `transfer_probe` flag below,
+    # which already exists for exactly this and is separately overridable.
+    demo_mode: bool = True
+    demo_max_questions_per_claim: int = 2
 
     # --- claim inventory (recall-first extraction) ------------------------
     # EXTRACTION IS A RECALL STEP, NOT A RANKING STEP. With this on,
@@ -67,7 +82,10 @@ class Settings(BaseSettings):
     score_inline: bool = True
     # One TRANSFER probe to a claim that has stalled, instead of abandoning it
     # on the spot. false => the pre-phase interview, question for question.
-    transfer_probe: bool = True
+    # Also how PERTURB is disabled for the hackathon demo (demo_mode above) --
+    # the whole PERTURB branch in plan_next_forensic is already gated on this
+    # flag, so turning it off needs no new code.
+    transfer_probe: bool = False
 
     # Validate every generated question and regenerate ONCE on failure. false
     # reproduces the Phase 1 question path exactly, question for question.

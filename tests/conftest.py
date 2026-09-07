@@ -17,6 +17,7 @@ os.environ["TRANSFER_PROBE"] = "true"   # tests that need it off use monkeypatch
 os.environ["SCORE_INLINE"] = "true"
 os.environ["MAX_QUESTIONS"] = "12"
 os.environ["MAX_CLAIMS"] = "3"
+os.environ["DEMO_MODE"] = "false"      # tests that need it on use monkeypatch
 os.environ["VOICE_WEIGHT"] = "0.10"
 os.environ["WHATSAPP_VERIFY_TOKEN"] = "test-verify-token"
 os.environ["WHATSAPP_VALIDATE_SIGNATURE"] = "false"
