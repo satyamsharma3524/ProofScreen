@@ -1269,3 +1269,14 @@ def test_the_duplicate_threshold_was_not_touched():
     """C7. The redesign changes WHAT is compared, not where the line sits.
     Moving 0.37 against the sample that measured it is fitting to the test set."""
     assert DUPLICATE_JACCARD == 0.37
+
+
+def test_thread_entity_questions_probe_forensic_depth():
+    """Verify that thread entity follow-ups ask high-yield forensic questions rather than 2-word noun lookups."""
+    from api.engine.question import THREAD_ENTITY_QUESTIONS
+    assert "api" in THREAD_ENTITY_QUESTIONS
+    assert THREAD_ENTITY_QUESTIONS["api"] != "Which API was that?"
+    assert any(term in THREAD_ENTITY_QUESTIONS["api"].lower() for term in ("constraint", "limit", "latency", "payload", "threshold"))
+    assert any(term in THREAD_ENTITY_QUESTIONS["library"].lower() for term in ("trade-off", "select", "custom"))
+    assert any(term in THREAD_ENTITY_QUESTIONS["ticket"].lower() for term in ("boundary", "responsibility", "escalation"))
+

@@ -54,7 +54,7 @@ def claim_id() -> str:
 
 
 def question_id() -> str:
-    return f"q_{_short()}"
+    return f"q_{_short(_MACHINE)}"
 
 
 def response_id() -> str:

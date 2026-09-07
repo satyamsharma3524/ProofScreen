@@ -53,24 +53,29 @@ incident_markers   Details only someone who was actually there would produce: a
 entities           Named systems, teams, processes, geographies, products.
 
 decisions          A choice they made AND why, when the answer states both
-                   halves. `choice` = what they picked, in their words.
-                   `reason` = why, in their words. Skip the whole item if the
-                   answer names a choice with no stated reason, or a reason
-                   with no stated choice — a decision signal needs both halves
-                   present, not inferred. "We used synthetic data because
-                   production labels were sparse" is a decision. "We used
-                   synthetic data" alone is not — that is just a fact, and it
-                   likely already belongs in `tools` or `entities`.
+                   halves. `choice` = what they picked, adopted, or DELIBERATELY RETAINED /
+                   OPTED NOT TO CHANGE (e.g., "did not change Redux Toolkit", "retained legacy auth").
+                   `reason` = why, in their words (e.g., "data flow pipeline was correct").
+                   Skip the whole item if the answer names a choice with no stated reason, or a reason
+                   with no stated choice — a decision signal needs both halves present.
+                   "We did not change Redux because the pipeline was correct" is a decision.
+                   "We used synthetic data because production labels were sparse" is a decision.
 
 constraints        A limitation that shaped the work, whatever the field:
                    compliance, budget, data availability, latency, headcount,
-                   timeline. `type` = the short kind of constraint (compliance,
+                   timeline. `limitation` = the short kind of constraint (compliance,
                    data, budget, latency, timeline, headcount, other). `effect`
                    = what it stopped them from doing or forced them to do
-                   instead, in their words. "Compliance rules prevented
-                   production data use" is a constraint. A constraint with no
-                   stated effect is still worth recording — leave `effect`
-                   null rather than inventing one.
+                   instead, in their words.
+
+concept_explanations
+                   An explanation of a domain concept, policy, tool or process
+                   that explains WHY it works or WHY it applies. `concept` = what
+                   they explained. `reasoning` = the explanation of why/how.
+
+boundaries         An explicit boundary of personal responsibility vs team or
+                   manager scope. `scope_held` = what was theirs to decide/do.
+                   `scope_handed_off` = what went to others or required sign-off.
 
 facts              Durable facts, ONLY on these keys:
 $fact_key_menu
@@ -112,7 +117,9 @@ Return ONLY JSON, no prose, no markdown fences, matching this schema:
   "incident_markers": [{"detail": "string", "quote": "string"}],
   "entities": [{"entity": "string", "kind": "system|team|process|place|product|other", "quote": "string"}],
   "decisions": [{"choice": "string", "reason": "string", "quote": "string"}],
-  "constraints": [{"type": "string", "effect": "string or null", "quote": "string"}],
+  "constraints": [{"limitation": "string", "effect": "string or null", "quote": "string"}],
+  "concept_explanations": [{"concept": "string", "reasoning": "string or null", "quote": "string"}],
+  "boundaries": [{"scope_held": "string", "scope_handed_off": "string or null", "quote": "string"}],
   "facts": [{"key": "string", "value_num": 0, "value_text": null, "unit": "string or null", "quote": "string"}],
   "summary": "string"
 }

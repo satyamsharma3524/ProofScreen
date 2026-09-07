@@ -387,4 +387,5 @@ def coverage_from_signals(raw: dict) -> dict[EvidenceCategory, int]:
         EvidenceCategory.DECISION: len(raw.get("decisions") or ()),
         EvidenceCategory.CONSTRAINT: len(raw.get("constraints") or ()),
         EvidenceCategory.ARTIFACT: len(product_entities),
+        EvidenceCategory.OWNERSHIP: len(raw.get("boundaries") or ()),
     }

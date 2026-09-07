@@ -47,11 +47,7 @@ def test_every_versioned_input_has_a_value():
     # change -- which is the argument for this assertion, not against it.
     assert set(stamp.prompt_versions) == {
         "classify_role", "extract_claims", "extract_signals", "generate_question",
-        # qpol_3. The forensic generator's prompt. `generate_question` stays in
-        # the set because the probe-level path is still reachable with
-        # FORENSIC_QUESTIONS=false, and a hash that ignored it would not
-        # describe an evaluation produced with the flag off.
-        "forensic_question",
+        "forensic_question", "claim_graph", "v2_extract_signals", "v2_forensic_question",
     }
     assert all(len(h) == 12 for h in stamp.prompt_versions.values())
 

@@ -144,8 +144,17 @@ def _question_turn_trace(
     )
 
 
-def _known_evidence_trace(facts: list[ExtractedFact]) -> list[dict[str, object]]:
-    return [fact.model_dump(mode="json") for fact in facts]
+def _known_evidence_trace(facts: list[ExtractedFact] | None = None, nodes: list | None = None) -> list[dict[str, object]]:
+    res: list[dict[str, object]] = []
+    if facts:
+        res.extend(fact.model_dump(mode="json") for fact in facts)
+    if nodes:
+        for item in nodes:
+            if hasattr(item, "model_dump"):
+                res.append(item.model_dump(mode="json"))
+            elif isinstance(item, dict):
+                res.append(item)
+    return res
 
 
 def _plan_trace(plan: Plan | None, states: list[ClaimState]) -> dict[str, object]:
@@ -888,6 +897,9 @@ def select_transfer(
     )
 
 
+MIN_STREAK = 2
+
+
 def plan_next(states: list[ClaimState], index: int) -> Plan | None:
     """Decide (claim, probe level, target dimension) for question `index`.
 
@@ -906,6 +918,63 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
                 if level not in state.levels_used:
                     return Plan(state.claim, level, None, "fixed sweep")
         return None
+
+    # Phase 1 — stalled claims get their transfer probe first
+    for state in states:
+        if not state.exhausted and state.transfer_available:
+            covered = signal_rubrics.dimensions_for_level(ProbeLevel.TRANSFER)
+            gap = min(
+                covered,
+                key=lambda d: state.dimensions[d].score if d in state.dimensions else 0,
+            )
+            return Plan(
+                state.claim,
+                ProbeLevel.TRANSFER,
+                gap,
+                f"stalled after {state.answers} answers — one transfer probe",
+                transfer=select_transfer(
+                    state.claim,
+                    signal_rubrics.merge_signals(state.answer_signals),
+                    [s.claim for s in states],
+                ),
+            )
+
+    # Check for active claim momentum: maintain focus on active claim for MIN_STREAK turns
+    active_streak = next(
+        (s for s in states if 0 < s.answers < MIN_STREAK and not s.exhausted and not s.transfer_available),
+        None,
+    )
+    if active_streak is not None:
+        remaining = active_streak.levels_left
+        if remaining:
+            gap = active_streak.weakest_dimension()
+            chosen: ProbeLevel | None = None
+            if gap is not None:
+                preferred = signal_rubrics.level_for_dimension(gap)
+                if preferred in remaining:
+                    chosen = preferred
+                else:
+                    chosen = next(
+                        (
+                            lv for lv in remaining
+                            if gap in signal_rubrics.dimensions_for_level(lv)
+                        ),
+                        None,
+                    )
+            if chosen is None:
+                chosen = remaining[0]
+                covered = signal_rubrics.dimensions_for_level(chosen)
+                gap = min(
+                    covered,
+                    key=lambda d: active_streak.dimensions[d].score if d in active_streak.dimensions else 0,
+                ) if covered else None
+                reason = f"continuation move (streak {active_streak.answers}/{MIN_STREAK}) on active claim"
+            else:
+                reason = (
+                    f"weakest dimension {gap.value if gap else 'n/a'} on active claim streak "
+                    f"({active_streak.answers}/{MIN_STREAK})"
+                )
+            return Plan(active_streak.claim, chosen, gap, reason)
 
     # Phase 1 — breadth. Every claim gets its VALIDATION probe first.
     untouched = [s for s in states if not s.levels_used]
@@ -1132,10 +1201,13 @@ def plan_next_evidence(states: list[ClaimState], index: int) -> Plan | None:
     category, so CROSS_CLAIM_LINK is simply never offered — not a crash, not a
     stuck category.
     """
-    if index >= settings.max_questions or not states:
-        return None
+    # Prioritize active claim (already started) to maintain conversational depth per topic
+    active_first = sorted(
+        states,
+        key=lambda s: (0 if s.evidence_state.turn > 0 and not evidence_planner.sufficiently_covered(s.evidence_state) else 1)
+    )
 
-    for state in states:
+    for state in active_first:
         anatomy = state.anatomy
         ev_state = state.evidence_state
         target = evidence_planner.plan_next(ev_state, has_metric=anatomy.has_metric)
@@ -1565,7 +1637,7 @@ async def _persist_evidence(
             "signals_found": result.signals_found,
             "quotes_dropped": result.quotes_dropped,
         },
-        known_evidence_after=_known_evidence_trace(await known_facts(db, session.id)),
+        known_evidence_after=_known_evidence_trace(await known_facts(db, session.id), nodes=result.nodes),
     )
     return result.answer_score
 
@@ -1807,7 +1879,7 @@ async def _maybe_repair(
         claim_id=question.claim_id,
         session_id=session.id,
         text=question_engine.repair_question(
-            ProbeLevel(question.probe_level), claim.text if claim else None
+            ProbeLevel(question.probe_level), claim.text if claim else None, job_family=session.job_family
         ),
         probe_level=question.probe_level,
         target_dimension=question.target_dimension,
@@ -2184,6 +2256,25 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
             anatomy=state.anatomy,
             ledger=state.ledger,
         )
+
+    # 0 — momentum. Maintain focus on active claim for MIN_STREAK turns before switching
+    for state in states:
+        moves_count = len(state.moves_used)
+        if (
+            0 < moves_count < MIN_STREAK
+            and not state.forensic_closed
+            and not (state.dear_stalled and state.answers >= 2)
+        ):
+            moves = [
+                m for m in _rotate_session_fresh(state.forensic_moves_left(), session_used)
+                if m is not question_engine.Move.PERTURB
+            ]
+            if moves:
+                return brief(
+                    state,
+                    moves[0],
+                    f"claim momentum streak ({moves_count}/{MIN_STREAK}) on active claim",
+                )
 
     # 1 — breadth. Heaviest-first ordering is already applied by the caller.
     for state in states:

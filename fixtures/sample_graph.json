@@ -1,7 +1,7 @@
 {
   "_note": "Reference evidence graph — the exact shape of GET /api/recruiter/candidates/{id}. GENERATED from the real engine by `python seed.py` and then `scripts/dump_fixture.py`, never hand-written, so the fixture and the rubrics can never drift apart. tests/test_pipeline.py asserts every claim_score here is what engine/signals.py + engine/scoring.py recompute from the stored dimension scores. Served live at GET /api/dev/fixture.",
   "candidate": {
-    "id": "c_bab0f6",
+    "id": "c_1ffd7d",
     "name": "Priya Raghavan",
     "role": "Support Team Lead",
     "phone": "+919810000001"
@@ -11,16 +11,16 @@
   "routing_confidence": 0.0,
   "scored_for": null,
   "state": "COMPLETE",
-  "questions_asked": 12,
+  "questions_asked": 6,
   "resume_score": 28,
-  "weighted_evidence_score": 56,
-  "competence_score": 56,
-  "badge": "partial",
+  "weighted_evidence_score": 30,
+  "competence_score": 30,
+  "badge": "unverified",
   "role_coverage": 60,
   "consistency": {
     "score": 100,
     "multiplier": 1.0,
-    "facts_tracked": 6,
+    "facts_tracked": 3,
     "contradictions": [],
     "note": "No contradictions detected across the session."
   },
@@ -28,19 +28,19 @@
     {
       "dimension": "SPECIFICITY",
       "score": 75,
-      "signal_count": 20,
+      "signal_count": 12,
       "basis": "across 3 claim(s)",
       "quotes": [
         "I had 35 agents in four pods, and each pod had a senior associate reporting to me.",
-        "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
-        "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving."
+        "I ran daily attendance tracking and a weekly calibration with the quality team.",
+        "I ran daily attendance tracking and a weekly calibration with the quality team."
       ],
       "probed": true
     },
     {
       "dimension": "PROCESS",
-      "score": 81,
-      "signal_count": 13,
+      "score": 71,
+      "signal_count": 6,
       "basis": "across 3 claim(s)",
       "quotes": [
         "I had 35 agents in four pods, and each pod had a senior associate reporting to me.",
@@ -51,69 +51,116 @@
     },
     {
       "dimension": "METRIC_OWNERSHIP",
-      "score": 57,
-      "signal_count": 5,
+      "score": 30,
+      "signal_count": 3,
       "basis": "across 3 claim(s)",
       "quotes": [
-        "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
         "I ran daily attendance tracking and a weekly calibration with the quality team.",
-        "I decided not to hire replacements immediately because onboarding takes six weeks, so instead I cross-trained four email agents onto voice, which meant we covered the gap without new headcount."
+        "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
+        "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks."
       ],
       "probed": true
     },
     {
       "dimension": "CAUSAL_REASONING",
-      "score": 46,
-      "signal_count": 5,
+      "score": 7,
+      "signal_count": 1,
       "basis": "across 3 claim(s)",
       "quotes": [
-        "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
-        "I decided not to hire replacements immediately because onboarding takes six weeks, so instead I cross-trained four email agents onto voice, which meant we covered the gap without new headcount.",
         "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks."
       ],
       "probed": true
     },
     {
       "dimension": "AUTHENTICITY",
-      "score": 25,
-      "signal_count": 2,
+      "score": 0,
+      "signal_count": 0,
       "basis": "across 3 claim(s)",
-      "quotes": [
-        "I remember the week before month-end when three agents resigned on the same day and the queue backed up to nine hours.",
-        "Looking back I would have started the coaching cadence a month earlier because the retraining only paid off once calibration was consistent."
-      ],
+      "quotes": [],
       "probed": true
     },
     {
       "dimension": "TOOL_FAMILIARITY",
-      "score": 5,
+      "score": 2,
       "signal_count": 1,
       "basis": "across 3 claim(s)",
       "quotes": [
         "I reviewed it in Zendesk every Monday against the reopen report."
       ],
       "probed": true
+    },
+    {
+      "dimension": "KNOWLEDGE",
+      "score": 0,
+      "signal_count": 0,
+      "basis": "across 3 claim(s)",
+      "quotes": [],
+      "probed": false
+    },
+    {
+      "dimension": "EXECUTION",
+      "score": 65,
+      "signal_count": 6,
+      "basis": "across 3 claim(s)",
+      "quotes": [
+        "I had 35 agents in four pods, and each pod had a senior associate reporting to me.",
+        "I ran daily attendance tracking and a weekly calibration with the quality team.",
+        "Every morning I pulled the queue report, then ran a fifteen minute huddle, then reviewed the previous day's escalations with the two pod seniors before assigning coaching slots."
+      ],
+      "probed": true
+    },
+    {
+      "dimension": "PROBLEM_SOLVING",
+      "score": 0,
+      "signal_count": 0,
+      "basis": "across 3 claim(s)",
+      "quotes": [],
+      "probed": false
+    },
+    {
+      "dimension": "JUDGMENT",
+      "score": 0,
+      "signal_count": 0,
+      "basis": "across 3 claim(s)",
+      "quotes": [],
+      "probed": false
+    },
+    {
+      "dimension": "OWNERSHIP",
+      "score": 0,
+      "signal_count": 0,
+      "basis": "across 3 claim(s)",
+      "quotes": [],
+      "probed": false
+    },
+    {
+      "dimension": "ADAPTABILITY",
+      "score": 0,
+      "signal_count": 0,
+      "basis": "across 3 claim(s)",
+      "quotes": [],
+      "probed": false
     }
   ],
   "claims": [
     {
-      "id": "cl_ace30f",
+      "id": "cl_cad6cb",
       "text": "Managed a team of 35 agents across 4 pods with 4 senior associates reporting to me",
       "claim_type": "team_handling",
       "claim_type_label": "Team handling",
       "metric": "35",
       "weight": 25.0,
-      "claim_score": 78,
+      "claim_score": 39,
       "dimensions": [
         {
           "dimension": "SPECIFICITY",
           "score": 100,
-          "signal_count": 9,
-          "basis": "3 quantities, 6 named entities",
+          "signal_count": 6,
+          "basis": "1 quantity, 5 named entities",
           "quotes": [
             "I had 35 agents in four pods, and each pod had a senior associate reporting to me.",
-            "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
-            "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
+            "I ran daily attendance tracking and a weekly calibration with the quality team.",
+            "I ran daily attendance tracking and a weekly calibration with the quality team.",
             "I had 35 agents in four pods, and each pod had a senior associate reporting to me."
           ],
           "probed": true
@@ -121,48 +168,40 @@
         {
           "dimension": "PROCESS",
           "score": 100,
-          "signal_count": 7,
-          "basis": "7 process steps, 9 domain terms",
+          "signal_count": 3,
+          "basis": "3 process steps, 8 domain terms",
           "quotes": [
             "I had 35 agents in four pods, and each pod had a senior associate reporting to me.",
             "I ran daily attendance tracking and a weekly calibration with the quality team.",
-            "Every morning I pulled the queue report, then ran a fifteen minute huddle, then reviewed the previous day's escalations with the two pod seniors before assigning coaching slots.",
-            "I remember the week before month-end when three agents resigned on the same day and the queue backed up to nine hours."
+            "Every morning I pulled the queue report, then ran a fifteen minute huddle, then reviewed the previous day's escalations with the two pod seniors before assigning coaching slots."
           ],
           "probed": true
         },
         {
           "dimension": "METRIC_OWNERSHIP",
-          "score": 100,
-          "signal_count": 3,
-          "basis": "1 metric defined, 2 named only, 3 numbers tied to a metric",
+          "score": 35,
+          "signal_count": 1,
+          "basis": "1 named only, 1 number tied to a metric — capped at 45: metric never defined",
           "quotes": [
-            "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
-            "I ran daily attendance tracking and a weekly calibration with the quality team.",
-            "I decided not to hire replacements immediately because onboarding takes six weeks, so instead I cross-trained four email agents onto voice, which meant we covered the gap without new headcount."
+            "I ran daily attendance tracking and a weekly calibration with the quality team."
           ],
           "probed": true
         },
         {
           "dimension": "CAUSAL_REASONING",
-          "score": 70,
-          "signal_count": 2,
-          "basis": "1 complete causal chain, 1 partial",
-          "quotes": [
-            "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
-            "I decided not to hire replacements immediately because onboarding takes six weeks, so instead I cross-trained four email agents onto voice, which meant we covered the gap without new headcount."
-          ],
-          "probed": true
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
         },
         {
           "dimension": "AUTHENTICITY",
-          "score": 33,
-          "signal_count": 1,
-          "basis": "1 specific incident detail",
-          "quotes": [
-            "I remember the week before month-end when three agents resigned on the same day and the queue backed up to nine hours."
-          ],
-          "probed": true
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
         },
         {
           "dimension": "TOOL_FAMILIARITY",
@@ -171,86 +210,100 @@
           "basis": "tool named but usage not described",
           "quotes": [],
           "probed": true
+        },
+        {
+          "dimension": "KNOWLEDGE",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "EXECUTION",
+          "score": 82,
+          "signal_count": 3,
+          "basis": "3 process steps, 1 quantity",
+          "quotes": [
+            "I had 35 agents in four pods, and each pod had a senior associate reporting to me.",
+            "I ran daily attendance tracking and a weekly calibration with the quality team.",
+            "Every morning I pulled the queue report, then ran a fifteen minute huddle, then reviewed the previous day's escalations with the two pod seniors before assigning coaching slots."
+          ],
+          "probed": true
+        },
+        {
+          "dimension": "PROBLEM_SOLVING",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "JUDGMENT",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "OWNERSHIP",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "ADAPTABILITY",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
         }
       ],
-      "probed_dimensions": 6,
+      "probed_dimensions": 5,
       "qa": [
         {
-          "question": "On \"Managed a team of 35 agents across 4 pods with 4 senior associates reporting to me\" — Tell me more about this — what exactly was your scope, and what were the numbers?",
-          "probe_level": "VALIDATION",
+          "question": "When you were working on the team, what did you look at first?",
+          "probe_level": "OPERATIONAL",
           "answer": "I had 35 agents in four pods, and each pod had a senior associate reporting to me. I ran daily attendance tracking and a weekly calibration with the quality team.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_ee3f8a",
-          "response_id": "r_1d3817",
-          "answer_score": 41
+          "question_id": "q_f5c2ab",
+          "response_id": "r_496dbc",
+          "answer_score": 32
         },
         {
-          "question": "On \"Managed a team of 35 agents across 4 pods with 4 senior associates reporting to me\" — Tell me about one specific time this went wrong. What happened that week?",
-          "probe_level": "INCIDENT",
+          "question": "What interface boundary or handoff contract did you establish with that team?",
+          "probe_level": "OPERATIONAL",
           "answer": "Every morning I pulled the queue report, then ran a fifteen minute huddle, then reviewed the previous day's escalations with the two pod seniors before assigning coaching slots.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_76bdc1",
-          "response_id": "r_692401",
-          "answer_score": 20
-        },
-        {
-          "question": "On \"Managed a team of 35 agents across 4 pods with 4 senior associates reporting to me\" — What did you decide to do about it, and what did you consider but decide against?",
-          "probe_level": "DECISION",
-          "answer": "I remember the week before month-end when three agents resigned on the same day and the queue backed up to nine hours. I moved two people off email onto voice and personally handled the top twelve escalations that Saturday.",
-          "answered_by": "text",
-          "voice": null,
-          "question_id": "q_1a37cf",
-          "response_id": "r_768e87",
-          "answer_score": 30
-        },
-        {
-          "question": "On \"Managed a team of 35 agents across 4 pods with 4 senior associates reporting to me\" — How did this work day to day? Walk me through the steps and the systems you used.",
-          "probe_level": "OPERATIONAL",
-          "answer": "I decided not to hire replacements immediately because onboarding takes six weeks, so instead I cross-trained four email agents onto voice, which meant we covered the gap without new headcount.",
-          "answered_by": "text",
-          "voice": null,
-          "question_id": "q_e62210",
-          "response_id": "r_4e003f",
-          "answer_score": 18
-        },
-        {
-          "question": "On \"Managed a team of 35 agents across 4 pods with 4 senior associates reporting to me\" — What happened afterwards? How did you know it worked, and which number moved?",
-          "probe_level": "OUTCOME",
-          "answer": "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving.",
-          "answered_by": "text",
-          "voice": null,
-          "question_id": "q_edab45",
-          "response_id": "r_3e7a43",
-          "answer_score": 48
+          "question_id": "q_03f9ea",
+          "response_id": "r_ba872a",
+          "answer_score": 15
         }
       ],
       "summary": "Heuristic extraction (model unavailable).",
-      "facts": [
-        {
-          "key": "attrition_pct",
-          "value_num": 34.0,
-          "value_text": null,
-          "unit": "%",
-          "quote": "Attrition came down from 34% to 19% over the year, and I tracked it monthly against the coaching log so I could see which pods were improving."
-        }
-      ]
+      "facts": []
     },
     {
-      "id": "cl_2894ea",
+      "id": "cl_df9916",
       "text": "Improved CSAT from 78% to 92% in four quarters by redesigning the escalation workflow",
       "claim_type": "csat_improvement",
       "claim_type_label": "CSAT improvement",
       "metric": "78% -> 92%",
       "weight": 20.0,
-      "claim_score": 66,
+      "claim_score": 35,
       "dimensions": [
         {
           "dimension": "SPECIFICITY",
           "score": 100,
-          "signal_count": 11,
-          "basis": "6 quantities, 5 named entities",
+          "signal_count": 6,
+          "basis": "5 quantities, 1 named entity",
           "quotes": [
             "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
             "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
@@ -261,14 +314,12 @@
         },
         {
           "dimension": "PROCESS",
-          "score": 100,
-          "signal_count": 5,
-          "basis": "5 process steps, 7 domain terms",
+          "score": 69,
+          "signal_count": 2,
+          "basis": "2 process steps, 3 domain terms",
           "quotes": [
             "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
-            "I reviewed it in Zendesk every Monday against the reopen report.",
-            "I had agents log every affected account so we could call them back before they escalated.",
-            "Afterwards the reopen rate halved and we held CSAT above 90 for the next two quarters."
+            "I reviewed it in Zendesk every Monday against the reopen report."
           ],
           "probed": true
         },
@@ -276,7 +327,7 @@
           "dimension": "METRIC_OWNERSHIP",
           "score": 45,
           "signal_count": 2,
-          "basis": "2 named only, 6 numbers tied to a metric — capped at 45: metric never defined",
+          "basis": "2 named only, 5 numbers tied to a metric — capped at 45: metric never defined",
           "quotes": [
             "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
             "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks."
@@ -285,88 +336,105 @@
         },
         {
           "dimension": "CAUSAL_REASONING",
-          "score": 50,
-          "signal_count": 3,
-          "basis": "3 partial — capped at 50: no complete cause-action-outcome chain",
+          "score": 20,
+          "signal_count": 1,
+          "basis": "1 partial — capped at 50: no complete cause-action-outcome chain",
           "quotes": [
-            "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
-            "I had agents log every affected account so we could call them back before they escalated.",
-            "Looking back I would have started the coaching cadence a month earlier because the retraining only paid off once calibration was consistent."
+            "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks."
           ],
           "probed": true
         },
         {
           "dimension": "AUTHENTICITY",
-          "score": 33,
-          "signal_count": 1,
-          "basis": "1 specific incident detail",
-          "quotes": [
-            "Looking back I would have started the coaching cadence a month earlier because the retraining only paid off once calibration was consistent."
-          ],
-          "probed": true
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
         },
         {
           "dimension": "TOOL_FAMILIARITY",
-          "score": 15,
+          "score": 5,
           "signal_count": 1,
           "basis": "1 named only — capped at 40: tool named but usage not described",
           "quotes": [
             "I reviewed it in Zendesk every Monday against the reopen report."
           ],
           "probed": true
+        },
+        {
+          "dimension": "KNOWLEDGE",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "EXECUTION",
+          "score": 75,
+          "signal_count": 2,
+          "basis": "2 process steps, 5 quantitys",
+          "quotes": [
+            "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
+            "I reviewed it in Zendesk every Monday against the reopen report."
+          ],
+          "probed": true
+        },
+        {
+          "dimension": "PROBLEM_SOLVING",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "JUDGMENT",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "OWNERSHIP",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "ADAPTABILITY",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
         }
       ],
       "probed_dimensions": 6,
       "qa": [
         {
-          "question": "On \"Improved CSAT from 78% to 92% in four quarters by redesigning the escalation workflow\" — Tell me more about this — what exactly was your scope, and what were the numbers?",
-          "probe_level": "VALIDATION",
+          "question": "You mentioned CSAT. How was CSAT actually worked out — what counted and what did not?",
+          "probe_level": "OUTCOME",
           "answer": "Billing complaints were about 40% of our negative feedback, so we redesigned the escalation workflow and introduced callback SLAs, and CSAT moved from 78 to 92 over about eleven weeks.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_aa4a06",
-          "response_id": "r_50e834",
-          "answer_score": 37
+          "question_id": "q_86c29c",
+          "response_id": "r_6e458c",
+          "answer_score": 26
         },
         {
-          "question": "On \"Improved CSAT from 78% to 92% in four quarters by redesigning the escalation workflow\" — Tell me about one specific time this went wrong. What happened that week?",
-          "probe_level": "INCIDENT",
+          "question": "Who or what did you have to rely on most while working on the escalation workflow?",
+          "probe_level": "OPERATIONAL",
           "answer": "CSAT is measured from the post-interaction survey, as the percentage of 4 and 5 ratings out of all responses. I reviewed it in Zendesk every Monday against the reopen report.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_5d3bf8",
-          "response_id": "r_5859cb",
-          "answer_score": 30
-        },
-        {
-          "question": "On \"Improved CSAT from 78% to 92% in four quarters by redesigning the escalation workflow\" — How did this work day to day? Walk me through the steps and the systems you used.",
-          "probe_level": "OPERATIONAL",
-          "answer": "The worst month was when a billing system change went out unannounced and CSAT dropped nine points in a week. I had agents log every affected account so we could call them back before they escalated.",
-          "answered_by": "text",
-          "voice": null,
-          "question_id": "q_d21a18",
-          "response_id": "r_d23ddc",
-          "answer_score": 18
-        },
-        {
-          "question": "On \"Improved CSAT from 78% to 92% in four quarters by redesigning the escalation workflow\" — What did you decide to do about it, and what did you consider but decide against?",
-          "probe_level": "DECISION",
-          "answer": "Afterwards the reopen rate halved and we held CSAT above 90 for the next two quarters. Looking back I would have started the coaching cadence a month earlier because the retraining only paid off once calibration was consistent.",
-          "answered_by": "text",
-          "voice": null,
-          "question_id": "q_55166b",
-          "response_id": "r_f51de4",
-          "answer_score": 49
-        },
-        {
-          "question": "On \"Improved CSAT from 78% to 92% in four quarters by redesigning the escalation workflow\" — What happened afterwards? How did you know it worked, and which number moved?",
-          "probe_level": "OUTCOME",
-          "answer": "Afterwards the reopen rate halved and we held CSAT above 90 for the next two quarters. Looking back I would have started the coaching cadence a month earlier because the retraining only paid off once calibration was consistent.",
-          "answered_by": "text",
-          "voice": null,
-          "question_id": "q_31a5ed",
-          "response_id": "r_8b179a",
-          "answer_score": 49
+          "question_id": "q_4a3dd1",
+          "response_id": "r_55b001",
+          "answer_score": 25
         }
       ],
       "summary": "Heuristic extraction (model unavailable).",
@@ -391,31 +459,17 @@
           "value_text": null,
           "unit": null,
           "quote": "CSAT is measured from the post-interaction survey, as the percentage of 4 and 5 ratings out of all responses."
-        },
-        {
-          "key": "csat_pct",
-          "value_num": 90.0,
-          "value_text": null,
-          "unit": null,
-          "quote": "Afterwards the reopen rate halved and we held CSAT above 90 for the next two quarters."
-        },
-        {
-          "key": "csat_pct",
-          "value_num": 90.0,
-          "value_text": null,
-          "unit": null,
-          "quote": "Afterwards the reopen rate halved and we held CSAT above 90 for the next two quarters."
         }
       ]
     },
     {
-      "id": "cl_577ccc",
+      "id": "cl_668fad",
       "text": "Reduced AHT from 480 seconds to 430 seconds by rewriting the call opening scripts",
       "claim_type": "aht_control",
       "claim_type_label": "AHT / productivity control",
       "metric": "480",
       "weight": 15.0,
-      "claim_score": 6,
+      "claim_score": 7,
       "dimensions": [
         {
           "dimension": "SPECIFICITY",
@@ -439,9 +493,9 @@
           "dimension": "METRIC_OWNERSHIP",
           "score": 0,
           "signal_count": 0,
-          "basis": "metric never defined",
+          "basis": "not probed",
           "quotes": [],
-          "probed": true
+          "probed": false
         },
         {
           "dimension": "CAUSAL_REASONING",
@@ -455,45 +509,95 @@
           "dimension": "AUTHENTICITY",
           "score": 0,
           "signal_count": 0,
-          "basis": "not probed",
+          "basis": "no specific incident recalled",
           "quotes": [],
-          "probed": false
+          "probed": true
         },
         {
           "dimension": "TOOL_FAMILIARITY",
           "score": 0,
           "signal_count": 0,
-          "basis": "tool named but usage not described",
+          "basis": "not probed",
           "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "KNOWLEDGE",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "EXECUTION",
+          "score": 25,
+          "signal_count": 1,
+          "basis": "1 process step",
+          "quotes": [
+            "I don't remember the details of how we measured it."
+          ],
           "probed": true
+        },
+        {
+          "dimension": "PROBLEM_SOLVING",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "JUDGMENT",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "OWNERSHIP",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
+        },
+        {
+          "dimension": "ADAPTABILITY",
+          "score": 0,
+          "signal_count": 0,
+          "basis": "not probed",
+          "quotes": [],
+          "probed": false
         }
       ],
       "probed_dimensions": 4,
       "qa": [
         {
-          "question": "On \"Reduced AHT from 480 seconds to 430 seconds by rewriting the call opening scripts\" — Tell me more about this — what exactly was your scope, and what were the numbers?",
-          "probe_level": "VALIDATION",
+          "question": "Tell me about a time the call opening scripts did not go the way you expected. What happened?",
+          "probe_level": "INCIDENT",
           "answer": "AHT came down a bit after the script rewrite but I don't have the exact numbers in front of me now.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_390279",
-          "response_id": "r_4e6d88",
+          "question_id": "q_4d072d",
+          "response_id": "r_731adf",
           "answer_score": 0
         },
         {
-          "question": "On \"Reduced AHT from 480 seconds to 430 seconds by rewriting the call opening scripts\" — How did this work day to day? Walk me through the steps and the systems you used.",
-          "probe_level": "OPERATIONAL",
+          "question": "Who else was close to the call opening scripts, and what did they do when it went wrong?",
+          "probe_level": "INCIDENT",
           "answer": "I don't remember the details of how we measured it.",
           "answered_by": "text",
           "voice": null,
-          "question_id": "q_cd43a2",
-          "response_id": "r_4c8213",
-          "answer_score": 6
+          "question_id": "q_c7e586",
+          "response_id": "r_b33ddb",
+          "answer_score": 7
         }
       ],
       "summary": "Heuristic extraction (model unavailable).",
       "facts": []
     }
   ],
-  "computed_at": "2026-09-06T10:36:02.366980Z"
+  "computed_at": "2026-09-07T19:33:29.295348Z"
 }

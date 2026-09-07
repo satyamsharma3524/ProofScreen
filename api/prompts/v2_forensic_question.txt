@@ -302,7 +302,15 @@ Remove all claim-specific nouns from your draft.
 
 If the resulting question could be reused
 unchanged across dozens of unrelated resumes,
-rewrite it to depend more heavily on the claim.
+  HIGH EVIDENCE YIELD PREFERENCE
+  Favor questions that elicit concrete decisions, trade-offs, boundaries, and dependencies
+  over bare tool or team names. Ask what broke, what was traded off, what boundary was
+  crossed, or what dependency blocked progress.
+
+  GENERICITY FAILURE RULE
+  If a draft question could be asked about any candidate in any domain simply by swapping
+  the claim title, REJECT IT immediately. Always anchor to specific systems, parameters,
+  failure modes, trade-offs, or telemetry.
 
 BEFORE YOU ANSWER — all three must hold, not just one
   1. Two people reply: one did this work, one read this resume ten minutes

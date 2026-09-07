@@ -57,6 +57,14 @@ class Dimension(str, Enum):
     AUTHENTICITY = "AUTHENTICITY"              # real people remember real incidents
     TOOL_FAMILIARITY = "TOOL_FAMILIARITY"      # usage, not certification
 
+    # Universal Competence Framework
+    KNOWLEDGE = "KNOWLEDGE"                    # domain understanding & why it works
+    EXECUTION = "EXECUTION"                    # evidence of personal execution
+    PROBLEM_SOLVING = "PROBLEM_SOLVING"        # evidence of diagnosing exceptions
+    JUDGMENT = "JUDGMENT"                      # reasoned choice under constraints
+    OWNERSHIP = "OWNERSHIP"                    # scope, boundaries, accountability
+    ADAPTABILITY = "ADAPTABILITY"              # transferring knowledge to new scenario
+
 
 class ProbeLevel(str, Enum):
     """ARTIFACT 3 — the question generation protocol.
@@ -214,6 +222,30 @@ class NamedEntity(BaseModel):
     quote: str = Field(default="", max_length=240)
 
 
+class DecisionSignal(BaseModel):
+    choice: str = Field(max_length=160)
+    reason: str | None = Field(default=None, max_length=200)
+    quote: str = Field(default="", max_length=240)
+
+
+class ConstraintSignal(BaseModel):
+    limitation: str = Field(max_length=160)
+    effect: str | None = Field(default=None, max_length=200)
+    quote: str = Field(default="", max_length=240)
+
+
+class ConceptExplanation(BaseModel):
+    concept: str = Field(max_length=160)
+    reasoning: str | None = Field(default=None, max_length=200)
+    quote: str = Field(default="", max_length=240)
+
+
+class OwnershipBoundary(BaseModel):
+    scope_held: str = Field(max_length=160)
+    scope_handed_off: str | None = Field(default=None, max_length=160)
+    quote: str = Field(default="", max_length=240)
+
+
 class ExtractedFact(BaseModel):
     """A durable numeric or short textual fact on a taxonomy fact key. This is
     the memory the consistency engine compares across answers."""
@@ -244,6 +276,10 @@ class AnswerSignals(BaseModel):
     metric_definitions: list[MetricDefinition] = Field(default_factory=list)
     incident_markers: list[IncidentMarker] = Field(default_factory=list)
     entities: list[NamedEntity] = Field(default_factory=list)
+    decisions: list[DecisionSignal] = Field(default_factory=list)
+    constraints: list[ConstraintSignal] = Field(default_factory=list)
+    concept_explanations: list[ConceptExplanation] = Field(default_factory=list)
+    boundaries: list[OwnershipBoundary] = Field(default_factory=list)
     facts: list[ExtractedFact] = Field(default_factory=list)
     summary: str = Field(default="", max_length=280)
 

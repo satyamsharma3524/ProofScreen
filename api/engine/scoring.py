@@ -64,6 +64,13 @@ DIMENSION_ORDER: tuple[Dimension, ...] = (
     Dimension.CAUSAL_REASONING,
     Dimension.AUTHENTICITY,
     Dimension.TOOL_FAMILIARITY,
+    # Universal Competence Framework
+    Dimension.KNOWLEDGE,
+    Dimension.EXECUTION,
+    Dimension.PROBLEM_SOLVING,
+    Dimension.JUDGMENT,
+    Dimension.OWNERSHIP,
+    Dimension.ADAPTABILITY,
 )
 
 
@@ -317,4 +324,10 @@ def dimension_labels() -> dict[Dimension, str]:
         Dimension.CAUSAL_REASONING: "Causal reasoning",
         Dimension.AUTHENTICITY: "Experience authenticity",
         Dimension.TOOL_FAMILIARITY: "Tool familiarity",
+        Dimension.KNOWLEDGE: "Domain knowledge",
+        Dimension.EXECUTION: "Personal execution",
+        Dimension.PROBLEM_SOLVING: "Problem solving",
+        Dimension.JUDGMENT: "Decision judgment",
+        Dimension.OWNERSHIP: "Ownership boundary",
+        Dimension.ADAPTABILITY: "Knowledge adaptability",
     }

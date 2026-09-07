@@ -251,12 +251,12 @@ def test_graph_carries_six_dimensions_with_a_stated_basis(client):
     assert 0 <= graph["weighted_evidence_score"] <= 100
     assert 0 <= graph["competence_score"] <= 100
     assert graph["badge"] in {"verified", "partial", "unverified"}
-    assert len(graph["dimension_profile"]) == 6
+    assert len(graph["dimension_profile"]) == 12
 
     probed = [c for c in graph["claims"] if c["qa"]]
     assert probed
     for claim in probed:
-        assert len(claim["dimensions"]) == 6
+        assert len(claim["dimensions"]) == 12
         assert claim["claim_score"] is not None
         for dimension in claim["dimensions"]:
             assert 0 <= dimension["score"] <= 100

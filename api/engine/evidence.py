@@ -36,6 +36,7 @@ from api.schemas import (
     IncidentMarker,
     MetricDefinition,
     NamedEntity,
+    OwnershipBoundary,
     ProbeLevel,
     ProcessStep,
     Quantity,
@@ -184,6 +185,15 @@ def heuristic_signals(answer: str, job_family: str = "general") -> AnswerSignals
                 IncidentMarker(detail=_WS.sub(" ", sentence)[:200], quote=sentence[:QUOTE_MAX])
             )
 
+        if any(m in low for m in ("i built", "i owned", "my part", "my scope", "i handled", "handed to", "handed off", "passed to", "boundary", "interface contract", "responsible for", "my area")) and len(low) > 15:
+            sig.boundaries.append(
+                OwnershipBoundary(
+                    scope_held=_WS.sub(" ", sentence)[:160],
+                    scope_handed_off=_WS.sub(" ", sentence)[:160] if any(h in low for h in ("hand", "pass", "moved")) else None,
+                    quote=sentence[:QUOTE_MAX],
+                )
+            )
+
     for tool in _TOOL_VOCAB:
         if tool in low_answer:
             host = next((s for s in sentences if tool in s.lower()), answer)
@@ -272,6 +282,14 @@ def enforce_verbatim(sig: AnswerSignals, answer: str) -> tuple[AnswerSignals, in
         keep(im, "incident_markers")
     for en in sig.entities:
         keep(en, "entities")
+    for d in sig.decisions:
+        keep(d, "decisions")
+    for c in sig.constraints:
+        keep(c, "constraints")
+    for ce in sig.concept_explanations:
+        keep(ce, "concept_explanations")
+    for b in sig.boundaries:
+        keep(b, "boundaries")
     for ft in sig.facts:
         keep(ft, "facts")
 
@@ -327,7 +345,7 @@ async def score_response(req: ScoreRequest) -> ScoreResult:
         )
 
     prompt = load_prompt(
-        "extract_signals",
+        "v2_extract_signals" if settings.evidence_planner_v2 else "extract_signals",
         claim_text=req.claim.text,
         question_text=req.question_text,
         probe_level=req.probe_level.value,

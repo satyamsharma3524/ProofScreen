@@ -76,14 +76,43 @@ def test_first_question_is_validation_on_the_heaviest_claim():
 
 def test_every_claim_is_touched_before_any_is_deepened():
     """An unprobed claim scores zero and would silently sink the candidate, so
-    breadth comes first regardless of how weak the heavy claim looks."""
+    breadth comes first once active claim momentum streak (MIN_STREAK=2) is satisfied."""
     states = [
-        state("c1", "team_handling", 25.0, levels={ProbeLevel.VALIDATION}, answers=1, claim_score=20),
+        state("c1", "team_handling", 25.0, levels={ProbeLevel.VALIDATION}, answers=2, claim_score=20),
+        state("c2", "aht_control", 15.0, order=1),
+    ]
+    plan = plan_next(states, 2)
+    assert plan.claim.id == "c2"
+    assert plan.probe_level is ProbeLevel.VALIDATION
+
+
+def test_claim_momentum_maintains_focus_on_active_claim():
+    """MIN_STREAK=2 maintains focus on an active claim after its first answer
+    rather than hopping immediately to another untouched claim."""
+    states = [
+        state("c1", "team_handling", 25.0, levels={ProbeLevel.VALIDATION}, answers=1, claim_score=10),
         state("c2", "aht_control", 15.0, order=1),
     ]
     plan = plan_next(states, 1)
-    assert plan.claim.id == "c2"
-    assert plan.probe_level is ProbeLevel.VALIDATION
+    assert plan.claim.id == "c1"
+    assert "(1/2)" in plan.reason
+
+
+def test_plan_next_forensic_claim_momentum():
+    from api.engine.orchestrator import plan_next_forensic
+
+    s1 = state("c1", "team_handling", 25.0)
+    s1.moves_used = {"OPERATING_CONTEXT"}
+    s1.answers = 1
+
+    s2 = state("c2", "aht_control", 15.0, order=1)
+    s2.moves_used = set()
+
+    states = [s1, s2]
+    plan = plan_next_forensic(states, 1)
+    assert plan is not None
+    assert plan.claim.id == "c1"
+    assert "claim momentum streak" in plan.reason
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +154,12 @@ def test_authenticity_gap_selects_an_incident_probe():
                 Dimension.PROCESS: 90,
                 Dimension.CAUSAL_REASONING: 85,
                 Dimension.TOOL_FAMILIARITY: 80,
+                Dimension.KNOWLEDGE: 80,
+                Dimension.EXECUTION: 80,
+                Dimension.PROBLEM_SOLVING: 80,
+                Dimension.JUDGMENT: 80,
+                Dimension.OWNERSHIP: 80,
+                Dimension.ADAPTABILITY: 80,
             },
             answers=1, claim_score=60,
         )
@@ -242,6 +277,7 @@ def test_transfer_is_selectable_but_is_not_a_rung_on_the_ladder():
     assert signals.dimensions_for_level(ProbeLevel.TRANSFER) == (
         Dimension.CAUSAL_REASONING,
         Dimension.PROCESS,
+        Dimension.ADAPTABILITY,
     )
 
     # A healthy claim with every rung spent is finished, not transferred.

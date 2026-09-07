@@ -673,14 +673,29 @@ REPAIR_PROMPTS: dict[ProbeLevel, str] = {
 }
 
 
-def repair_question(probe_level: ProbeLevel, claim_text: str | None = None) -> str:
+FAMILY_REPAIR_PROMPTS: dict[str, str] = {
+    "sales": "Walk me through one specific deal or account strategy from lead to close.",
+    "customer_support": "Walk me through one specific customer case or escalation and how you resolved it.",
+    "banking_operations": "Walk me through one specific transaction or audit check from intake to clearance.",
+    "software_engineering": "Walk me through the actual setup steps, system architecture, or code you implemented.",
+    "recruiting_hr": "Walk me through one specific hiring pipeline or onboarding process you executed.",
+    "operations_logistics": "Walk me through your operational workflow and what you checked daily.",
+    "product_management": "Walk me through how you defined the product requirements and launched it.",
+}
+
+
+def repair_question(
+    probe_level: ProbeLevel,
+    claim_text: str | None = None,
+    job_family: str | None = None,
+) -> str:
     """One more go at the SAME probe. Deterministic, no model call.
 
-    Anchored to the claim for the same reason the fallbacks are: a candidate
-    reading "could you give me the steps?" on WhatsApp has no idea which of
-    their three resume lines it refers to.
+    Anchored to the claim for the same reason the fallbacks are. Family-aware
+    for operational repair prompts so domain candidates receive natural prompts.
     """
-    base = REPAIR_PROMPTS[probe_level]
+    family_prompt = FAMILY_REPAIR_PROMPTS.get((job_family or "").lower())
+    base = family_prompt if (family_prompt and probe_level == ProbeLevel.OPERATIONAL) else REPAIR_PROMPTS[probe_level]
     return f'On "{_short(claim_text)}" — {base}' if claim_text else base
 
 
@@ -698,23 +713,23 @@ THREAD_ENTITY_ORDER: tuple[str, ...] = (
 )
 
 THREAD_ENTITY_QUESTIONS: dict[str, str] = {
-    "approval": "What approval was needed?",
-    "documentation": "Which documentation did you check?",
-    "metric": "Which metric were you looking at?",
-    "dashboard": "Which metric were you looking at on the dashboard?",
-    "ticket": "What was in the ticket?",
-    "jira": "What did the Jira ticket say?",
-    "release": "What happened with the release?",
-    "api": "Which API was that?",
-    "customer": "What did the customer need?",
-    "report": "What did the report show?",
-    "sdk": "What part of the SDK was involved?",
-    "library": "Which library was that?",
-    "service": "Which service was that?",
-    "bug": "What was the bug?",
-    "meeting": "What came out of that meeting?",
-    "team": "What were you waiting for from them?",
-    "manager": "What did they need before approving it?",
+    "approval": "What specific criteria or threshold was required before getting that approval?",
+    "documentation": "What specific specification or edge case in that documentation guided your approach?",
+    "metric": "What baseline threshold was that metric measured against, and how did you verify it?",
+    "dashboard": "What specific anomaly on that dashboard triggered your technical intervention?",
+    "ticket": "What boundary of responsibility did you own versus the escalation team on that ticket?",
+    "jira": "What specific requirement or constraint in that Jira ticket defined your scope?",
+    "release": "What rollback guardrail or validation check did you run for that release?",
+    "api": "What payload constraint, rate limit, or latency threshold did that API impose on your architecture?",
+    "customer": "What specific constraint or operational bottleneck did the customer present?",
+    "report": "What root cause did that report reveal, and what action did you take on it?",
+    "sdk": "What technical limitation in that SDK did you have to architect around?",
+    "library": "What trade-off made you select that library over a custom implementation?",
+    "service": "What dependency or failure mode of that service impacted your design?",
+    "bug": "What root cause did you diagnose for that bug, and how did you fix it?",
+    "meeting": "What technical trade-off or boundary decision was agreed upon in that meeting?",
+    "team": "What interface boundary or handoff contract did you establish with that team?",
+    "manager": "What decision authority did you hold versus what required your manager's sign-off?",
 }
 
 
@@ -1066,16 +1081,27 @@ MOVE_PROBE_LEVEL: dict[Move, ProbeLevel] = {
 # a move is on record, which is the decoupling FORENSIC_GENERATOR_DESIGN.md
 # §6 specifies and that was not carried into the shipped code.
 MOVE_DIMENSIONS: dict[str, tuple[Dimension, ...]] = {
-    Move.METRIC_DEFINITION.value: (Dimension.METRIC_OWNERSHIP,),
-    Move.OWNERSHIP_BOUNDARY.value: (Dimension.SPECIFICITY,),
-    Move.OPERATING_CONTEXT.value: (Dimension.PROCESS, Dimension.TOOL_FAMILIARITY),
-    Move.FAILURE.value: (Dimension.AUTHENTICITY,),
-    Move.EXCLUSION.value: (Dimension.CAUSAL_REASONING,),
-    Move.DEPENDENCY.value: (Dimension.TOOL_FAMILIARITY,),
-    Move.PEOPLE.value: (Dimension.AUTHENTICITY, Dimension.SPECIFICITY),
-    Move.AUTHORITY.value: (Dimension.CAUSAL_REASONING,),
-    Move.COHERENCE.value: (Dimension.CAUSAL_REASONING,),
-    Move.PERTURB.value: (Dimension.CAUSAL_REASONING, Dimension.PROCESS),
+    Move.METRIC_DEFINITION.value: (Dimension.METRIC_OWNERSHIP, Dimension.KNOWLEDGE),
+    Move.OWNERSHIP_BOUNDARY.value: (Dimension.OWNERSHIP, Dimension.SPECIFICITY),
+    Move.OPERATING_CONTEXT.value: (Dimension.PROCESS, Dimension.TOOL_FAMILIARITY, Dimension.EXECUTION),
+    Move.FAILURE.value: (Dimension.AUTHENTICITY, Dimension.PROBLEM_SOLVING),
+    Move.EXCLUSION.value: (Dimension.JUDGMENT, Dimension.CAUSAL_REASONING),
+    Move.DEPENDENCY.value: (Dimension.TOOL_FAMILIARITY, Dimension.PROBLEM_SOLVING),
+    Move.PEOPLE.value: (Dimension.AUTHENTICITY, Dimension.SPECIFICITY, Dimension.OWNERSHIP),
+    Move.AUTHORITY.value: (Dimension.CAUSAL_REASONING, Dimension.JUDGMENT),
+    Move.COHERENCE.value: (Dimension.CAUSAL_REASONING, Dimension.KNOWLEDGE),
+    Move.PERTURB.value: (Dimension.CAUSAL_REASONING, Dimension.PROCESS, Dimension.ADAPTABILITY),
+    # EvidenceCategory planner string keys
+    "ownership": (Dimension.OWNERSHIP,),
+    "process": (Dimension.PROCESS, Dimension.EXECUTION),
+    "metric_definition": (Dimension.METRIC_OWNERSHIP, Dimension.KNOWLEDGE),
+    "decision": (Dimension.JUDGMENT, Dimension.CAUSAL_REASONING),
+    "dependency": (Dimension.TOOL_FAMILIARITY, Dimension.PROBLEM_SOLVING),
+    "incident": (Dimension.AUTHENTICITY, Dimension.PROBLEM_SOLVING),
+    "constraint": (Dimension.JUDGMENT, Dimension.PROBLEM_SOLVING),
+    "causal_chain": (Dimension.CAUSAL_REASONING,),
+    "artifact": (Dimension.SPECIFICITY,),
+    "cross_claim_link": (Dimension.ADAPTABILITY,),
 }
 
 # One ask each. Never two. The `target` is what the question is hunting, and it
@@ -1102,10 +1128,10 @@ MOVE_BRIEFS: dict[Move, tuple[str, str]] = {
         "the specific piece that was theirs, described as work not rank",
     ),
     Move.OPERATING_CONTEXT: (
-        "Ask what they were LOOKING AT while doing this — the screen, the "
-        "report, the queue, the thing that told them something needed "
-        "attention. Ask for the first thing they checked, not the routine.",
-        "the concrete artefact they worked from day to day",
+        "Ask what they were LOOKING AT while doing this — the dashboard, log, "
+        "telemetry alert, metric, ticket, report, or system that told them something needed "
+        "attention. Ask for the first thing they checked, not the routine. Do NOT phrase as 'on your screen'.",
+        "the concrete artefact or telemetry source they worked from day to day",
     ),
     Move.FAILURE: (
         "Ask about one specific occasion this did not go the way they "
