@@ -33,8 +33,16 @@ tool — with no story attached — has failed its target regardless of category
                      a name is not the target, the boundary is. Ask what
                      they could decide themselves versus what needed someone
                      else, or a specific call that was theirs alone to make.
-  PROCESS           Ask how the work actually flowed, step by step, in
-                     practice — not the textbook version.
+  PROCESS           For PROCESS, do not automatically ask for the
+                    entire workflow.
+
+                    Avoid asking for the entire process unless the
+                    claim itself is specifically about designing,
+                    owning, or improving the process.
+                    When targeting PROCESS, prefer a step, transition, handoff, checkpoint, investigation, or action already mentioned in ALREADY ESTABLISHED. If none exist, choose the most consequential step implied by the claim.
+
+                    A specific step often produces stronger evidence
+                    than a request for the whole process.
   METRIC_DEFINITION Ask how the named metric was actually computed or
                      captured — the counting method, the source system, the
                      window. Never ask for its value, and never lead with
@@ -135,7 +143,21 @@ RULES
     naming who connects two claims) — then it is the target, not an escape
     hatch, and asking for it is correct.
   - Never ask for a definition, an opinion, or what they would generally do.
-    Ask what happened, what they did, what they chose, what broke.
+    The wording should vary naturally.
+
+    Do NOT repeatedly use the same opening patterns
+    such as:
+
+    - What happened...
+    - What did you do...
+    - Can you think of...
+    - Tell me about...
+    - Walk me through...
+
+    Different evidence targets should sound different.
+
+    Focus on obtaining the target evidence,
+    not on using a specific sentence structure.
   - Referencing the claim to ORIENT the candidate (the reminder above) is
     required, not forbidden. What's still wrong is asking about the
     headline ITSELF as the answer — "tell me more about leading frontend
@@ -154,6 +176,127 @@ RULES
     decision, constraint or incident connected to existing evidence is
     better than one that produces a standalone fact.
   - Never comment on their English. Evidence, never presentation.
+  -PHONE TEST
+
+    The candidate sees only one WhatsApp message.
+
+    If they cannot answer immediately without rereading the
+    resume claim in their head, the question is wrong.
+
+    When the claim contains a concrete system,
+    metric, artifact, project, tool, incident,
+    or outcome, the question should explicitly
+    name that thing.
+
+    Questions that could be asked without
+    reading the claim are lower quality.
+
+    Bad:
+    "Can you think of one specific occasion?"
+
+    Better:
+    "When you were reducing search latency from 2.5s to 0.12s,
+    what was the first thing you investigated?"
+
+    Bad:
+    "What happened?"
+
+    Better:
+    "What was the first sign the search system was slower than it should be?"
+
+  - QUESTION DIVERSITY
+
+  If five questions generated for different claims
+  sound interchangeable after replacing the nouns,
+  the wording is too generic.
+
+  Questions should vary naturally:
+
+  - ask for a first sign
+  - ask for a specific moment
+  - ask for a decision
+  - ask for a tradeoff
+  - ask for a blocker
+  - ask for a handoff
+  - ask for a change
+  - ask for a trigger
+  - ask for a surprise
+  - ask for a comparison
+
+  Do not optimize for a specific opening phrase.
+
+  Instead choose the wording that best matches the evidence target.
+
+  Examples:
+
+  INCIDENT:
+  - What was the first sign...
+  - What caught your attention...
+  - When did you realize...
+
+  DEPENDENCY:
+  - What were you waiting on...
+  - What could not move forward until...
+  - Which part stayed blocked because...
+
+  DECISION:
+  - What made you choose...
+  - Why was that option better than...
+  - What were you trying to avoid...
+
+  CONSTRAINT:
+  - What forced you to change...
+  - What did you have to give up...
+  - What became harder because...
+
+  The evidence target should determine the wording.
+
+  The examples below are illustrations, not templates.
+  Question diversity is a quality preference,
+  not a reason to ask for weaker evidence.
+
+  Do not copy their wording unless it is genuinely
+  the best wording for this claim.
+
+  Generating the same sentence structure repeatedly
+  across different claims is a quality failure.
+
+  OPENING VARIETY TEST
+
+  Do not force unusual wording merely to create variety.
+
+  Natural openings such as:
+
+  - What was...
+  - What did...
+  - What made...
+  - Why did...
+  - When did...
+
+  are acceptable when they are the clearest wording.
+
+  Variety should come from the evidence target,
+  the claim details, and the specific thing being asked,
+  not from avoiding common English question forms.
+
+  GENERICITY TEST
+
+  Replace every project-specific noun in your draft
+  with a different project.
+
+  If the question still sounds equally valid,
+  it is probably too generic.
+
+  Prefer questions that depend on the actual
+  claim details, not just the category.
+
+  CLAIM DEPENDENCE TEST
+
+Remove all claim-specific nouns from your draft.
+
+If the resulting question could be reused
+unchanged across dozens of unrelated resumes,
+rewrite it to depend more heavily on the claim.
 
 BEFORE YOU ANSWER — all three must hold, not just one
   1. Two people reply: one did this work, one read this resume ten minutes

@@ -114,6 +114,19 @@ class Settings(BaseSettings):
     # that attempt does not consume the interview budget. false => Phase 1.
     repair_turn: bool = True
 
+    # Offline-only, background-task LLM judge that scores every FINALIZED
+    # question (clarity/specificity/naturalness/single_focus/answerability/
+    # evidence_yield/relevance_to_claim) and logs the result -- never gates,
+    # never persisted, never read by anything that scores a candidate. This is
+    # a SECOND live model call per turn: real ongoing cost and, being
+    # fire-and-forget, the one thing that could still make the interview look
+    # slow is a burst of these calls saturating the process, not the turn
+    # itself (it is never awaited inline). Defaults FALSE for exactly that
+    # reason -- turn on deliberately, not by accident the day of a demo. See
+    # docs/QUESTION_EVAL_HARNESS_AND_LEVEL_MODEL.md Part A for the offline
+    # (scripts/question_quality_harness.py) version of the same rubric.
+    live_question_quality_log: bool = False
+
     # Voice's share of a claim's score, applied only to voice-answered claims.
     # Set to 0 to remove the text/voice asymmetry entirely.
     voice_weight: float = 0.10

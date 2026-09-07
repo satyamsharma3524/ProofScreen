@@ -582,6 +582,6 @@ def test_the_schema_guard_finds_a_missing_column(client):
     real = sqlalchemy.inspect
     sqlalchemy.inspect = lambda _conn: StaleInspector()
     try:
-        assert _check_columns(None) == ["candidates.tenant_id"]
+        assert _check_columns(None) == ["candidates.tenant_id", "candidates.seniority"]
     finally:
         sqlalchemy.inspect = real

@@ -233,7 +233,7 @@ async def main(args: argparse.Namespace) -> int:
         f"  temperature        {settings.llm_temperature_extract}",
     )
     before = set(llm._cache)
-    family, extracted = await extract_engine.extract_claims(resume_text, None)
+    family, extracted, _seniority = await extract_engine.extract_claims(resume_text, None)
     extract_raw = new_cache_entries(before)
 
     validated = ClaimExtraction(job_family=family, claims=list(extracted))

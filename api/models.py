@@ -162,6 +162,11 @@ class Candidate(Base):
     email: Mapped[str | None] = mapped_column(String(200), default=None)
     role: Mapped[str | None] = mapped_column(String(200), default=None)
     job_family: Mapped[str] = mapped_column(String(60), default="general", index=True)
+    # junior/mid/senior/None -- read once from LLM #0 (classify_role) at
+    # extraction time, never re-derived. Internal-only: not in api/schemas.py,
+    # nothing in any request/response contract exposes it. The planner's
+    # level gate (question.level_appropriate) is the only reader.
+    seniority: Mapped[str | None] = mapped_column(String(20), default=None)
     role_id: Mapped[str | None] = mapped_column(
         ForeignKey("job_roles.id", ondelete="SET NULL"), default=None
     )

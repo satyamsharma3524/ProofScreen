@@ -165,7 +165,7 @@ def test_inventory_mode_python_ceiling_does_not_truncate_a_real_inventory(monkey
     ]
     stub, _ = _capturing_stub(many)
     monkeypatch.setattr(extract, "complete_json", stub)
-    _, kept = asyncio.run(extract.extract_claims(SE_RESUME, job_family="software_engineering"))
+    _, kept, _ = asyncio.run(extract.extract_claims(SE_RESUME, job_family="software_engineering"))
     assert len(kept) == 17
 
 
@@ -181,7 +181,7 @@ def test_inventory_mode_python_ceiling_still_bites_on_a_runaway_reply(monkeypatc
     ]
     stub, _ = _capturing_stub(many)
     monkeypatch.setattr(extract, "complete_json", stub)
-    _, kept = asyncio.run(extract.extract_claims(SE_RESUME, job_family="software_engineering"))
+    _, kept, _ = asyncio.run(extract.extract_claims(SE_RESUME, job_family="software_engineering"))
     assert len(kept) == 5
 
 

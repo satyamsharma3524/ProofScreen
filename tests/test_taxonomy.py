@@ -194,7 +194,7 @@ def test_supplied_family_always_wins(monkeypatch):
     support gets the support rubric even when the resume reads like engineering
     — otherwise the score answers a question nobody asked."""
     monkeypatch.setattr(extract, "complete_json", _stub_model("sales"))
-    family, _ = asyncio.run(
+    family, _, _ = asyncio.run(
         extract.extract_claims(SE_RESUME, job_family="customer_support")
     )
     assert family == "customer_support"
@@ -213,7 +213,7 @@ def test_model_cannot_override_detected_family(monkeypatch):
     # the model's opinion), so the classifier is pinned off rather than stubbed.
     monkeypatch.setattr(settings, "role_classifier", False)
     monkeypatch.setattr(extract, "complete_json", _stub_model("hr_recruitment"))
-    family, _ = asyncio.run(extract.extract_claims(SE_RESUME))
+    family, _, _ = asyncio.run(extract.extract_claims(SE_RESUME))
     assert family == "software_engineering" == detect_family(SE_RESUME)
 
 
@@ -228,7 +228,7 @@ def test_routing_is_stable_across_disagreeing_model_runs(monkeypatch):
     seen = set()
     for proposal in ("sales", "banking_operations", "general", None):
         monkeypatch.setattr(extract, "complete_json", _stub_model(proposal))
-        family, _ = asyncio.run(extract.extract_claims(SE_RESUME))
+        family, _, _ = asyncio.run(extract.extract_claims(SE_RESUME))
         seen.add(family)
     assert seen == {"software_engineering"}
 
@@ -448,12 +448,12 @@ def test_the_classifier_is_a_no_op_while_the_flag_is_off(monkeypatch):
     """ROLE_CLASSIFIER=false must reproduce prior routing exactly -- it is the
     rollback lever, so it has to be a true no-op and not merely a quiet one."""
     monkeypatch.setattr(settings, "role_classifier", False)
-    assert asyncio.run(classify_role(_PM_RESUME, "sales")) == "sales"
+    assert asyncio.run(classify_role(_PM_RESUME, "sales")) == ("sales", None)
 
 
 def test_a_thin_header_keeps_the_taxonomy_answer(monkeypatch):
     monkeypatch.setattr(settings, "role_classifier", True)
-    assert asyncio.run(classify_role("", "bpo_operations")) == "bpo_operations"
+    assert asyncio.run(classify_role("", "bpo_operations")) == ("bpo_operations", None)
 
 
 def test_fixture_mode_routes_exactly_as_the_taxonomy_does(monkeypatch):
@@ -462,7 +462,8 @@ def test_fixture_mode_routes_exactly_as_the_taxonomy_does(monkeypatch):
     monkeypatch.setattr(settings, "role_classifier", True)
     monkeypatch.setattr(settings, "openai_api_key", None)
     for family in ("sales", "product", "software_engineering", "general"):
-        assert asyncio.run(classify_role(_PM_RESUME, family)) == family
+        result_family, _seniority = asyncio.run(classify_role(_PM_RESUME, family))
+        assert result_family == family
 
 
 def test_a_requisition_family_outranks_the_classifier(monkeypatch):
@@ -474,10 +475,10 @@ def test_a_requisition_family_outranks_the_classifier(monkeypatch):
     async def _never(*args, **kwargs):
         nonlocal called
         called = True
-        return "product"
+        return "product", None
 
     monkeypatch.setattr("api.engine.extract.classify_role", _never)
-    family, _claims = asyncio.run(
+    family, _claims, _seniority = asyncio.run(
         extract_claims(_PM_RESUME, job_family="customer_support")
     )
     assert family == "customer_support"
@@ -495,7 +496,7 @@ def test_a_family_the_model_invents_becomes_general(monkeypatch):
         return extract_module.RoleClassification(family="astronaut")
 
     monkeypatch.setattr(extract_module, "complete_json", _hallucinate)
-    assert asyncio.run(classify_role(_PM_RESUME, "sales")) == "general"
+    assert asyncio.run(classify_role(_PM_RESUME, "sales")) == ("general", None)
 
 
 def test_the_classifier_confidence_is_never_branched_on():

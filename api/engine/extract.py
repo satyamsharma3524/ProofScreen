@@ -410,22 +410,53 @@ class RoleClassification(BaseModel):
     reasoning: list[str] = Field(default_factory=list)
 
 
-async def classify_role(resume_text: str, taxonomy_family: str) -> str:
-    """LLM #0. Returns a family key — never a score, never a probability.
+_VALID_SENIORITY = frozenset({"junior", "mid", "senior"})
 
-    Falls back to `taxonomy_family`, which is what routing did before this
-    existed. A model that is down, slow or unparseable therefore costs routing
-    ACCURACY and never costs the interview (CLAUDE.md rule 5).
+
+def _normalise_seniority(raw: str | None) -> str | None:
+    """Keep only a value the planner's level gate actually knows how to use.
+
+    Deliberately narrow: the classifier is free-text ("mid-level", "Senior",
+    "5+ years" ...), and a seniority the level gate doesn't recognise must
+    read as unknown, not as some fourth silent category. This is a plain
+    string normaliser -- no model call, no scoring, nothing CLAUDE.md rule 1
+    would call reading a rating out of a model response.
+    """
+    if not raw:
+        return None
+    cleaned = raw.strip().lower()
+    if cleaned in _VALID_SENIORITY:
+        return cleaned
+    if "senior" in cleaned or "lead" in cleaned or "principal" in cleaned:
+        return "senior"
+    if "junior" in cleaned or "entry" in cleaned or "fresher" in cleaned:
+        return "junior"
+    if "mid" in cleaned:
+        return "mid"
+    return None
+
+
+async def classify_role(resume_text: str, taxonomy_family: str) -> tuple[str, str | None]:
+    """LLM #0. Returns (family key, seniority) -- never a score, never a probability.
+
+    `seniority` is recorded and passed through, never branched on inside
+    this function (CLAUDE.md rule 1) -- what the *caller* does with it is a
+    planner-level decision (`question.level_appropriate`), not an extraction
+    decision. Falls back to `(taxonomy_family, None)`, which is what routing
+    did before this existed, plus "seniority unknown" -- a model that is
+    down, slow or unparseable costs routing ACCURACY and the level gate
+    (which already treats unknown seniority as "leave current behaviour
+    alone"), never the interview itself (CLAUDE.md rule 5).
     """
     if not settings.role_classifier:
-        return taxonomy_family
+        return taxonomy_family, None
 
     header = header_slice(resume_text)
     if len(header) < MIN_HEADER_CHARS:
         # No headline, no titles, no summary. There is nothing here a recruiter
         # could route on either, and inventing one is worse than the keywords.
         log.info("role classifier: header too thin, keeping taxonomy %s", taxonomy_family)
-        return taxonomy_family
+        return taxonomy_family, None
 
     result = await complete_json(
         load_prompt("classify_role", family_menu=_family_menu(), header=header),
@@ -435,6 +466,7 @@ async def classify_role(resume_text: str, taxonomy_family: str) -> str:
     )
 
     chosen = resolve_family(result.family) if result.family else taxonomy_family
+    seniority = _normalise_seniority(result.seniority)
     log.info(
         "role classifier: %s (title=%r seniority=%s self-reported=%s) vs taxonomy %s%s",
         chosen,
@@ -444,7 +476,7 @@ async def classify_role(resume_text: str, taxonomy_family: str) -> str:
         taxonomy_family,
         "" if chosen == taxonomy_family else "  [OVERRIDE]",
     )
-    return chosen
+    return chosen, seniority
 
 
 def _family_menu() -> str:
@@ -455,8 +487,16 @@ async def extract_claims(
     resume_text: str,
     job_family: str | None = None,
     limit: int | None = None,
-) -> tuple[str, list[ExtractedClaim]]:
-    """LLM call #1. Returns (job_family, claims), both validated in Python."""
+) -> tuple[str, list[ExtractedClaim], str | None]:
+    """LLM call #1. Returns (job_family, claims, seniority).
+
+    `job_family`/`claims` are both validated in Python as before. `seniority`
+    is a passthrough of whatever `classify_role` (LLM #0) read, normalised to
+    junior/mid/senior/None -- None whenever rung 1 (a supplied job_family)
+    skipped the classifier entirely, or the classifier had nothing to read,
+    or is off. Never branched on here; the caller persists it for the
+    planner's level gate to read later.
+    """
     limit = limit or settings.max_claims
     trimmed = (resume_text or "")[:MAX_RESUME_CHARS]
 
@@ -485,10 +525,14 @@ async def extract_claims(
     # model is allowed to find, so a family corrected after extraction would
     # leave sales claims wearing product labels.
     supplied = resolve_family(job_family) if job_family else GENERAL
+    seniority: str | None = None
     if supplied != GENERAL:
+        # Rung 1 is a fact about the requisition, not an inference about the
+        # candidate -- the classifier (and any seniority it would have read)
+        # is never consulted here.
         routed = supplied
     else:
-        routed = await classify_role(trimmed, detect_family(trimmed))
+        routed, seniority = await classify_role(trimmed, detect_family(trimmed))
 
     # HOW MANY TO ASK FOR. In inventory mode: NONE. No number reaches the
     # model at all -- extraction is a recall step, the number of claims a
@@ -727,4 +771,4 @@ async def extract_claims(
             f" metric={c.metric}" if c.metric else "",
             c.text,
         )
-    return family, kept
+    return family, kept, seniority

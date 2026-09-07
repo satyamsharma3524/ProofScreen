@@ -1001,6 +1001,38 @@ MOVE_FAMILY: dict[Move, Family] = {
     Move.PERTURB: Family.TRANSFER,
 }
 
+# Candidate-Level Interview Model (docs/QUESTION_EVAL_HARNESS_AND_LEVEL_MODEL.md
+# Phase 1). Moves absent from this dict are unrestricted at every seniority --
+# only the three moves real logs implicated (authority questions reading
+# unnatural on juniors, exclusion/perturbation assuming a scope a junior was
+# never given) are gated at all. A seniority NOT in the set is blocked, which
+# is what makes `level_appropriate` return False for unknown seniority below:
+# there is no junior entry because junior never unlocks any of these three.
+LEVEL_RESTRICTED: dict[Move, frozenset[str]] = {
+    Move.AUTHORITY: frozenset({"mid", "senior"}),
+    Move.EXCLUSION: frozenset({"senior"}),
+    Move.PERTURB: frozenset({"senior"}),
+}
+
+
+def level_appropriate(move: Move, seniority: str | None) -> bool:
+    """Is `move` allowed for a candidate at this seniority?
+
+    Unknown seniority (`None` -- classifier off, header too thin, or a value
+    it returned that `extract._normalise_seniority` didn't recognise) must
+    read exactly like today's behaviour for these three moves: all three are
+    unconditionally disabled already (see the demo_mode filter in
+    `ClaimState.forensic_moves_left`), so "unknown" stays disabled rather than
+    defaulting open.
+    """
+    allowed = LEVEL_RESTRICTED.get(move)
+    if allowed is None:
+        return True
+    if seniority is None:
+        return False
+    return seniority in allowed
+
+
 # Compatibility only. The evidence graph and `claim_scores.probed_dimensions`
 # read `probe_level`, so every question still stores one — but nothing plans
 # with it. Chosen so the dimensions a move actually elicits are the dimensions
@@ -1918,3 +1950,106 @@ async def generate_evidence_question(
         text, probe_level, "fallback", 2, first_violations,
         category.value, "", "python fallback: model unavailable or rejected twice",
     )
+
+
+# ---------------------------------------------------------------------------
+# live question-quality logging (settings.live_question_quality_log)
+#
+# Offline-only in every other respect: this NEVER gates, NEVER changes what
+# was already sent (the question is on its way to the candidate before this
+# is even scheduled), and its result is NEVER persisted or read by anything
+# that scores a candidate -- it exists to be read from the log stream by a
+# human, the same as the `planner level=` line. The judge model call itself
+# runs as a background task from orchestrator.ask_next(), never awaited
+# inline, so it cannot add latency to a live turn even if the judge call is
+# slow. See docs/QUESTION_EVAL_HARNESS_AND_LEVEL_MODEL.md Part A for the
+# offline, batch version of the same rubric (scripts/question_quality_harness.py).
+#
+# The prompt is inline, not a api/prompts/*.txt file: that directory is
+# glob-discovered into provenance.prompt_versions(), so a prompt that has no
+# influence on any evaluation would otherwise start silently changing every
+# evaluation_version minted from here on -- exactly what
+# test_every_versioned_input_has_a_value exists to catch.
+LIVE_QUALITY_AXES = (
+    "clarity", "specificity", "naturalness", "single_focus",
+    "answerability", "evidence_yield", "relevance_to_claim",
+)
+
+
+class LiveQuestionQualityScore(BaseModel):
+    clarity: int
+    specificity: int
+    naturalness: int
+    single_focus: int
+    answerability: int
+    evidence_yield: int
+    relevance_to_claim: int
+
+
+_LIVE_QUALITY_PROMPT = """You are auditing the QUALITY of a question an \
+automated recruiting system just generated, NOT judging the candidate. Score \
+the QUESTION only.
+
+THE CLAIM THIS QUESTION IS PROBING
+$claim
+
+THE MOVE IT WAS TARGETING
+$move
+
+THE GENERATED QUESTION
+$question
+
+Score each axis 1 (worst) to 5 (best):
+
+- clarity: unambiguous and easy to parse on first read?
+- specificity: targets something concrete, not a vague generality?
+- naturalness: would a real interviewer actually phrase it this way out loud?
+- single_focus: asks exactly one thing, not several bundled together?
+- answerability: could a real candidate who did this work actually answer it?
+- evidence_yield: is a strong answer likely to produce verifiable,
+  hard-to-invent detail?
+- relevance_to_claim: clearly follows from the claim above, not a generic
+  question that could apply to any claim?
+
+Return JSON:
+{"clarity": 1-5, "specificity": 1-5, "naturalness": 1-5, "single_focus": 1-5, \
+"answerability": 1-5, "evidence_yield": 1-5, "relevance_to_claim": 1-5}"""
+
+
+def _live_quality_fallback() -> LiveQuestionQualityScore:
+    return LiveQuestionQualityScore(**{axis: 0 for axis in LIVE_QUALITY_AXES})
+
+
+async def log_question_quality(
+    *, session_id: str, question_id: str, claim_text: str, move: str, question_text: str,
+) -> None:
+    """Fire-and-forget: judge one already-sent question and log the 7 axes.
+
+    Never raises into the caller -- a background task's exception would
+    otherwise vanish into asyncio's default handler (or, worse, be logged as
+    an unhandled-task-exception traceback that looks like a real bug). CLAUDE.md
+    rule 5 is satisfied by `_live_quality_fallback` the same as any other
+    `complete_json` call; the try/except below is *additional*, for the parts
+    of this function that are not the model call itself.
+    """
+    try:
+        prompt = Template(_LIVE_QUALITY_PROMPT).safe_substitute(
+            claim=claim_text, move=move, question=question_text,
+        )
+        score = await complete_json(
+            prompt,
+            LiveQuestionQualityScore,
+            temperature=0.0,
+            fallback=_live_quality_fallback,
+            cache=False,
+        )
+        log.info(
+            "question quality session=%s question=%s move=%s scores=%s",
+            session_id, question_id, move,
+            {axis: getattr(score, axis) for axis in LIVE_QUALITY_AXES},
+        )
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "question quality judge failed session=%s question=%s (logging only, "
+            "no interview impact)", session_id, question_id,
+        )

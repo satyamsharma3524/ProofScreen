@@ -69,6 +69,7 @@ class SchemaOutOfDate(RuntimeError):
 # listed here is a stale database that fails at the first query instead.
 _REQUIRED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("candidates", "tenant_id"),
+    ("candidates", "seniority"),
     ("sessions", "tenant_id"),
     ("responses", "tenant_id"),
     ("candidate_outcomes", "tenant_id"),

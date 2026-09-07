@@ -35,6 +35,7 @@ path of choosing the next question.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -121,6 +122,12 @@ class ClaimState:
     claim: Claim
     weight: float
     claim_family: str = "general"
+    # junior/mid/senior/None -- same value on every ClaimState in a session,
+    # duplicated per-claim rather than threaded separately, matching
+    # claim_family above. Read by question_engine.level_appropriate(); never
+    # branched on anywhere else (CLAUDE.md rule 1 -- this is a planner-level
+    # move filter, not a score).
+    candidate_seniority: str | None = None
     levels_used: set[ProbeLevel] = field(default_factory=set)
     answer_signals: list[AnswerSignals] = field(default_factory=list)
     dimensions: dict[Dimension, DimensionScore] = field(default_factory=dict)
@@ -257,23 +264,30 @@ class ClaimState:
             mv for mv in question_engine.ARCHETYPE_LADDER[anatomy.archetype]
             if mv.value not in self.moves_used
             and question_engine.move_available(mv, anatomy, ledger)
-            # Hackathon demo: EXCLUSION and AUTHORITY off entirely
-            # (settings.demo_mode). AUTHORITY measured as the single highest-
-            # variance move in real logs this session -- richest answer AND
-            # emptiest answer of any move, and the most junior-unfriendly
-            # (an honest "not much was mine to decide" reads identically to
-            # evasion). Removing it also fixes two findings from the same
-            # audit as a side effect: PROCESS-archetype claims that lose
-            # OPERATING_CONTEXT to a session-fresh rotation collision now
-            # fall through to FAILURE instead of AUTHORITY, and VOLUME no
-            # longer opens cold on a zero-grounding authority question.
+            # Hackathon demo: EXCLUSION and AUTHORITY gated by candidate
+            # seniority (settings.demo_mode). AUTHORITY measured as the single
+            # highest-variance move in real logs this session -- richest
+            # answer AND emptiest answer of any move, and the most
+            # junior-unfriendly (an honest "not much was mine to decide" reads
+            # identically to evasion) -- which is exactly why it unlocks at
+            # mid/senior rather than staying off outright. Removing it for
+            # juniors also keeps two findings from the same audit fixed as a
+            # side effect: PROCESS-archetype claims that lose OPERATING_CONTEXT
+            # to a session-fresh rotation collision fall through to FAILURE
+            # instead of AUTHORITY, and VOLUME does not open cold on a
+            # zero-grounding authority question. Unknown seniority
+            # (candidate_seniority is None) is blocked by
+            # question_engine.level_appropriate() itself -- same as the old
+            # unconditional exclusion.
             # PERTURB is excluded from this list already -- it is offered only
             # by plan_next_forensic's separate stall branch -- and disabled
-            # for the demo via settings.transfer_probe, which already gates
-            # that whole branch; no new flag needed for PERTURB.
+            # for the demo via settings.transfer_probe (or, for a senior
+            # candidate, the level gate) which already gates that whole
+            # branch; no new flag needed for PERTURB here.
             and not (
                 settings.demo_mode
                 and mv in (question_engine.Move.EXCLUSION, question_engine.Move.AUTHORITY)
+                and not question_engine.level_appropriate(mv, self.candidate_seniority)
             )
         ]
 
@@ -363,20 +377,38 @@ async def _repair_already_used(db: AsyncSession, question: Question) -> bool:
     """
     if question.is_repair:
         return True          # a repair is never itself repaired
-    conditions = [
-        Question.session_id == question.session_id,
-        Question.claim_id == question.claim_id,
-        Question.is_repair.is_(True),
-        Question.order_index > question.order_index,
-    ]
-    if not settings.demo_mode:
-        # Ordinarily one repair PER PROBE LEVEL -- a claim can still get a
-        # repair on its second question if the first repair was for a
-        # different probe. Hackathon demo (req #3): one repair per CLAIM,
-        # full stop, so this filter is dropped only when demo_mode is on.
-        conditions.append(Question.probe_level == question.probe_level)
+    if settings.demo_mode:
+        # One repair per CLAIM, full stop (hackathon demo req #3) -- ANY
+        # repair anywhere in this claim's transcript counts, not just one
+        # created after this specific question. BUG FIXED HERE: the legacy
+        # query below requires `order_index > question.order_index`, which
+        # only ever matches a repair for THIS exact question (a repair is
+        # always created immediately after its parent). A claim's SECOND
+        # real question needs to see its FIRST question's already-spent
+        # repair, which sits at a LOWER order_index -- the `>` comparison
+        # can never find it, so a second repair slipped through. Measured
+        # live: a real 2-claim interview logged `repairs=3`, one more than
+        # the 2-claim ceiling, before this fix.
+        existing = (
+            await db.execute(
+                select(Question).where(
+                    Question.session_id == question.session_id,
+                    Question.claim_id == question.claim_id,
+                    Question.is_repair.is_(True),
+                )
+            )
+        ).scalars().first()
+        return existing is not None
     later = (
-        await db.execute(select(Question).where(*conditions))
+        await db.execute(
+            select(Question).where(
+                Question.session_id == question.session_id,
+                Question.claim_id == question.claim_id,
+                Question.probe_level == question.probe_level,
+                Question.is_repair.is_(True),
+                Question.order_index > question.order_index,
+            )
+        )
     ).scalars().first()
     return later is not None
 
@@ -446,11 +478,17 @@ async def build_claim_states(
     """Everything the policy needs, in one pass over the session's answers."""
     claims = await _claims_of(db, session.candidate_id)
     weights = default_claim_weights(session.job_family)
+    # One cheap extra read, no new LLM call: seniority was already captured at
+    # extraction time (extract.classify_role) and just needs to reach the
+    # planner. Same duplicate-per-claim shape as claim_family below.
+    candidate = await db.get(Candidate, session.candidate_id)
+    candidate_seniority = candidate.seniority if candidate is not None else None
     states = {
         c.id: ClaimState(
             claim=c,
             weight=float(weights.get(c.claim_type, 1.0)),
             claim_family=session.job_family,
+            candidate_seniority=candidate_seniority,
         )
         for c in claims
     }
@@ -905,10 +943,11 @@ async def create_session(
     channel: Channel = Channel.whatsapp,
 ) -> tuple[ChatSession, list[Claim]]:
     """NEW -> CLAIMS_READY -> AWAITING_OPT_IN. Runs LLM call #1."""
-    job_family, extracted = await extract_claims(
+    job_family, extracted, seniority = await extract_claims(
         resume.raw_text, candidate.job_family if candidate.job_family != "general" else None
     )
     candidate.job_family = job_family
+    candidate.seniority = seniority
 
     session = ChatSession(
         id=ids.session_id(),
@@ -1233,6 +1272,21 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         f", violations={list(generated.violations)}" if generated.violations else "",
         question.text,
     )
+
+    if settings.live_question_quality_log:
+        # Fire-and-forget. Scheduled AFTER commit, on the question already
+        # decided and on its way out -- this can never gate, delay or change
+        # what the candidate is asked (see question.log_question_quality).
+        asyncio.create_task(
+            question_engine.log_question_quality(
+                session_id=session.id,
+                question_id=question.id,
+                claim_text=plan.claim.text,
+                move=question.move or question.probe_level,
+                question_text=question.text,
+            )
+        )
+
     return question
 
 
@@ -1786,6 +1840,23 @@ def _thread_plan(
     )
 
 
+def _level_filtered_moves(state: ClaimState) -> list["question_engine.Move"]:
+    """Moves that would otherwise be precondition-eligible right now but are
+    blocked by the candidate-level gate -- for the `filtered_moves=` log line
+    only. Covers all three gated moves uniformly (EXCLUSION/AUTHORITY reached
+    via `forensic_moves_left`, PERTURB via the stall branch), since
+    `question_engine.LEVEL_RESTRICTED` is the single source of truth for which
+    moves are level-gated at all."""
+    anatomy = state.anatomy
+    ledger = state.ledger
+    return [
+        mv for mv in question_engine.LEVEL_RESTRICTED
+        if mv.value not in state.moves_used
+        and question_engine.move_available(mv, anatomy, ledger)
+        and not question_engine.level_appropriate(mv, state.candidate_seniority)
+    ]
+
+
 def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     """Choose (claim, move) for question `index`.
 
@@ -1810,6 +1881,14 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     def brief(state: ClaimState, move: "question_engine.Move", reason: str) -> Plan:
         left = [m for m in state.forensic_moves_left() if m is not move]
         rotated = _rotate_session_fresh(left, session_used)
+        level = state.candidate_seniority or "unknown"
+        log.info(
+            "planner level=%s candidate seniority=%s allowed_moves=%s filtered_moves=%s",
+            level,
+            level,
+            [m.value for m in state.forensic_moves_left()],
+            [m.value for m in _level_filtered_moves(state)],
+        )
         return Plan(
             claim=state.claim,
             probe_level=question_engine.MOVE_PROBE_LEVEL[move],
@@ -1859,21 +1938,34 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
                 f"next move on a {state.weight:g}-weight claim",
             )
 
-    # 4 — one perturbation for a claim that has stopped paying.
-    if settings.transfer_probe:
-        for state in states:
-            if state.saturated or not state.moves_used:
-                continue
-            if question_engine.Move.PERTURB.value in state.moves_used:
-                continue
-            if not state.dear_stalled:
-                continue
-            if question_engine.move_available(
-                question_engine.Move.PERTURB, state.anatomy, state.ledger
-            ):
-                return brief(
-                    state, question_engine.Move.PERTURB,
-                    f"stalled after {state.answers} answers — one perturbation",
+    # 4 — one perturbation for a claim that has stopped paying. Off by default
+    # in demo mode (settings.transfer_probe=False); the level gate is a
+    # narrower override of that same default, not a second independent flag —
+    # a senior candidate earns PERTURB back, an unknown/junior/mid one sees
+    # exactly today's behaviour (settings.transfer_probe alone decides).
+    for state in states:
+        if not (
+            settings.transfer_probe
+            or (
+                settings.demo_mode
+                and question_engine.level_appropriate(
+                    question_engine.Move.PERTURB, state.candidate_seniority
                 )
+            )
+        ):
+            continue
+        if state.saturated or not state.moves_used:
+            continue
+        if question_engine.Move.PERTURB.value in state.moves_used:
+            continue
+        if not state.dear_stalled:
+            continue
+        if question_engine.move_available(
+            question_engine.Move.PERTURB, state.anatomy, state.ledger
+        ):
+            return brief(
+                state, question_engine.Move.PERTURB,
+                f"stalled after {state.answers} answers — one perturbation",
+            )
 
     return None
