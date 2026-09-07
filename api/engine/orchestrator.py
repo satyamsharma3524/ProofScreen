@@ -2214,9 +2214,10 @@ def _level_filtered_moves(state: ClaimState) -> list["question_engine.Move"]:
 
 PIVOT_PREFERENCE = (
     question_engine.Move.OWNERSHIP_BOUNDARY,
-    question_engine.Move.OPERATING_CONTEXT,
-    question_engine.Move.AUTHORITY,
     question_engine.Move.EXCLUSION,
+    question_engine.Move.AUTHORITY,
+    question_engine.Move.OPERATING_CONTEXT,
+    question_engine.Move.METRIC_DEFINITION,
 )
 
 
@@ -2230,9 +2231,10 @@ def _apply_evidence_gap_pivot(
         pivots = [m for m in moves if m in PIVOT_PREFERENCE]
         if pivots:
             reordered = pivots + [m for m in moves if m not in pivots]
-            reason = f"evidence gap pivot (0 signals on turn {state.answers}) on active claim"
+            reason = f"evidence gap pivot (weak answer on turn {state.answers}) on active claim"
             return reordered, reason
     return moves, None
+
 
 
 def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:

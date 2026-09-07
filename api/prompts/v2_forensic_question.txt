@@ -287,15 +287,16 @@ RULES
 
   NATURAL RECRUITER OPENINGS
 
-  Favor natural recruiter problem/blocker openings such as:
-  - "What was the first approach that didn't work..."
-  - "What slowed your progress down most when..."
-  - "What was the hardest trade-off when..."
-  - "What was the trickiest part of..."
-  - "Where did the plan break down when..."
+  Prefer questions framed around:
+  - a concrete obstacle
+  - a decision point
+  - a blocker
+  - a tradeoff
+  - a surprise
+  - a failed attempt
 
-  These sound like an experienced recruiter probing real work, avoiding repetitive
-  interrogative templates.
+  when those satisfy the target evidence.
+
 
   GENERICITY TEST
 
