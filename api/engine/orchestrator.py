@@ -1826,7 +1826,9 @@ async def submit_answer(
                 ],
                 "contradictions_added": [item.model_dump(mode="json") for item in contradictions],
             },
-            known_evidence_after=_known_evidence_trace(await known_facts(db, session.id)),
+            known_evidence_after=_known_evidence_trace(
+                await known_facts(db, session.id), nodes=turn_evidence
+            ),
         )
 
     # P2-04 — a non-answer earns one more go at the SAME probe, off-budget.
@@ -2210,6 +2212,29 @@ def _level_filtered_moves(state: ClaimState) -> list["question_engine.Move"]:
     ]
 
 
+PIVOT_PREFERENCE = (
+    question_engine.Move.OWNERSHIP_BOUNDARY,
+    question_engine.Move.OPERATING_CONTEXT,
+    question_engine.Move.AUTHORITY,
+    question_engine.Move.EXCLUSION,
+)
+
+
+def _apply_evidence_gap_pivot(
+    state: ClaimState, moves: list["question_engine.Move"]
+) -> tuple[list["question_engine.Move"], str | None]:
+    if state.answers > 0 and (
+        state.last_answer_signals == 0
+        or (state.dear_by_answer and state.dear_by_answer[-1] == 0)
+    ):
+        pivots = [m for m in moves if m in PIVOT_PREFERENCE]
+        if pivots:
+            reordered = pivots + [m for m in moves if m not in pivots]
+            reason = f"evidence gap pivot (0 signals on turn {state.answers}) on active claim"
+            return reordered, reason
+    return moves, None
+
+
 def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     """Choose (claim, move) for question `index`.
 
@@ -2270,10 +2295,12 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
                 if m is not question_engine.Move.PERTURB
             ]
             if moves:
+                moves, pivot_reason = _apply_evidence_gap_pivot(state, moves)
+                reason = pivot_reason or f"claim momentum streak ({moves_count}/{MIN_STREAK}) on active claim"
                 return brief(
                     state,
                     moves[0],
-                    f"claim momentum streak ({moves_count}/{MIN_STREAK}) on active claim",
+                    reason,
                 )
 
     # 1 — breadth. Heaviest-first ordering is already applied by the caller.
@@ -2305,9 +2332,11 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
         moves = [m for m in _rotate_session_fresh(state.forensic_moves_left(), session_used)
                  if m is not question_engine.Move.PERTURB]
         if moves:
+            moves, pivot_reason = _apply_evidence_gap_pivot(state, moves)
+            reason = pivot_reason or f"next move on a {state.weight:g}-weight claim"
             return brief(
                 state, moves[0],
-                f"next move on a {state.weight:g}-weight claim",
+                reason,
             )
 
     # 4 — one perturbation for a claim that has stopped paying. Off by default
