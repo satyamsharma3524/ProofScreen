@@ -183,11 +183,12 @@ class WhatsAppCloudChannel(BaseChannel):
     async def send_text(self, to: str, text: str) -> bool:
         """Free-form message. Only valid inside the 24-hour window."""
         log.info("whatsapp outbound: %s", text)
+        to_clean = (normalise_phone(to) or to).lstrip("+")
         return await self._post(
             {
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
-                "to": normalise_phone(to) or to,
+                "to": to_clean,
                 "type": "text",
                 "text": {"preview_url": False, "body": (text or "")[:TEXT_LIMIT]},
             }
@@ -216,11 +217,12 @@ class WhatsAppCloudChannel(BaseChannel):
                     "parameters": [{"type": "text", "text": p} for p in parameters],
                 }
             ]
+        to_clean = (normalise_phone(to) or to).lstrip("+")
         return await self._post(
             {
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
-                "to": normalise_phone(to) or to,
+                "to": to_clean,
                 "type": "template",
                 "template": template,
             }
