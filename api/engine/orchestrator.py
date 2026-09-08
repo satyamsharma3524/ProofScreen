@@ -239,6 +239,7 @@ class ClaimState:
     answers: int = 0
     last_answer_signals: int = 0
     last_answer_was_non_answer: bool = False
+    last_answer_was_skip_or_exhausted: bool = False
     # --- forensic state, all derived in build_claim_states from rows that
     # already exist. `moves_used` needs the `questions.move` column; everything
     # else comes from `responses.signals_json`, which was already being parsed.
@@ -605,6 +606,7 @@ async def build_claim_states(
         state.answers += 1
         state.last_answer_signals = response.signals_found or 0
         state.last_answer_was_non_answer = evidence_engine.is_non_answer(response.answer_text)
+        state.last_answer_was_skip_or_exhausted = evidence_engine.is_memory_exhausted_or_skip(response.answer_text)
         # How much of THIS answer was expensive to invent. The forensic stall
         # rule reads the last two entries.
         state.dear_by_answer.append(
@@ -647,7 +649,11 @@ async def build_claim_states(
                 for d in scoring.DIMENSION_ORDER
             }
 
-    return sorted(states.values(), key=lambda s: (-s.weight, s.claim.order_index))
+    from api.engine.signals import claim_strength_bonus
+    return sorted(
+        states.values(),
+        key=lambda s: (-(s.weight + claim_strength_bonus(s.claim.text, s.claim.metric)), s.claim.order_index),
+    )
 
 
 def _load_dimensions(payload: str | None) -> dict[Dimension, DimensionScore]:
@@ -1371,12 +1377,22 @@ async def ask_next(db: AsyncSession, session: ChatSession) -> Question | None:
         planner_reasoning=plan_trace,
     )
 
+    question_text = generated.question
+    if qa_rows and evidence_engine.is_memory_exhausted_or_skip(qa_rows[-1][1].answer_text):
+        is_diff = qa_rows[-1][0].claim_id != plan.claim.id
+        question_text = question_engine.format_conversational_transition(
+            question_text,
+            turn_index=session.questions_asked,
+            is_different_claim=is_diff,
+            claim_text=plan.claim.text,
+        )
+
     question = Question(
         id=ids.question_id(),
         tenant_id=session.tenant_id,
         claim_id=plan.claim.id,
         session_id=session.id,
-        text=generated.question,
+        text=question_text,
         probe_level=generated.probe_level.value,
         # BOTH MOVES WHEN A RE-TARGET HAPPENED, comma-joined.
         #
@@ -1824,6 +1840,9 @@ async def _maybe_repair(
     """
     if not settings.repair_turn:
         return None
+    if evidence_engine.is_memory_exhausted_or_skip(response.answer_text):
+        log.info("candidate indicated memory exhaustion / skip on %s, bypassing repair turn", question.id)
+        return None
     if not evidence_engine.is_non_answer(response.answer_text):
         return None
     if await _repair_already_used(db, question):
@@ -2248,6 +2267,7 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
             0 < moves_count < MIN_STREAK
             and not state.forensic_closed
             and not (state.dear_stalled and state.answers >= 2)
+            and not state.last_answer_was_skip_or_exhausted
         ):
             moves = _rotate_session_fresh(state.forensic_moves_left(), session_used)
             if moves:

@@ -220,7 +220,8 @@ def heuristic_claims(
             score = _score_line(line)
             if score >= MIN_CLAIM_SCORE:
                 candidates.append((score, line))
-        candidates.sort(key=lambda pair: (-pair[0], len(pair[1])))
+        from api.engine.signals import claim_strength_bonus
+        candidates.sort(key=lambda pair: (-(pair[0] + claim_strength_bonus(pair[1])), len(pair[1])))
 
         seen = set()
         seen_types: set[str] = set()
@@ -706,10 +707,11 @@ async def extract_claims(
         # type in both real interviews this session was measured against.
         # Weight, then a metric beating no metric, then document position as
         # the final tiebreak.
+        from api.engine.signals import claim_strength_bonus
         weights = default_claim_weights(family)
         ranked = sorted(
             enumerate(pool),
-            key=lambda iv: (-weights.get(iv[1].claim_type, 0.0), not iv[1].metric, iv[0]),
+            key=lambda iv: (-(weights.get(iv[1].claim_type, 0.0) + claim_strength_bonus(iv[1].text, iv[1].metric)), not iv[1].metric, iv[0]),
         )
         seen_types: set[str] = set()
         for _, ranked_claim in ranked:
@@ -739,7 +741,7 @@ async def extract_claims(
         limit_reason = "max_inventory_claims ceiling"
     else:
         weights = default_claim_weights(family)
-        candidates.sort(key=lambda c: -weights.get(c.claim_type, 0.0))
+        candidates.sort(key=lambda c: -(weights.get(c.claim_type, 0.0) + claim_strength_bonus(c.text, c.metric)))
         kept = candidates[:limit]
         dropped_by_limit = candidates[limit:]
         limit_reason = "max_claims limit, ranked by claim_type weight"

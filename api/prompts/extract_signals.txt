@@ -20,19 +20,20 @@ $answer_text
 
 WHAT TO EXTRACT
 ---------------
-quantities         Every number, amount, duration or percentage the candidate
-                   states. `value` exactly as they said it ("78%", "9 hours",
-                   "35"). `refers_to` = what that number measures, in their own
-                   words, whatever the field of work.
+quantities         Every number, amount, duration, percentage, spelled-out count
+                   or relative change the candidate states. `value` exactly as
+                   they said it ("78%", "9 hours", "35", "three engineers", "a dozen endpoints",
+                   "half the latency", "doubled throughput"). `refers_to` = what that
+                   number measures, in their own words, whatever the field of work.
 
 process_steps      Distinct steps of HOW the work actually ran — a recurring
                    check, a review they ran, a thing they did before another
                    thing. One entry per step, in their words. Not opinions,
                    not outcomes.
 
-causal_links       Cause -> action -> outcome chains. Fill all three fields ONLY
-                   when the candidate states all three. Leave a field null when
-                   they did not say it. Do not infer the missing part.
+causal_links       Cause -> action -> outcome chains across one or multiple sentences.
+                   Fill cause, action, outcome fields whenever present. Do not infer
+                   missing parts.
 
 tools              Software, systems or platforms named. `usage` = how they
                    describe using it, or null if they only named it.

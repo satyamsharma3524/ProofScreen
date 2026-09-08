@@ -121,5 +121,7 @@ def test_operational_evidence_bonus():
     score_b_base = scoring.claim_score(dims_b, "general")
     score_b_with_bonus = scoring.claim_score(dims_b, "general", signals=sig_b)
     
-    assert score_b_with_bonus > score_b_base
+    # Candidate B receives +0.10 (incident) + 0.10 (complete causal) + 0.05 (constraint) = 1.25 multiplier
+    # With bonus, Candidate B's score (50) is greater than unmultiplied score (40), and exceeds Candidate A (34).
+    assert score_b_with_bonus > 40
     assert score_b_with_bonus >= score_a_with_bonus

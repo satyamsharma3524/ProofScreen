@@ -50,13 +50,6 @@ log = logging.getLogger("proofscreen.evidence")
 
 QUOTE_MAX = 240
 
-_NON_ANSWERS = (
-    "i don't know", "i dont know", "no idea", "not sure", "cannot recall",
-    "can't recall", "cant recall", "dont remember", "don't remember", "n/a",
-    "na", "skip", "pass", "no comment", "nothing", "idk", "as mentioned",
-    "same as above", "it was a while ago", "i forgot",
-)
-
 _WS = re.compile(r"\s+")
 
 
@@ -64,7 +57,42 @@ def _canon(text: str | None) -> str:
     return _WS.sub(" ", (text or "").lower()).strip()
 
 
+_MEMORY_EXHAUSTED_PATTERNS = (
+    r"i don't know", r"i dont know", r"dont know", r"don't know", r"do not know", r"\bidk\b",
+    r"not sure", r"not certain", r"no idea", r"no clue",
+    r"can't remember", r"cant remember", r"cannot remember", r"dont remember", r"don't remember", r"do not remember",
+    r"i forgot", r"\bforgot\b", r"hard to remember", r"difficult to remember", r"hard to recall", r"difficult to recall", r"hard to say",
+    r"can't recall", r"cant recall", r"cannot recall", r"dont recall", r"don't recall", r"do not recall",
+    r"nothing else comes to mind", r"nothing comes to mind", r"nothing else", r"can't think of anything", r"cant think of anything", r"cannot think of anything",
+    r"that's all i remember", r"thats all i remember", r"that's all i recall", r"thats all i recall", r"that's all", r"thats all",
+    r"\bskip\b", r"\bpass\b", r"let's skip", r"lets skip", r"skip this", r"let's skip this", r"lets skip this",
+)
+
+_MEMORY_EXHAUSTED_REGEX = re.compile(
+    r"(?:\b|^)(?:" + "|".join(_MEMORY_EXHAUSTED_PATTERNS) + r")(?:\b|$)",
+    re.IGNORECASE
+)
+
+
+_NON_ANSWERS = (
+    "i don't know", "i dont know", "no idea", "not sure", "cannot recall",
+    "can't recall", "cant recall", "dont remember", "don't remember", "n/a",
+    "na", "skip", "pass", "no comment", "nothing", "idk", "as mentioned",
+    "same as above", "it was a while ago", "i forgot",
+)
+
+
+def is_memory_exhausted_or_skip(text: str) -> bool:
+    """True when the candidate indicates memory exhaustion, inability to recall, or explicit skip."""
+    canon = _canon(text)
+    if not canon:
+        return False
+    return bool(_MEMORY_EXHAUSTED_REGEX.search(canon))
+
+
 def is_non_answer(text: str) -> bool:
+    if is_memory_exhausted_or_skip(text):
+        return True
     canon = _canon(text)
     if len(canon) < 12:
         return True
@@ -93,6 +121,10 @@ def _verbatim(quote: str, answer: str) -> str | None:
 
 _UNIT = r"(?:%|percent|ms|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|lakh|cr|crore|bn|k|m|x)"
 _QTY = re.compile(rf"(?<![A-Za-z\d])(\d+(?:[.,]\d+)?\s*{_UNIT}?)", re.IGNORECASE)
+_NUMBER_WORDS = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty|forty|fifty|hundred|thousand|a\s+dozen|dozen)"
+_SPELLED_QTY = re.compile(rf"(?<![A-Za-z0-9])({_NUMBER_WORDS}\s+(?:[a-zA-Z]+(?:\s+[a-zA-Z]+)?))", re.IGNORECASE)
+_RELATIVE_QTY = re.compile(r"(?<![A-Za-z0-9])((?:cut\s+[\w\s]+\s+in\s+half|half\s+the\s+[\w\s]+|halved(?:\s+[\w\s]+)?|doubled(?:\s+[\w\s]+)?|tripled|quadrupled|twice|2x|3x|5x|10x))", re.IGNORECASE)
+
 _SENT = re.compile(r"(?<=[.!?])\s+|\n+")
 _CAUSAL_MARKERS = (
     "because", "since", "so that", " so ", "therefore", "which led to",
@@ -103,6 +135,22 @@ _OUTCOME_MARKERS = (
     "dropped", "fell", "rose", "improved", "increased", "reduced", "went up",
     "went down", "came down", "halved", "doubled", "moved to", "ended at",
     "reached", "recovered", "stabilised", "stabilized",
+)
+_CAUSE_SENTENCE_MARKERS = (
+    "backing up", "lag", "issue", "problem", "crashed", "failing", "outage",
+    "spike", "bottleneck", "slowdown", "error", "failure", "exhaustion", "leak",
+    "high latency", "overloaded", "down", "we found", "found a",
+)
+_ACTION_SENTENCE_MARKERS = (
+    "we increased", "we isolated", "we fixed", "we added",
+    "we updated", "we deployed", "we killed", "we configured", "we migrated",
+    "we restarted", "we changed", "we refactored", "we optimized", "we resolved",
+    "isolated the", "killed ", "increased", "partition count",
+)
+_OUTCOME_SENTENCE_MARKERS = (
+    "returned to normal", "stabilised", "stabilized", "dropped", "fell",
+    "improved", "recovered", "resolved", "halved", "doubled", "went down",
+    "came down", "normal",
 )
 _STEP_MARKERS = (
     "we ", "i ", "then ", "first ", "next ", "after that", "every ", "daily",
@@ -161,6 +209,20 @@ def heuristic_signals(answer: str, job_family: str = "general") -> AnswerSignals
                          quote=sentence[:QUOTE_MAX])
             )
 
+        for match in _SPELLED_QTY.finditer(sentence):
+            val = match.group(1).strip()
+            if not any(q.value.lower() == val.lower() for q in sig.quantities):
+                sig.quantities.append(
+                    Quantity(value=val[:60], refers_to=val[:80], quote=sentence[:QUOTE_MAX])
+                )
+
+        for match in _RELATIVE_QTY.finditer(sentence):
+            val = match.group(1).strip()
+            if not any(q.value.lower() == val.lower() for q in sig.quantities):
+                sig.quantities.append(
+                    Quantity(value=val[:60], refers_to=val[:80], quote=sentence[:QUOTE_MAX])
+                )
+
         if any(low.startswith(m.strip()) or m in low for m in _STEP_MARKERS) and len(low) > 25:
             if any(v in low for v in ("ed ", "ing ", "review", "track", "train",
                                       "call", "audit", "plan", "assign", "check")):
@@ -193,6 +255,45 @@ def heuristic_signals(answer: str, job_family: str = "general") -> AnswerSignals
                     quote=sentence[:QUOTE_MAX],
                 )
             )
+
+    # Multi-sentence causal chain scan (Cause -> Action -> Outcome across adjacent sentences)
+    if len(sentences) >= 2 and not any(c.is_complete for c in sig.causal_links):
+        for window_size in (4, 3, 2):
+            for i in range(len(sentences) - window_size + 1):
+                window = sentences[i : i + window_size]
+                combined = " ".join(window).lower()
+
+                has_cause = any(m in combined for m in _CAUSE_SENTENCE_MARKERS) or any(m in combined for m in _INCIDENT_MARKERS) or any(m in combined for m in _CAUSAL_MARKERS)
+                has_action = any(m in combined for m in _ACTION_SENTENCE_MARKERS) or any(m in combined for m in _STEP_MARKERS)
+                has_outcome = any(m in combined for m in _OUTCOME_SENTENCE_MARKERS) or any(m in combined for m in _OUTCOME_MARKERS)
+
+                if has_cause and has_action and has_outcome:
+                    c_sents = [s for s in window if any(m in s.lower() for m in _CAUSE_SENTENCE_MARKERS) or any(m in s.lower() for m in _INCIDENT_MARKERS)]
+                    a_sents = [s for s in window if any(m in s.lower() for m in _ACTION_SENTENCE_MARKERS)]
+                    o_sents = [s for s in window if any(m in s.lower() for m in _OUTCOME_SENTENCE_MARKERS)]
+
+                    c_sent = c_sents[0] if c_sents else window[0]
+                    a_sent = next((s for s in a_sents if s != c_sent), a_sents[0] if a_sents else window[min(1, len(window)-1)])
+                    o_sent = next((s for s in o_sents if s != a_sent and s != c_sent), o_sents[0] if o_sents else window[-1])
+
+                    span_start = low_answer.find(window[0].lower()[:30])
+                    span_end = low_answer.find(window[-1].lower()[:30], span_start if span_start != -1 else 0)
+                    if span_start != -1 and span_end != -1:
+                        raw_quote = answer[span_start : span_end + len(window[-1])][:QUOTE_MAX]
+                    else:
+                        raw_quote = " ".join(window)[:QUOTE_MAX]
+
+                    sig.causal_links.append(
+                        CausalLink(
+                            cause=_WS.sub(" ", c_sent)[:160],
+                            action=_WS.sub(" ", a_sent)[:160],
+                            outcome=_WS.sub(" ", o_sent)[:160],
+                            quote=raw_quote,
+                        )
+                    )
+                    break
+            if any(c.is_complete for c in sig.causal_links):
+                break
 
     for tool in _TOOL_VOCAB:
         if tool in low_answer:

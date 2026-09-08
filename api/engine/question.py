@@ -701,6 +701,59 @@ def repair_question(
     return f'On "{_short(claim_text)}" — {base}'
 
 
+CONVERSATIONAL_ACKS: tuple[str, ...] = (
+    "That's okay.",
+    "Makes sense.",
+    "Got it.",
+    "Understood.",
+    "Fair enough.",
+    "No worries.",
+)
+
+ROBATIC_TRANSITION_PATTERNS: tuple[str, ...] = (
+    r"let's move to another experience[.,!\s]*",
+    r"next claim[.,!\s]*",
+    r"moving on[.,!\s]*",
+    r"let's skip this[.,!\s]*",
+    r"provide another example[.,!\s]*",
+    r"tell me something else[.,!\s]*",
+)
+
+
+def format_conversational_transition(
+    question_text: str,
+    *,
+    turn_index: int = 0,
+    is_different_claim: bool = False,
+    claim_text: str | None = None,
+) -> str:
+    """Format question with a natural human conversational acknowledgement when candidate skips or exhausts memory."""
+    text = (question_text or "").strip()
+    if not text:
+        return text
+
+    # Strip robotic transition phrases if present
+    for pat in ROBATIC_TRANSITION_PATTERNS:
+        text = re.sub(pat, "", text, flags=re.IGNORECASE).strip()
+
+    # Pick a warm human acknowledgement
+    ack = CONVERSATIONAL_ACKS[turn_index % len(CONVERSATIONAL_ACKS)]
+
+    # If question already starts with one of the allowed conversational acknowledgements, return as-is
+    if any(text.startswith(a) for a in CONVERSATIONAL_ACKS):
+        return text
+
+    # Handle standard fallback prefix formatting `On "<claim>" — <rest>`
+    if text.startswith('On "') and " — " in text:
+        parts = text.split(" — ", 1)
+        rest = parts[1].strip()
+        if claim_text and is_different_claim:
+            return f'{ack} Earlier you mentioned working on {_short(claim_text, 60)} — {rest}'
+        return f'{ack} {rest}'
+
+    return f"{ack} {text}"
+
+
 _ORIENTATION_FIRST = (
     "This is the FIRST question about this claim -- the candidate has no "
     "context yet. Integrate the claim's subject into your single question naturally "

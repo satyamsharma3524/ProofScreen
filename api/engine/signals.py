@@ -22,6 +22,7 @@ produce them at all.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 
 from api.schemas import (
@@ -269,6 +270,43 @@ def score_tool_familiarity(sig: AnswerSignals) -> DimensionScore:
     )
 
 
+_FIRST_PERSON_ACTION_VERBS = (
+    "i isolated", "i handled", "i led", "i coordinated", "i investigated", "i built",
+    "i deployed", "i configured", "i managed", "i refactored", "i fixed", "i implemented",
+    "i resolved", "i migrated", "i ran", "i created", "i designed", "i killed", "i increased",
+    "i added", "i executed", "i monitored", "i maintained", "i set up", "i wrote", "i introduced",
+)
+
+
+def _is_first_person_action(text: str) -> bool:
+    t = text.lower()
+    return any(verb in t for verb in _FIRST_PERSON_ACTION_VERBS) or t.startswith("i ") or " i " in t
+
+
+_TRADEOFF_KEYWORDS = (
+    "evaluated", "compared", "versus", " vs ", "tradeoff", "trade-off", "instead",
+    "alternative", "rather than", "over", "overhead", "requirement", "persist",
+    "constraint", "limitation", "pros and cons", "options",
+)
+
+
+def _is_strong_decision(d: DecisionSignal) -> bool:
+    text = f"{d.choice} {d.reason or ''} {d.quote}".lower()
+    return any(kw in text for kw in _TRADEOFF_KEYWORDS) or bool(d.reason and len(d.reason) > 20)
+
+
+def _is_theoretical_only(sig: AnswerSignals) -> bool:
+    has_theory = bool(sig.concept_explanations or sig.metric_definitions)
+    has_operational = bool(
+        sig.incident_markers
+        or [c for c in sig.causal_links if c.is_complete]
+        or sig.constraints
+        or sig.boundaries
+        or sig.process_steps
+    )
+    return has_theory and not has_operational
+
+
 def score_knowledge(sig: AnswerSignals, job_family: str = "general") -> DimensionScore:
     """Domain understanding & explanation of why concepts apply."""
     concepts = sig.concept_explanations
@@ -276,7 +314,7 @@ def score_knowledge(sig: AnswerSignals, job_family: str = "general") -> Dimensio
     causals = [c for c in sig.causal_links if c.is_complete]
     incidents = sig.incident_markers
     steps = sig.process_steps
-    
+
     weighted = (
         float(len(concepts))
         + 0.5 * float(len(defined_metrics))
@@ -284,12 +322,14 @@ def score_knowledge(sig: AnswerSignals, job_family: str = "general") -> Dimensio
         + 0.6 * float(len(incidents))
         + 0.4 * float(len(steps))
     )
-    
+
     items = []
+    if _is_theoretical_only(sig):
+        items.append("• Answer style: Primarily theoretical (no operational incidents or causal chains)")
     if concepts:
         items.extend(f"• Explained concept: {c.concept}" for c in concepts)
     if defined_metrics:
-        items.extend(f"• Defined metric: {m.metric}" for m in defined_metrics)
+        items.extend(f"• Defined metric computation: {m.metric} ({m.how_measured})" if m.how_measured else f"• Defined metric: {m.metric}" for m in defined_metrics)
     if causals:
         items.extend(f"• Causal domain knowledge: {c.cause}" for c in causals)
     if incidents:
@@ -311,20 +351,89 @@ def score_knowledge(sig: AnswerSignals, job_family: str = "general") -> Dimensio
     )
 
 
+_TROUBLESHOOTING_KEYWORDS = (
+    "fix", "fixed", "debug", "debugged", "investigate", "investigated",
+    "diagnose", "diagnosed", "isolated", "resolved", "mitigated", "restored",
+    "recovered", "rollback", "rolled back", "root cause", "outage", "incident",
+    "failure", "crash", "degraded", "leak", "corruption", "deadlock",
+    "timeout", "exhaustion",
+)
+
+
+def _is_troubleshooting_step(text: str) -> bool:
+    t = (text or "").lower()
+    return any(re.search(rf"\b{re.escape(kw)}\b", t) or kw in t for kw in _TROUBLESHOOTING_KEYWORDS)
+
+
+_INCIDENT_CLAIM_KEYWORDS = (
+    "outage", "incident", "crash", "crashed", "black friday", "crisis", "emergency",
+    "down", "degraded", "leak", "exhaustion", "corruption", "deadlock", "timeout",
+    "failure", "bug", "breakdown", "recovered", "restored", "mitigated", "resolved",
+)
+
+_CAUSAL_CLAIM_KEYWORDS = (
+    "because", "so that", "led to", "resulted in", "reduced by", "cut by",
+    "increased by", "improved by", "halved", "doubled", "resulting in", "yielding",
+)
+
+_CONSTRAINT_CLAIM_KEYWORDS = (
+    "latency", "scale", "million", "50m", "headcount", "budget", "compliance",
+    "slas", "sla", "throughput", "concurrency", "qps", "tps", "zero downtime",
+)
+
+_OWNERSHIP_CLAIM_KEYWORDS = (
+    "led", "owned", "managed", "architected", "spearheaded", "directed",
+    "built", "designed", "rearchitected", "headed", "drove",
+)
+
+_QUANTITY_CLAIM_REGEX = __import__("re").compile(
+    r"(?<![A-Za-z\d])(?:\d+(?:[.,]\d+)?\s*(?:%|percent|ms|s|sec|seconds|mins|minutes|hrs|hours|days|weeks|months|years|lakh|cr|crore|bn|k|m|x)?|three|two|four|five|six|seven|eight|nine|ten|dozen|halved|doubled)(?![A-Za-z\d])",
+    __import__("re").IGNORECASE,
+)
+
+
+def claim_strength_bonus(text: str, metric: str | None = None) -> float:
+    """Ranking bonus for claims containing authentic operational evidence indicators."""
+    low = (text or "").lower()
+    bonus = 0.0
+
+    if any(re.search(rf"\b{re.escape(kw)}\b", low) or kw in low for kw in _INCIDENT_CLAIM_KEYWORDS):
+        bonus += 3.0
+    if any(kw in low for kw in _CAUSAL_CLAIM_KEYWORDS):
+        bonus += 2.0
+    if metric or "%" in low or _QUANTITY_CLAIM_REGEX.search(low):
+        bonus += 2.0
+    if any(kw in low for kw in _CONSTRAINT_CLAIM_KEYWORDS):
+        bonus += 1.5
+    if any(re.search(rf"\b{verb}\b", low) for verb in _OWNERSHIP_CLAIM_KEYWORDS):
+        bonus += 1.5
+
+    return bonus
+
+
 def score_execution(sig: AnswerSignals, job_family: str = "general") -> DimensionScore:
     """First-person description of mechanics and sequence of work done."""
     steps = sig.process_steps
     used_tools = [t for t in sig.tools if t.usage]
     quantities = sig.quantities
-    weighted = float(len(steps)) + 0.5 * float(len(used_tools)) + min(1.0, len(quantities) * 0.3)
-    
+
+    step_weight = 0.0
     items = []
-    if steps:
-        items.extend(f"• Explained step: {s.step}" for s in steps)
+    for s in steps:
+        step_text = s.step or ""
+        if _is_troubleshooting_step(step_text) or _is_troubleshooting_step(s.quote or ""):
+            step_weight += 1.5
+            items.append(f"• Operational troubleshooting step: {step_text}")
+        else:
+            step_weight += 1.0
+            items.append(f"• Executed step: {step_text}")
+
+    weighted = step_weight + 0.5 * float(len(used_tools)) + min(1.0, len(quantities) * 0.3)
+
     if used_tools:
-        items.extend(f"• Described usage of tool: {t.tool}" for t in used_tools)
+        items.extend(f"• Applied tool in workflow: {t.tool} ({t.usage})" if t.usage else f"• Applied tool: {t.tool}" for t in used_tools)
     if quantities:
-        items.extend(f"• Provided metric: {q.value} {q.refers_to}" for q in quantities)
+        items.extend(f"• Measured parameter: {q.value} {q.refers_to}" for q in quantities)
     basis = "\n".join(items)
 
     quotes = [s.quote for s in steps] + [t.quote for t in used_tools]
@@ -340,12 +449,12 @@ def score_problem_solving(sig: AnswerSignals) -> DimensionScore:
     causals = [c for c in sig.causal_links if c.is_complete]
     constraints = sig.constraints
     weighted = float(len(incidents)) + float(len(causals)) + 0.5 * float(len(constraints))
-    
+
     items = []
     if incidents:
-        items.extend(f"• Recalled incident: {i.detail}" for i in incidents)
+        items.extend(f"• Diagnosed incident: {i.detail}" for i in incidents)
     if causals:
-        items.extend(f"• Diagnosed cause: {c.cause}" for c in causals)
+        items.extend(f"• Isolated cause & outcome: {c.cause} -> {c.outcome}" if c.outcome else f"• Diagnosed cause: {c.cause}" for c in causals)
     if constraints:
         items.extend(f"• Navigated constraint: {c.limitation}" for c in constraints)
     basis = "\n".join(items)
@@ -360,18 +469,23 @@ def score_problem_solving(sig: AnswerSignals) -> DimensionScore:
 def score_judgment(sig: AnswerSignals) -> DimensionScore:
     """Reasoned choices and tradeoffs under constraints."""
     decisions = sig.decisions
+    strong_decisions = [d for d in decisions if _is_strong_decision(d)]
+    weak_decisions = [d for d in decisions if not _is_strong_decision(d)]
     constraints = sig.constraints
     causals = [c for c in sig.causal_links if c.is_complete]
-    
+
     weighted = (
-        float(len(decisions))
+        float(len(strong_decisions))
+        + 0.5 * float(len(weak_decisions))
         + 0.5 * float(len(constraints))
         + 0.4 * float(len(causals))
     )
-    
+
     items = []
-    if decisions:
-        items.extend(f"• Reasoned choice: {d.choice}" for d in decisions)
+    if strong_decisions:
+        items.extend(f"• Evaluated decision tradeoff: {d.choice}" for d in strong_decisions)
+    if weak_decisions:
+        items.extend(f"• Simple choice: {d.choice}" for d in weak_decisions)
     if constraints:
         items.extend(f"• Navigated constraint: {c.limitation}" for c in constraints)
     if causals:
@@ -390,22 +504,40 @@ def score_judgment(sig: AnswerSignals) -> DimensionScore:
 
 
 def score_ownership(sig: AnswerSignals) -> DimensionScore:
-    """Explicit scope boundaries and accountability."""
+    """Explicit scope boundaries and first-person operational accountability."""
     boundaries = sig.boundaries
+    first_person_steps = [s for s in sig.process_steps if _is_first_person_action(s.step or s.quote)]
+    first_person_decisions = [d for d in sig.decisions if _is_first_person_action(d.choice or d.quote)]
     entities = [e for e in sig.entities if e.kind in ("team", "person", "role")]
-    weighted = float(len(boundaries)) + 0.3 * float(len(entities))
-    
+
+    weighted = (
+        float(len(boundaries))
+        + 0.5 * float(len(first_person_steps))
+        + 0.4 * float(len(first_person_decisions))
+        + 0.3 * float(len(entities))
+    )
+
     items = []
     if boundaries:
-        items.extend(f"• Defined scope: {b.scope_held}" for b in boundaries)
+        items.extend(f"• Defined scope boundary: {b.scope_held}" for b in boundaries)
+    if first_person_steps:
+        items.extend(f"• Owned operational action: {s.step}" for s in first_person_steps)
+    if first_person_decisions:
+        items.extend(f"• Owned decision: {d.choice}" for d in first_person_decisions)
     if entities:
-        items.extend(f"• Interacted with: {e.entity}" for e in entities)
-    basis = "\n".join(items)
+        items.extend(f"• Interacted with team/role: {e.entity}" for e in entities)
 
-    quotes = [b.quote for b in boundaries] + [e.quote for e in entities]
+    basis = "\n".join(items)
+    quotes = (
+        [b.quote for b in boundaries]
+        + [s.quote for s in first_person_steps]
+        + [d.quote for d in first_person_decisions]
+        + [e.quote for e in entities]
+    )
+    gate_open = bool(boundaries or first_person_steps or first_person_decisions or (entities and (sig.process_steps or sig.decisions)))
     return _score(
-        Dimension.OWNERSHIP, weighted, len(boundaries),
-        basis, quotes, gate_open=bool(boundaries),
+        Dimension.OWNERSHIP, weighted, len(boundaries) + len(first_person_steps) + len(first_person_decisions),
+        basis, quotes, gate_open=gate_open,
     )
 
 
