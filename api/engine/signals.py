@@ -273,19 +273,41 @@ def score_knowledge(sig: AnswerSignals, job_family: str = "general") -> Dimensio
     """Domain understanding & explanation of why concepts apply."""
     concepts = sig.concept_explanations
     defined_metrics = [m for m in sig.metric_definitions if m.how_measured]
-    weighted = float(len(concepts)) + 0.5 * float(len(defined_metrics))
+    causals = [c for c in sig.causal_links if c.is_complete]
+    incidents = sig.incident_markers
+    steps = sig.process_steps
+    
+    weighted = (
+        float(len(concepts))
+        + 0.5 * float(len(defined_metrics))
+        + 0.6 * float(len(causals))
+        + 0.6 * float(len(incidents))
+        + 0.4 * float(len(steps))
+    )
     
     items = []
     if concepts:
         items.extend(f"• Explained concept: {c.concept}" for c in concepts)
     if defined_metrics:
         items.extend(f"• Defined metric: {m.metric}" for m in defined_metrics)
+    if causals:
+        items.extend(f"• Causal domain knowledge: {c.cause}" for c in causals)
+    if incidents:
+        items.extend(f"• Operational incident detail: {i.detail}" for i in incidents)
+    if steps:
+        items.extend(f"• Domain process mechanics: {s.step}" for s in steps)
     basis = "\n".join(items)
 
-    quotes = [c.quote for c in concepts] + [m.quote for m in defined_metrics]
+    quotes = (
+        [c.quote for c in concepts]
+        + [m.quote for m in defined_metrics]
+        + [c.quote for c in causals]
+        + [i.quote for i in incidents]
+        + [s.quote for s in steps]
+    )
     return _score(
-        Dimension.KNOWLEDGE, weighted, len(concepts) + len(defined_metrics),
-        basis, quotes, gate_open=bool(concepts or defined_metrics),
+        Dimension.KNOWLEDGE, weighted, len(concepts) + len(defined_metrics) + len(causals) + len(incidents) + len(steps),
+        basis, quotes, gate_open=bool(concepts or defined_metrics or causals or incidents or steps),
     )
 
 
@@ -338,17 +360,32 @@ def score_problem_solving(sig: AnswerSignals) -> DimensionScore:
 def score_judgment(sig: AnswerSignals) -> DimensionScore:
     """Reasoned choices and tradeoffs under constraints."""
     decisions = sig.decisions
-    weighted = float(len(decisions))
+    constraints = sig.constraints
+    causals = [c for c in sig.causal_links if c.is_complete]
+    
+    weighted = (
+        float(len(decisions))
+        + 0.5 * float(len(constraints))
+        + 0.4 * float(len(causals))
+    )
     
     items = []
     if decisions:
         items.extend(f"• Reasoned choice: {d.choice}" for d in decisions)
+    if constraints:
+        items.extend(f"• Navigated constraint: {c.limitation}" for c in constraints)
+    if causals:
+        items.extend(f"• Causal tradeoff: {c.action}" for c in causals)
     basis = "\n".join(items)
 
-    quotes = [d.quote for d in decisions]
+    quotes = (
+        [d.quote for d in decisions]
+        + [c.quote for c in constraints]
+        + [cl.quote for cl in causals]
+    )
     return _score(
-        Dimension.JUDGMENT, weighted, len(decisions),
-        basis, quotes, gate_open=bool(decisions),
+        Dimension.JUDGMENT, weighted, len(decisions) + len(constraints) + len(causals),
+        basis, quotes, gate_open=bool(decisions or constraints or causals),
     )
 
 
@@ -374,18 +411,38 @@ def score_ownership(sig: AnswerSignals) -> DimensionScore:
 
 def score_adaptability(sig: AnswerSignals) -> DimensionScore:
     """Transferring knowledge and reasoning to new scenarios."""
-    causals = [c for c in sig.causal_links if c.is_complete]
-    weighted = float(len(causals))
+    complete = [c for c in sig.causal_links if c.is_complete]
+    partial = [c for c in sig.causal_links if not c.is_complete]
+    concepts = sig.concept_explanations
+    decisions = sig.decisions
+    
+    weighted = (
+        float(len(complete))
+        + 0.6 * float(len(partial))
+        + 0.5 * float(len(concepts))
+        + 0.5 * float(len(decisions))
+    )
     
     items = []
-    if causals:
-        items.extend(f"• Hypothesized cause: {c.cause}" for c in causals)
+    if complete:
+        items.extend(f"• Complete transfer cause: {c.cause}" for c in complete)
+    if partial:
+        items.extend(f"• Prospective reasoning: {c.action or c.cause}" for c in partial)
+    if concepts:
+        items.extend(f"• Conceptual transfer: {c.concept}" for c in concepts)
+    if decisions:
+        items.extend(f"• Transfer decision choice: {d.choice}" for d in decisions)
     basis = "\n".join(items)
 
-    quotes = [c.quote for c in causals]
+    quotes = (
+        [c.quote for c in complete]
+        + [p.quote for p in partial]
+        + [ce.quote for ce in concepts]
+        + [d.quote for d in decisions]
+    )
     return _score(
-        Dimension.ADAPTABILITY, weighted, len(causals),
-        basis, quotes, gate_open=bool(causals),
+        Dimension.ADAPTABILITY, weighted, len(complete) + len(partial) + len(concepts) + len(decisions),
+        basis, quotes, gate_open=bool(complete or partial or concepts or decisions),
     )
 
 

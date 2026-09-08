@@ -383,6 +383,7 @@ async def score_response(req: ScoreRequest) -> ScoreResult:
         family,
         voice_effort=req.voice.effort_score if req.voice else None,
         voice_weight=settings.voice_weight,
+        signals=sig,
     )
 
     summary = (sig.summary or "").strip()[:280]

@@ -28,6 +28,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from api.engine.signals import PROBE_LEVEL_DIMENSIONS
 from api.schemas import (
+    AnswerSignals,
     Badge,
     Dimension,
     DimensionScore,
@@ -121,6 +122,7 @@ def claim_score(
     weights: Mapping[str, float] | None = None,
     voice_effort: int | None = None,
     voice_weight: float = DEFAULT_VOICE_WEIGHT,
+    signals: AnswerSignals | Sequence[AnswerSignals] | None = None,
 ) -> int:
     """Weighted sum over all six dimensions, 0-100.
 
@@ -138,6 +140,48 @@ def claim_score(
         value = entry if isinstance(entry, (int, float)) else (entry.score if entry else 0)
         content += active.get(dimension.value, 0.0) * float(value)
     content = content / total_weight
+
+    if signals is not None:
+        merged_sig: AnswerSignals | None = None
+        if isinstance(signals, AnswerSignals):
+            merged_sig = signals
+        elif isinstance(signals, Sequence) and not isinstance(signals, (str, bytes)):
+            from api.engine.signals import merge_signals
+            valid_sigs = [s for s in signals if isinstance(s, AnswerSignals)]
+            if valid_sigs:
+                merged_sig = merge_signals(valid_sigs)
+
+        if merged_sig is not None:
+            operational_bonus = 1.0
+            if len(getattr(merged_sig, "incident_markers", [])) > 0:
+                operational_bonus += 0.10
+            if any(getattr(link, "is_complete", False) for link in getattr(merged_sig, "causal_links", [])):
+                operational_bonus += 0.10
+            if len(getattr(merged_sig, "constraints", [])) > 0:
+                operational_bonus += 0.05
+            content *= operational_bonus
+    else:
+        has_incident = False
+        has_causal = False
+        has_constraint = False
+        for entry in dimensions.values():
+            if isinstance(entry, DimensionScore):
+                b = (entry.basis or "").lower()
+                if ("incident detail" in b or "recalled incident" in b or "incident marker" in b) and "no incident" not in b:
+                    has_incident = True
+                if "complete causal" in b or "diagnosed cause" in b or "causal domain knowledge" in b or "causal tradeoff" in b:
+                    has_causal = True
+                if ("navigated constraint" in b or "constraint limitation" in b) and "no constraint" not in b:
+                    has_constraint = True
+
+        operational_bonus = 1.0
+        if has_incident:
+            operational_bonus += 0.10
+        if has_causal:
+            operational_bonus += 0.10
+        if has_constraint:
+            operational_bonus += 0.05
+        content *= operational_bonus
 
     if voice_effort is None:
         return clamp100(content)

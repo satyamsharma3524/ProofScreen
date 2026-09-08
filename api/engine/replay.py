@@ -326,7 +326,7 @@ async def replay_evaluation(
                 d: dimensions[d] for d in scoring.DIMENSION_ORDER if d in dimensions
             }
             score = scoring.claim_score(
-                ordered, session.job_family, weights=dimension_weights
+                ordered, session.job_family, weights=dimension_weights, signals=answer_signals
             )
         else:
             score = scoring.claim_score(
@@ -334,6 +334,7 @@ async def replay_evaluation(
                 session.job_family,
                 voice_effort=voice_effort,
                 voice_weight=voice_weight,
+                signals=answer_signals,
             )
 
         result.claim_scores[claim.id] = score

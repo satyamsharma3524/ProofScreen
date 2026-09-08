@@ -635,7 +635,7 @@ def fallback_question(
         )
     else:
         base = FALLBACK_QUESTIONS[probe_level]
-    if not claim_text:
+    if not claim_text or base.startswith("On ") or base.startswith("When "):
         return GeneratedQuestion(question=base, probe_level=probe_level)
     return GeneratedQuestion(
         question=f'On "{_short(claim_text)}" — {base}', probe_level=probe_level
@@ -696,7 +696,22 @@ def repair_question(
     """
     family_prompt = FAMILY_REPAIR_PROMPTS.get((job_family or "").lower())
     base = family_prompt if (family_prompt and probe_level == ProbeLevel.OPERATIONAL) else REPAIR_PROMPTS[probe_level]
-    return f'On "{_short(claim_text)}" — {base}' if claim_text else base
+    if not claim_text or base.startswith("On ") or base.startswith("When "):
+        return base
+    return f'On "{_short(claim_text)}" — {base}'
+
+
+_ORIENTATION_FIRST = (
+    "This is the FIRST question about this claim -- the candidate has no "
+    "context yet. Integrate the claim's subject into your single question naturally "
+    "-- e.g. \"When you were working on <subject>, ...\" or \"On the <subject> work, ...\". "
+    "Do NOT write a separate restatement sentence before the question. Ask ONE single question."
+)
+_ORIENTATION_LATER = (
+    "The candidate has already been asked about this claim and has that "
+    "context from an earlier question. Do NOT add a reminder sentence -- "
+    "open directly with the question itself."
+)
 
 
 # Hackathon demo -- lightweight answer threading. Pure keyword match, no
@@ -1197,31 +1212,24 @@ MOVE_BRIEFS: dict[Move, tuple[str, str]] = {
 # what the person was allowed to decide.
 ARCHETYPE_LADDER: dict[Archetype, tuple[Move, ...]] = {
     Archetype.METRIC_MOVE: (
-        Move.OPERATING_CONTEXT, Move.METRIC_DEFINITION, Move.EXCLUSION, Move.FAILURE,
-        Move.COHERENCE, Move.DEPENDENCY, Move.PERTURB,
+        Move.OPERATING_CONTEXT, Move.FAILURE, Move.PERTURB,
+        Move.METRIC_DEFINITION, Move.EXCLUSION, Move.COHERENCE, Move.DEPENDENCY,
     ),
     Archetype.OWNERSHIP: (
-        # OPERATING_CONTEXT opens even an OWNERSHIP-archetype claim now --
-        # measured this session: "what decisions were solely yours" as a
-        # claim's FIRST question, with zero grounding, is a senior-sounding
-        # question a junior candidate can find genuinely hard to answer
-        # despite having done the work. AUTHORITY itself is removed under
-        # demo_mode (see forensic_moves_left()); OWNERSHIP_BOUNDARY is kept,
-        # reworded, and now asked second, after some concrete detail exists.
-        Move.OPERATING_CONTEXT, Move.OWNERSHIP_BOUNDARY, Move.AUTHORITY, Move.FAILURE,
-        Move.PEOPLE, Move.COHERENCE, Move.PERTURB,
+        Move.OPERATING_CONTEXT, Move.FAILURE, Move.PERTURB,
+        Move.OWNERSHIP_BOUNDARY, Move.AUTHORITY, Move.PEOPLE, Move.COHERENCE,
     ),
     Archetype.BUILD: (
-        Move.OPERATING_CONTEXT, Move.DEPENDENCY, Move.FAILURE,
-        Move.EXCLUSION, Move.COHERENCE, Move.PERTURB,
+        Move.OPERATING_CONTEXT, Move.FAILURE, Move.PERTURB,
+        Move.DEPENDENCY, Move.EXCLUSION, Move.COHERENCE,
     ),
     Archetype.PROCESS: (
-        Move.OPERATING_CONTEXT, Move.AUTHORITY, Move.FAILURE,
-        Move.EXCLUSION, Move.COHERENCE, Move.PERTURB,
+        Move.OPERATING_CONTEXT, Move.FAILURE, Move.PERTURB,
+        Move.AUTHORITY, Move.EXCLUSION, Move.COHERENCE,
     ),
     Archetype.VOLUME: (
-        Move.OPERATING_CONTEXT, Move.AUTHORITY, Move.FAILURE,
-        Move.PEOPLE, Move.COHERENCE, Move.PERTURB,
+        Move.OPERATING_CONTEXT, Move.FAILURE, Move.PERTURB,
+        Move.AUTHORITY, Move.PEOPLE, Move.COHERENCE,
     ),
 }
 

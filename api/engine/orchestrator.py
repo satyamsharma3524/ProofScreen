@@ -380,7 +380,11 @@ class ClaimState:
 
     @property
     def forensic_closed(self) -> bool:
-        if self.saturated:
+        perturb_pending = (
+            question_engine.Move.PERTURB.value not in self.moves_used
+            and question_engine.move_available(question_engine.Move.PERTURB, self.anatomy, self.ledger)
+        )
+        if self.saturated and not perturb_pending:
             return True
         if self.dear_stalled:
             return True
@@ -1624,6 +1628,7 @@ async def recompute_claim(
         session.job_family,
         voice_effort=voice_effort,
         voice_weight=settings.voice_weight,
+        signals=answer_signals,
     )
 
     stored = (
