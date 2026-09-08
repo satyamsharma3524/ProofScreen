@@ -238,6 +238,7 @@ class ClaimState:
     score: int = 0
     answers: int = 0
     last_answer_signals: int = 0
+    last_answer_was_non_answer: bool = False
     # --- forensic state, all derived in build_claim_states from rows that
     # already exist. `moves_used` needs the `questions.move` column; everything
     # else comes from `responses.signals_json`, which was already being parsed.
@@ -624,6 +625,7 @@ async def build_claim_states(
             continue
         state.answers += 1
         state.last_answer_signals = response.signals_found or 0
+        state.last_answer_was_non_answer = evidence_engine.is_non_answer(response.answer_text)
         # How much of THIS answer was expensive to invent. The forensic stall
         # rule reads the last two entries.
         state.dear_by_answer.append(
@@ -2224,7 +2226,7 @@ PIVOT_PREFERENCE = (
 def _apply_evidence_gap_pivot(
     state: ClaimState, moves: list["question_engine.Move"]
 ) -> tuple[list["question_engine.Move"], str | None]:
-    if state.answers > 0 and (
+    if state.answers > 0 and not state.last_answer_was_non_answer and (
         state.last_answer_signals == 0
         or (state.dear_by_answer and state.dear_by_answer[-1] == 0)
     ):
