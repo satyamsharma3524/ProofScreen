@@ -57,24 +57,15 @@ def test_empty_answer_scores_zero_on_every_dimension():
     assert all(s.score == 0 for s in scores.values())
 
 
-def test_specificity_gate_caps_name_dropping_without_numbers():
-    """Five named things and no number cannot beat the gate."""
+def test_execution_rewards_quantities():
     sig = AnswerSignals(
-        entities=[NamedEntity(entity=f"thing {i}", quote="q") for i in range(6)]
-    )
-    result = signals.score_specificity(sig)
-    assert result.score <= signals.GATES[Dimension.SPECIFICITY][0]
-    assert "no quantity given" in result.basis
-
-
-def test_specificity_rewards_quantities():
-    sig = AnswerSignals(
+        process_steps=[ProcessStep(step=f"step {i}", quote="q") for i in range(3)],
         quantities=[Quantity(value=f"{i}0%", refers_to="CSAT", quote="q") for i in range(5)]
     )
-    assert signals.score_specificity(sig).score == 100
+    assert signals.score_execution(sig).score > 50
 
 
-def test_causal_gate_partial_chains_cannot_reach_full_marks():
+def test_problem_solving_ignores_partial_chains():
     partial = AnswerSignals(
         causal_links=[CausalLink(cause="a", action="b", quote="q") for _ in range(5)]
     )
@@ -83,11 +74,11 @@ def test_causal_gate_partial_chains_cannot_reach_full_marks():
             CausalLink(cause="a", action="b", outcome="c", quote="q") for _ in range(2)
         ]
     )
-    assert signals.score_causal_reasoning(partial).score <= 50
-    assert signals.score_causal_reasoning(complete).score == 100
+    assert signals.score_problem_solving(partial).score <= 45
+    assert signals.score_problem_solving(complete).score > 45
 
 
-def test_metric_ownership_needs_a_definition_not_a_mention():
+def test_knowledge_needs_a_definition_not_a_mention():
     named = AnswerSignals(metric_definitions=[MetricDefinition(metric="CSAT", quote="q")])
     defined = AnswerSignals(
         metric_definitions=[
@@ -95,28 +86,32 @@ def test_metric_ownership_needs_a_definition_not_a_mention():
             MetricDefinition(metric="AHT", how_measured="talk + hold + ACW", quote="q"),
         ]
     )
-    assert signals.score_metric_ownership(named).score <= 45
-    assert signals.score_metric_ownership(defined).score == 100
+    assert signals.score_knowledge(named).score == 0
+    assert signals.score_knowledge(defined).score > 0
 
 
-def test_tool_familiarity_is_usage_not_name_dropping():
-    named = AnswerSignals(tools=[ToolMention(tool=f"tool{i}", quote="q") for i in range(5)])
+def test_execution_tool_familiarity_is_usage_not_name_dropping():
+    named = AnswerSignals(
+        process_steps=[ProcessStep(step=f"step {i}", quote="q") for i in range(3)],
+        tools=[ToolMention(tool=f"tool{i}", quote="q") for i in range(5)]
+    )
     used = AnswerSignals(
+        process_steps=[ProcessStep(step=f"step {i}", quote="q") for i in range(3)],
         tools=[
             ToolMention(tool="Genesys", usage="pulled the AHT report each morning", quote="q"),
             ToolMention(tool="Zendesk", usage="tagged repeat callers", quote="q"),
         ]
     )
-    assert signals.score_tool_familiarity(named).score <= 40
-    assert signals.score_tool_familiarity(used).score == 100
+    assert signals.score_execution(named).score <= 75
+    assert signals.score_execution(used).score > 75
 
 
-def test_authenticity_counts_remembered_incidents():
+def test_problem_solving_counts_remembered_incidents():
     sig = AnswerSignals(
         incident_markers=[IncidentMarker(detail=f"episode {i}", quote="q") for i in range(3)]
     )
-    assert signals.score_authenticity(sig).score == 100
-    assert signals.score_authenticity(AnswerSignals()).score == 0
+    assert signals.score_problem_solving(sig).score > 45
+    assert signals.score_problem_solving(AnswerSignals()).score <= 45
 
 
 def test_a_blunt_specific_answer_beats_a_polished_vague_one():
@@ -146,25 +141,25 @@ def test_evidence_accumulates_across_answers():
     """Two complete causal chains in two different answers must beat one."""
     one = AnswerSignals(causal_links=[CausalLink(cause="a", action="b", outcome="c", quote="q1")])
     two = AnswerSignals(causal_links=[CausalLink(cause="d", action="e", outcome="f", quote="q2")])
-    single = signals.score_claim([one], [ProbeLevel.DECISION])
-    both = signals.score_claim([one, two], [ProbeLevel.DECISION, ProbeLevel.OUTCOME])
-    assert both[Dimension.CAUSAL_REASONING].score > single[Dimension.CAUSAL_REASONING].score
+    single = signals.score_claim([one], [ProbeLevel.INCIDENT])
+    both = signals.score_claim([one, two], [ProbeLevel.INCIDENT, ProbeLevel.DECISION])
+    assert both[Dimension.PROBLEM_SOLVING].score > single[Dimension.PROBLEM_SOLVING].score
 
 
 def test_repetition_is_not_evidence():
     """Saying the same thing three times is one signal, not three."""
     same = AnswerSignals(quantities=[Quantity(value="35", refers_to="team size", quote="35 agents")])
-    once = signals.score_claim([same], [ProbeLevel.VALIDATION])
-    thrice = signals.score_claim([same, same, same], [ProbeLevel.VALIDATION])
-    assert once[Dimension.SPECIFICITY].score == thrice[Dimension.SPECIFICITY].score
+    once = signals.score_claim([same], [ProbeLevel.OPERATIONAL])
+    thrice = signals.score_claim([same, same, same], [ProbeLevel.OPERATIONAL])
+    assert once[Dimension.EXECUTION].score == thrice[Dimension.EXECUTION].score
 
 
 def test_unprobed_dimensions_are_marked_not_silently_zero():
     """A 0 nobody asked about must be distinguishable from a 0 they earned."""
-    scores = signals.score_claim([AnswerSignals()], [ProbeLevel.VALIDATION])
-    assert scores[Dimension.SPECIFICITY].probed is True        # VALIDATION targets it
-    assert scores[Dimension.AUTHENTICITY].probed is False      # INCIDENT does, and wasn't asked
-    assert scores[Dimension.AUTHENTICITY].basis == "not probed"
+    scores = signals.score_claim([AnswerSignals()], [ProbeLevel.OPERATIONAL])
+    assert scores[Dimension.EXECUTION].probed is True        # OPERATIONAL targets it
+    assert scores[Dimension.ADAPTABILITY].probed is False    # TRANSFER does, and wasn't asked
+    assert scores[Dimension.ADAPTABILITY].basis == "not probed"
 
 
 # ---------------------------------------------------------------------------

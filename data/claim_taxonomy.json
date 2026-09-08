@@ -1,14 +1,8 @@
 {
   "version": "tax_1",
-  "_note": "ARTIFACT 1 of 5 — the Claim Taxonomy. Data, not code, so a PM can tune weights without a deploy. Every family's claim weights sum to 100. `fact_keys` is the controlled vocabulary the consistency engine tracks: only these keys are compared across answers, which is what keeps contradiction detection deterministic instead of a second LLM opinion.",
+  "_note": "ARTIFACT 1 of 5 \u2014 the Claim Taxonomy. Data, not code, so a PM can tune weights without a deploy. Every family's claim weights sum to 100. `fact_keys` is the controlled vocabulary the consistency engine tracks: only these keys are compared across answers, which is what keeps contradiction detection deterministic instead of a second LLM opinion.",
   "dimension_weights": {
     "_note": "Global defaults. A family may override any subset; the merge is per-key and renormalised to 1.0.",
-    "SPECIFICITY": 0.08,
-    "PROCESS": 0.08,
-    "AUTHENTICITY": 0.08,
-    "CAUSAL_REASONING": 0.08,
-    "METRIC_OWNERSHIP": 0.08,
-    "TOOL_FAMILIARITY": 0.08,
     "KNOWLEDGE": 0.09,
     "EXECUTION": 0.11,
     "PROBLEM_SOLVING": 0.09,
@@ -64,11 +58,7 @@
         "night shift",
         "cx"
       ],
-      "dimension_weights": {
-        "PROCESS": 0.25,
-        "METRIC_OWNERSHIP": 0.2,
-        "TOOL_FAMILIARITY": 0.05
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "aht_seconds": {
           "label": "Average handle time",
@@ -237,10 +227,7 @@
         "email support",
         "customer success"
       ],
-      "dimension_weights": {
-        "PROCESS": 0.25,
-        "AUTHENTICITY": 0.2
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "tickets_per_day": {
           "label": "Tickets per day",
@@ -393,11 +380,7 @@
         "inside sales",
         "field sales"
       ],
-      "dimension_weights": {
-        "METRIC_OWNERSHIP": 0.25,
-        "PROCESS": 0.2,
-        "TOOL_FAMILIARITY": 0.05
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "monthly_target": {
           "label": "Monthly target",
@@ -553,11 +536,7 @@
         "mutual fund",
         "casa"
       ],
-      "dimension_weights": {
-        "PROCESS": 0.25,
-        "SPECIFICITY": 0.2,
-        "AUTHENTICITY": 0.15
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "files_per_day": {
           "label": "Files processed per day",
@@ -715,12 +694,7 @@
         "p95",
         "throughput"
       ],
-      "dimension_weights": {
-        "CAUSAL_REASONING": 0.2,
-        "PROCESS": 0.2,
-        "TOOL_FAMILIARITY": 0.15,
-        "AUTHENTICITY": 0.15
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "p95_latency_ms": {
           "label": "p95 latency",
@@ -897,11 +871,7 @@
         "dbt",
         "airflow"
       ],
-      "dimension_weights": {
-        "METRIC_OWNERSHIP": 0.25,
-        "CAUSAL_REASONING": 0.2,
-        "PROCESS": 0.15
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "dashboard_count": {
           "label": "Dashboards delivered",
@@ -1063,11 +1033,7 @@
         "naukri",
         "shine"
       ],
-      "dimension_weights": {
-        "AUTHENTICITY": 0.25,
-        "PROCESS": 0.2,
-        "TOOL_FAMILIARITY": 0.05
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "positions_closed": {
           "label": "Positions closed",
@@ -1225,12 +1191,7 @@
         "epic",
         "a/b test"
       ],
-      "dimension_weights": {
-        "CAUSAL_REASONING": 0.25,
-        "METRIC_OWNERSHIP": 0.2,
-        "PROCESS": 0.15,
-        "TOOL_FAMILIARITY": 0.05
-      },
+      "dimension_weights": {},
       "fact_keys": {
         "activation_pct": {
           "label": "Activation rate",

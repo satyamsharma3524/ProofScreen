@@ -57,54 +57,32 @@ RUBRIC_VERSION = "rub_2"
 # ---------------------------------------------------------------------------
 
 PROBE_LEVEL_DIMENSIONS: dict[ProbeLevel, tuple[Dimension, ...]] = {
-    ProbeLevel.VALIDATION: (Dimension.SPECIFICITY, Dimension.METRIC_OWNERSHIP, Dimension.KNOWLEDGE),
-    ProbeLevel.OPERATIONAL: (Dimension.PROCESS, Dimension.TOOL_FAMILIARITY, Dimension.EXECUTION),
-    ProbeLevel.INCIDENT: (Dimension.AUTHENTICITY, Dimension.SPECIFICITY, Dimension.PROBLEM_SOLVING),
-    ProbeLevel.DECISION: (Dimension.CAUSAL_REASONING, Dimension.PROCESS, Dimension.JUDGMENT),
-    ProbeLevel.OUTCOME: (Dimension.METRIC_OWNERSHIP, Dimension.CAUSAL_REASONING, Dimension.OWNERSHIP),
-    # Only two, and deliberately. A transfer answer is about something that
-    # never happened, so it carries no quantities, no tools they used and no
-    # metric to define — asking it to mark SPECIFICITY or TOOL_FAMILIARITY
-    # probed would report coverage the answer cannot contain. What it does
-    # carry is reasoning and sequence. Nothing is subtracted either: claim
-    # scoring runs the rubric over the UNION of a claim's signals, so a
-    # transfer answer can only add. See docs/TRANSFER_DESIGN_AUDIT.md §3 — this is
-    # the paragraph that exists so nobody later "fixes" the missing numbers.
-    ProbeLevel.TRANSFER: (Dimension.CAUSAL_REASONING, Dimension.PROCESS, Dimension.ADAPTABILITY),
+    ProbeLevel.OPERATIONAL: (Dimension.EXECUTION,),
+    ProbeLevel.INCIDENT: (Dimension.PROBLEM_SOLVING,),
+    ProbeLevel.DECISION: (Dimension.JUDGMENT,),
+    ProbeLevel.OUTCOME: (Dimension.OWNERSHIP,),
+    ProbeLevel.TRANSFER: (Dimension.ADAPTABILITY,),
+    ProbeLevel.VALIDATION: (Dimension.KNOWLEDGE,),
 }
 
 # Every probe level the policy may select. `ProbeLevel`'s own docstring makes
 # this tuple the registry: a level not listed here is declared but unreachable.
 PROBE_ORDER: tuple[ProbeLevel, ...] = (
-    ProbeLevel.VALIDATION,
     ProbeLevel.OPERATIONAL,
     ProbeLevel.INCIDENT,
     ProbeLevel.DECISION,
     ProbeLevel.OUTCOME,
     ProbeLevel.TRANSFER,
+    ProbeLevel.VALIDATION,
 )
 
-# The rungs the policy climbs in order — PROBE_ORDER minus TRANSFER.
-#
-# TRANSFER is selectable but it is not a rung. It is an exit ramp, offered once
-# by `plan_next` to a claim that has stalled, and it must never be reached by
-# the ordinary "next unused level" walk: a claim that is still producing
-# evidence should be asked about what it did, not about what it did not do.
-# Anything meaning "the ladder" reads THIS tuple; only the stall branch names
-# TRANSFER. Keeping the two apart is what makes "TRANSFER never opens a claim"
-# a property of the code rather than a convention.
-LADDER_ORDER: tuple[ProbeLevel, ...] = tuple(
-    lv for lv in PROBE_ORDER if lv is not ProbeLevel.TRANSFER
-)
+# The rungs the policy climbs in order.
+# Adaptability (TRANSFER) is now a standard rung in the ladder, reached naturally
+# by strong candidates who produce enough evidence for the earlier dimensions.
+LADDER_ORDER: tuple[ProbeLevel, ...] = PROBE_ORDER
 
 # Published targets. Tune these and the whole product's strictness moves.
 TARGETS: dict[Dimension, float] = {
-    Dimension.SPECIFICITY: 5.0,
-    Dimension.PROCESS: 4.0,
-    Dimension.METRIC_OWNERSHIP: 2.0,
-    Dimension.CAUSAL_REASONING: 2.0,
-    Dimension.AUTHENTICITY: 3.0,
-    Dimension.TOOL_FAMILIARITY: 2.0,
     # Universal Competence Framework
     Dimension.KNOWLEDGE: 3.0,
     Dimension.EXECUTION: 4.0,
@@ -116,12 +94,6 @@ TARGETS: dict[Dimension, float] = {
 
 # Score ceiling applied when the dimension's necessary ingredient is absent.
 GATES: dict[Dimension, tuple[int, str]] = {
-    Dimension.SPECIFICITY: (55, "no quantity given"),
-    Dimension.PROCESS: (50, "no process step described"),
-    Dimension.METRIC_OWNERSHIP: (45, "metric never defined"),
-    Dimension.CAUSAL_REASONING: (50, "no complete cause-action-outcome chain"),
-    Dimension.AUTHENTICITY: (40, "no specific incident recalled"),
-    Dimension.TOOL_FAMILIARITY: (40, "tool named but usage not described"),
     # Universal Competence Framework
     Dimension.KNOWLEDGE: (45, "no concept explanation or domain reasoning provided"),
     Dimension.EXECUTION: (50, "no process step described"),
@@ -159,7 +131,7 @@ def _score(
         ceiling, reason = GATES[dimension]
         if value > ceiling:
             value = ceiling
-        basis = f"{basis} — capped at {ceiling}: {reason}" if basis else reason
+        basis = f"{basis}\n• Capped at {ceiling}: {reason}" if basis else f"• Capped at {ceiling}: {reason}"
     return DimensionScore(
         dimension=dimension,
         score=value,
@@ -302,12 +274,14 @@ def score_knowledge(sig: AnswerSignals, job_family: str = "general") -> Dimensio
     concepts = sig.concept_explanations
     defined_metrics = [m for m in sig.metric_definitions if m.how_measured]
     weighted = float(len(concepts)) + 0.5 * float(len(defined_metrics))
-    basis = ", ".join(
-        part for part in (
-            _plural(len(concepts), "concept explanation") if concepts else "",
-            _plural(len(defined_metrics), "defined metric") if defined_metrics else "",
-        ) if part
-    )
+    
+    items = []
+    if concepts:
+        items.extend(f"• Explained concept: {c.concept}" for c in concepts)
+    if defined_metrics:
+        items.extend(f"• Defined metric: {m.metric}" for m in defined_metrics)
+    basis = "\n".join(items)
+
     quotes = [c.quote for c in concepts] + [m.quote for m in defined_metrics]
     return _score(
         Dimension.KNOWLEDGE, weighted, len(concepts) + len(defined_metrics),
@@ -321,13 +295,16 @@ def score_execution(sig: AnswerSignals, job_family: str = "general") -> Dimensio
     used_tools = [t for t in sig.tools if t.usage]
     quantities = sig.quantities
     weighted = float(len(steps)) + 0.5 * float(len(used_tools)) + min(1.0, len(quantities) * 0.3)
-    basis = ", ".join(
-        part for part in (
-            _plural(len(steps), "process step") if steps else "",
-            _plural(len(used_tools), "tool used") if used_tools else "",
-            _plural(len(quantities), "quantity") if quantities else "",
-        ) if part
-    )
+    
+    items = []
+    if steps:
+        items.extend(f"• Explained step: {s.step}" for s in steps)
+    if used_tools:
+        items.extend(f"• Described usage of tool: {t.tool}" for t in used_tools)
+    if quantities:
+        items.extend(f"• Provided metric: {q.value} {q.refers_to}" for q in quantities)
+    basis = "\n".join(items)
+
     quotes = [s.quote for s in steps] + [t.quote for t in used_tools]
     return _score(
         Dimension.EXECUTION, weighted, len(steps), basis,
@@ -341,13 +318,16 @@ def score_problem_solving(sig: AnswerSignals) -> DimensionScore:
     causals = [c for c in sig.causal_links if c.is_complete]
     constraints = sig.constraints
     weighted = float(len(incidents)) + float(len(causals)) + 0.5 * float(len(constraints))
-    basis = ", ".join(
-        part for part in (
-            _plural(len(incidents), "incident marker") if incidents else "",
-            _plural(len(causals), "complete causal chain") if causals else "",
-            _plural(len(constraints), "constraint") if constraints else "",
-        ) if part
-    )
+    
+    items = []
+    if incidents:
+        items.extend(f"• Recalled incident: {i.detail}" for i in incidents)
+    if causals:
+        items.extend(f"• Diagnosed cause: {c.cause}" for c in causals)
+    if constraints:
+        items.extend(f"• Navigated constraint: {c.limitation}" for c in constraints)
+    basis = "\n".join(items)
+
     quotes = [i.quote for i in incidents] + [c.quote for c in causals]
     return _score(
         Dimension.PROBLEM_SOLVING, weighted, len(incidents) + len(causals),
@@ -359,7 +339,12 @@ def score_judgment(sig: AnswerSignals) -> DimensionScore:
     """Reasoned choices and tradeoffs under constraints."""
     decisions = sig.decisions
     weighted = float(len(decisions))
-    basis = _plural(len(decisions), "reasoned decision") if decisions else ""
+    
+    items = []
+    if decisions:
+        items.extend(f"• Reasoned choice: {d.choice}" for d in decisions)
+    basis = "\n".join(items)
+
     quotes = [d.quote for d in decisions]
     return _score(
         Dimension.JUDGMENT, weighted, len(decisions),
@@ -372,12 +357,14 @@ def score_ownership(sig: AnswerSignals) -> DimensionScore:
     boundaries = sig.boundaries
     entities = [e for e in sig.entities if e.kind in ("team", "person", "role")]
     weighted = float(len(boundaries)) + 0.3 * float(len(entities))
-    basis = ", ".join(
-        part for part in (
-            _plural(len(boundaries), "boundary statement") if boundaries else "",
-            _plural(len(entities), "role entity", "role entities") if entities else "",
-        ) if part
-    )
+    
+    items = []
+    if boundaries:
+        items.extend(f"• Defined scope: {b.scope_held}" for b in boundaries)
+    if entities:
+        items.extend(f"• Interacted with: {e.entity}" for e in entities)
+    basis = "\n".join(items)
+
     quotes = [b.quote for b in boundaries] + [e.quote for e in entities]
     return _score(
         Dimension.OWNERSHIP, weighted, len(boundaries),
@@ -389,7 +376,12 @@ def score_adaptability(sig: AnswerSignals) -> DimensionScore:
     """Transferring knowledge and reasoning to new scenarios."""
     causals = [c for c in sig.causal_links if c.is_complete]
     weighted = float(len(causals))
-    basis = _plural(len(causals), "transfer causal chain") if causals else ""
+    
+    items = []
+    if causals:
+        items.extend(f"• Hypothesized cause: {c.cause}" for c in causals)
+    basis = "\n".join(items)
+
     quotes = [c.quote for c in causals]
     return _score(
         Dimension.ADAPTABILITY, weighted, len(causals),
@@ -407,12 +399,6 @@ def score_answer(
 ) -> dict[Dimension, DimensionScore]:
     """All dimensions for one answer. Pure function of the signal counts."""
     return {
-        Dimension.SPECIFICITY: score_specificity(sig),
-        Dimension.PROCESS: score_process(sig, job_family),
-        Dimension.METRIC_OWNERSHIP: score_metric_ownership(sig),
-        Dimension.CAUSAL_REASONING: score_causal_reasoning(sig),
-        Dimension.AUTHENTICITY: score_authenticity(sig),
-        Dimension.TOOL_FAMILIARITY: score_tool_familiarity(sig),
         # Universal Competence Framework
         Dimension.KNOWLEDGE: score_knowledge(sig, job_family),
         Dimension.EXECUTION: score_execution(sig, job_family),

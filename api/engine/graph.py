@@ -571,12 +571,12 @@ async def recompute_profile(
 # authenticity counts incidents, tool counts tools, metric counts definitions —
 # so summing signal_count across the six is a true total, not double counting.
 _DIMENSION_PHRASE = {
-    "SPECIFICITY": "concrete figures",
-    "PROCESS": "process detail",
-    "METRIC_OWNERSHIP": "metric ownership",
-    "CAUSAL_REASONING": "causal reasoning",
-    "AUTHENTICITY": "recalled incidents",
-    "TOOL_FAMILIARITY": "tool usage",
+    "KNOWLEDGE": "domain knowledge",
+    "EXECUTION": "execution details",
+    "PROBLEM_SOLVING": "problem solving",
+    "JUDGMENT": "decision judgment",
+    "OWNERSHIP": "ownership boundaries",
+    "ADAPTABILITY": "knowledge adaptability",
 }
 
 
@@ -605,7 +605,7 @@ def _dimension_totals(
             signals += entry.signal_count
             if entry.probed:
                 probed.add(key)
-            if key == "SPECIFICITY":
+            if key == "EXECUTION":
                 specificity_signals += entry.signal_count
             if entry.score > 0 and (best is None or entry.score > best[0]):
                 best = (entry.score, key)

@@ -28,20 +28,12 @@ def test_question_eval_schema_structure():
 
     assert isinstance(eval_result, QuestionQualityEvaluation)
     assert 0 <= eval_result.question_quality_score <= 100
-    assert eval_result.framing_type in (
-        "claim_reference", "direct_experience", "operational_recall",
-        "artifact_anchor", "decision_anchor", "problem_anchor",
-        "scenario_anchor", "ownership_anchor", "knowledge_anchor",
-    )
-    assert 0 <= eval_result.framing_quality <= 100
     assert 0 <= eval_result.claim_echo_score <= 100
-    assert eval_result.anchor_type in ("tool", "artifact", "process", "decision", "incident", "none")
     assert 0 <= eval_result.anchor_score <= 100
     assert 0 <= eval_result.conversationality_score <= 100
     assert 0 <= eval_result.answerability_score <= 100
-    assert isinstance(eval_result.strengths, list)
-    assert isinstance(eval_result.weaknesses, list)
-    assert isinstance(eval_result.suggested_rewrite, str)
+    assert 0 <= eval_result.evidence_yield_score <= 100
+    assert 0 <= eval_result.dimension_alignment_score <= 100
 
 
 def test_claim_echo_score_penalty():
@@ -79,9 +71,7 @@ def test_concrete_anchor_score():
     unanchored_eval = evaluate_question_quality_deterministic(unanchored_question, claim)
     anchored_eval = evaluate_question_quality_deterministic(anchored_question, claim)
 
-    assert unanchored_eval.anchor_type == "none"
-    assert anchored_eval.anchor_type in ("tool", "process", "artifact")
-    assert anchored_eval.anchor_score > unanchored_eval.anchor_score
+    assert unanchored_eval.anchor_score < anchored_eval.anchor_score
 
 
 def test_answerability_multi_part_and_length_penalty():
@@ -109,8 +99,7 @@ def test_framing_diversity_repetition_penalty():
     repeated_eval = evaluate_question_quality_deterministic(repeated_frame_q, claim, prior_questions=prior)
     natural_eval = evaluate_question_quality_deterministic(natural_frame_q, claim, prior_questions=prior)
 
-    assert repeated_eval.framing_type == "claim_reference"
-    assert repeated_eval.framing_quality < natural_eval.framing_quality
+    assert repeated_eval.question_quality_score < natural_eval.question_quality_score
 
 
 def test_async_evaluate_question_quality_fallback():
@@ -122,8 +111,5 @@ def test_async_evaluate_question_quality_fallback():
 
     assert isinstance(result, QuestionQualityEvaluation)
     assert result.question_quality_score > 0
-    assert result.framing_type in (
-        "claim_reference", "direct_experience", "operational_recall",
-        "artifact_anchor", "decision_anchor", "problem_anchor",
-        "scenario_anchor", "ownership_anchor", "knowledge_anchor",
-    )
+    assert result.evidence_yield_score > 0
+    assert result.dimension_alignment_score > 0

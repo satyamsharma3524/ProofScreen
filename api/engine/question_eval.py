@@ -47,38 +47,26 @@ ANCHOR_TYPES = (
 
 
 class QuestionQualityEvaluation(BaseModel):
-    question_quality_score: int = Field(
-        ..., ge=0, le=100, description="Overall weighted question quality score (0-100)"
-    )
-    framing_type: str = Field(
-        ..., description="Classified framing type of the question"
-    )
-    framing_quality: int = Field(
-        ..., ge=0, le=100, description="Framing diversity score (0-100)"
-    )
-    claim_echo_score: int = Field(
-        ..., ge=0, le=100, description="Claim verbatim repetition score (0-100, lower is better)"
-    )
-    anchor_type: str = Field(
-        ..., description="Concrete anchor category present in question"
-    )
-    anchor_score: int = Field(
-        ..., ge=0, le=100, description="Concrete anchor specificity score (0-100)"
+    answerability_score: int = Field(
+        ..., ge=0, le=100, description="Clarity and candidate cognitive load score (0-100)"
     )
     conversationality_score: int = Field(
         ..., ge=0, le=100, description="Recruiter conversational naturalness score (0-100)"
     )
-    answerability_score: int = Field(
-        ..., ge=0, le=100, description="Clarity and candidate cognitive load score (0-100)"
+    claim_echo_score: int = Field(
+        ..., ge=0, le=100, description="Claim verbatim repetition score (0-100, lower is better)"
     )
-    strengths: list[str] = Field(
-        default_factory=list, description="Key strengths of the question wording"
+    anchor_score: int = Field(
+        ..., ge=0, le=100, description="Concrete anchor specificity score (0-100)"
     )
-    weaknesses: list[str] = Field(
-        default_factory=list, description="Key weaknesses or friction points"
+    evidence_yield_score: int = Field(
+        ..., ge=0, le=100, description="Evidence gathered if answered well (0-100)"
     )
-    suggested_rewrite: str = Field(
-        "", description="Suggested rewrite for higher quality and conversationality"
+    dimension_alignment_score: int = Field(
+        ..., ge=0, le=100, description="Does the question probe the intended dimension? (0-100)"
+    )
+    question_quality_score: int = Field(
+        ..., ge=0, le=100, description="Overall weighted question quality score (0-100)"
     )
 
 
@@ -131,6 +119,7 @@ def evaluate_question_quality_deterministic(
     question: str,
     claim_text: str,
     prior_questions: Sequence[str] = (),
+    target_dimension: str | None = None,
 ) -> QuestionQualityEvaluation:
     """Pure, deterministic evaluation of question quality.
 
@@ -252,53 +241,18 @@ def evaluate_question_quality_deterministic(
     )
     final_quality_score = int(round(max(0.0, min(100.0, raw_score))))
 
-    # Strengths & Weaknesses
-    strengths: list[str] = []
-    weaknesses: list[str] = []
-
-    if answerability_score >= 80:
-        strengths.append("Clear single ask with low cognitive load")
-    else:
-        weaknesses.append("High cognitive load or complex multi-part phrasing")
-
-    if conversationality_score >= 80:
-        strengths.append("Natural recruiter conversational phrasing")
-    else:
-        weaknesses.append("Formal, audit-like or bureaucratic phrasing")
-
-    if anchor_score >= 80:
-        strengths.append(f"Anchored specifically to a concrete {anchor_type}")
-    else:
-        weaknesses.append("Lacks a specific concrete anchor")
-
-    if claim_echo_score <= 30:
-        strengths.append("Explores work without restating the resume claim text")
-    elif claim_echo_score >= 60:
-        weaknesses.append("Restates too much of the resume claim text verbatim")
-
-    # Suggested rewrite
-    suggested_rewrite = question
-    if final_quality_score < 85:
-        if anchor_type == "tool":
-            suggested_rewrite = f"What was the first problem you noticed when setting up {next(iter(tokens & _TOOLS)).title()}?"
-        elif framing_type == "claim_reference":
-            # Remove "On the work where you used X"
-            clean_q = re.sub(r"^\s*on the (work|project|claim|role) where you used [^,]+,?\s*", "", text, flags=re.I)
-            if clean_q:
-                suggested_rewrite = clean_q[0].upper() + clean_q[1:]
+    # Deterministic default fallback values for new metrics
+    evidence_yield_score = 75
+    dimension_alignment_score = 75
 
     return QuestionQualityEvaluation(
-        question_quality_score=final_quality_score,
-        framing_type=framing_type,
-        framing_quality=framing_quality,
-        claim_echo_score=claim_echo_score,
-        anchor_type=anchor_type,
-        anchor_score=anchor_score,
-        conversationality_score=conversationality_score,
         answerability_score=answerability_score,
-        strengths=strengths,
-        weaknesses=weaknesses,
-        suggested_rewrite=suggested_rewrite,
+        conversationality_score=conversationality_score,
+        claim_echo_score=claim_echo_score,
+        anchor_score=anchor_score,
+        evidence_yield_score=evidence_yield_score,
+        dimension_alignment_score=dimension_alignment_score,
+        question_quality_score=final_quality_score,
     )
 
 
@@ -310,12 +264,13 @@ async def evaluate_question_quality(
     question: str,
     claim_text: str,
     prior_questions: Sequence[str] = (),
+    target_dimension: str | None = None,
 ) -> QuestionQualityEvaluation:
     """Evaluate question quality across 5 dimensions using LLM with deterministic fallback."""
 
     def fallback() -> QuestionQualityEvaluation:
         return evaluate_question_quality_deterministic(
-            question, claim_text, prior_questions=prior_questions
+            question, claim_text, prior_questions=prior_questions, target_dimension=target_dimension
         )
 
     formatted_priors = (
@@ -329,6 +284,7 @@ async def evaluate_question_quality(
         question=question,
         claim_text=claim_text,
         prior_questions=formatted_priors,
+        target_dimension=target_dimension or "Unspecified",
     )
 
     return await complete_json(

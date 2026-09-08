@@ -1197,7 +1197,7 @@ MOVE_BRIEFS: dict[Move, tuple[str, str]] = {
 # what the person was allowed to decide.
 ARCHETYPE_LADDER: dict[Archetype, tuple[Move, ...]] = {
     Archetype.METRIC_MOVE: (
-        Move.METRIC_DEFINITION, Move.EXCLUSION, Move.FAILURE,
+        Move.OPERATING_CONTEXT, Move.METRIC_DEFINITION, Move.EXCLUSION, Move.FAILURE,
         Move.COHERENCE, Move.DEPENDENCY, Move.PERTURB,
     ),
     Archetype.OWNERSHIP: (
@@ -1220,7 +1220,7 @@ ARCHETYPE_LADDER: dict[Archetype, tuple[Move, ...]] = {
         Move.EXCLUSION, Move.COHERENCE, Move.PERTURB,
     ),
     Archetype.VOLUME: (
-        Move.AUTHORITY, Move.OPERATING_CONTEXT, Move.FAILURE,
+        Move.OPERATING_CONTEXT, Move.AUTHORITY, Move.FAILURE,
         Move.PEOPLE, Move.COHERENCE, Move.PERTURB,
     ),
 }

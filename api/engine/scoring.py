@@ -58,13 +58,6 @@ SATURATION_AT = 80
 DEFAULT_VOICE_WEIGHT = 0.10
 
 DIMENSION_ORDER: tuple[Dimension, ...] = (
-    Dimension.SPECIFICITY,
-    Dimension.PROCESS,
-    Dimension.METRIC_OWNERSHIP,
-    Dimension.CAUSAL_REASONING,
-    Dimension.AUTHENTICITY,
-    Dimension.TOOL_FAMILIARITY,
-    # Universal Competence Framework
     Dimension.KNOWLEDGE,
     Dimension.EXECUTION,
     Dimension.PROBLEM_SOLVING,
@@ -318,12 +311,6 @@ def all_dimensions() -> tuple[Dimension, ...]:
 
 def dimension_labels() -> dict[Dimension, str]:
     return {
-        Dimension.SPECIFICITY: "Specificity",
-        Dimension.PROCESS: "Process understanding",
-        Dimension.METRIC_OWNERSHIP: "Metric ownership",
-        Dimension.CAUSAL_REASONING: "Causal reasoning",
-        Dimension.AUTHENTICITY: "Experience authenticity",
-        Dimension.TOOL_FAMILIARITY: "Tool familiarity",
         Dimension.KNOWLEDGE: "Domain knowledge",
         Dimension.EXECUTION: "Personal execution",
         Dimension.PROBLEM_SOLVING: "Problem solving",

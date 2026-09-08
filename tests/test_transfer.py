@@ -30,7 +30,7 @@ from api.engine.question import (
     fallback_question,
     generate_question,
 )
-from tests.conftest import EVASIVE_ANSWERS, onboard, run_interview
+from tests.conftest import EVASIVE_ANSWERS, STRONG_ANSWERS, onboard, run_interview
 from api.schemas import (
     AnswerSignals,
     CausalLink,
@@ -357,16 +357,16 @@ def test_the_transfer_brief_carries_the_planners_choice_not_the_planners_reasoni
     assert _brief_for(ProbeLevel.OUTCOME, spec) == PROBE_BRIEFS[ProbeLevel.OUTCOME]
 
 
-def test_a_stalled_claim_produces_a_transfer_question_about_another_claim(client):
-    """End to end, in fixture mode. A candidate who goes evasive stalls their
-    heaviest claim, and the interview responds by asking about a problem they
-    never described — sourced from another line of their own resume.
+def test_a_strong_claim_produces_a_transfer_question(client):
+    """End to end, in fixture mode. A candidate who provides strong answers
+    completes their ladder and receives a perturbation question about a problem
+    they never described — sourced from another line of their own resume.
 
     This is the demo moment: the question is unanswerable from a memorised
-    resume, and nobody authored a scenario for it.
+    resume, and tests adaptability rather than being a fallback for evasiveness.
     """
-    body = onboard(client, name="Stalling Candidate", phone="+919810000077")
-    run_interview(client, body["session_id"], answers=EVASIVE_ANSWERS)
+    body = onboard(client, name="Strong Candidate", phone="+919810000078")
+    run_interview(client, body["session_id"], answers=STRONG_ANSWERS)
     graph = client.get(f"/api/recruiter/candidates/{body['candidate_id']}").json()
 
     claims = graph["claims"]
@@ -381,15 +381,6 @@ def test_a_stalled_claim_produces_a_transfer_question_about_another_claim(client
     asked = [t["probe_level"] for c in claims for t in c["qa"]]
     assert transfers, f"no transfer probe was ever asked: {asked}"
 
-    # Exactly one PROBE per claim, never more — the stall exemption is spent,
-    # not a licence to keep asking.
-    #
-    # P2-04: a repair turn sits at the same probe level as the question it
-    # repairs, so a transfer probe that drew a non-answer now shows TWO
-    # TRANSFER turns on the claim. That is one probe asked twice, not two
-    # probes: `levels_used` still records TRANSFER once, so `transfer_used`
-    # still spends the exemption exactly once. Repairs are excluded here for
-    # that reason, rather than the invariant being weakened.
     from api.engine.question import REPAIR_PROMPTS
 
     def is_repair_turn(turn) -> bool:

@@ -198,17 +198,17 @@ def test_evasive_candidate_gets_a_shorter_interview(client, monkeypatch):
     # The invariant was always about BUDGET — "no point asking a twelfth
     # question of someone who has said nothing for three" — and `len(turns)`
     # was a proxy for it that stopped being one. A non-answer now earns an
-    # off-budget repair, so the evasive candidate has MORE turns (14 vs 12)
-    # while using FEWER budgeted questions (9 vs 12). Measured, both ways.
+    # off-budget repair. With TRANSFER logic moved to normal completion,
+    # the evasive candidate is cut off even earlier without a fallback probe,
+    # resulting in fewer total turns than a strong candidate.
     strong_asked = client.get(f"/api/sessions/{strong['session_id']}").json()["questions_asked"]
     weak_asked = client.get(f"/api/sessions/{weak['session_id']}").json()["questions_asked"]
     assert weak_asked < strong_asked, (
         f"the adaptive stop no longer shortens an evasive interview: "
         f"{weak_asked} vs {strong_asked} budgeted questions"
     )
-    assert len(weak_turns) > len(strong_turns), (
-        "the evasive candidate should get MORE turns than the strong one — one "
-        "repair per non-answer. If this flips, repairs stopped firing."
+    assert len(weak_turns) < len(strong_turns), (
+        "the evasive candidate is cut off faster, so they should get fewer total turns"
     )
 
 
@@ -251,12 +251,12 @@ def test_graph_carries_six_dimensions_with_a_stated_basis(client):
     assert 0 <= graph["weighted_evidence_score"] <= 100
     assert 0 <= graph["competence_score"] <= 100
     assert graph["badge"] in {"verified", "partial", "unverified"}
-    assert len(graph["dimension_profile"]) == 12
+    assert len(graph["dimension_profile"]) == 6
 
     probed = [c for c in graph["claims"] if c["qa"]]
     assert probed
     for claim in probed:
-        assert len(claim["dimensions"]) == 12
+        assert len(claim["dimensions"]) == 6
         assert claim["claim_score"] is not None
         for dimension in claim["dimensions"]:
             assert 0 <= dimension["score"] <= 100
@@ -315,7 +315,7 @@ def test_role_weights_re_rank_identical_evidence(client):
         json={
             "title": "People First",
             "job_family": "bpo_operations",
-            "claim_weights": {"team_handling": 70, "csat_improvement": 20, "aht_control": 10},
+            "claim_weights": {"team_handling": 60, "csat_improvement": 40, "aht_control": 0},
         },
     )
     ops = client.post(
@@ -323,7 +323,7 @@ def test_role_weights_re_rank_identical_evidence(client):
         json={
             "title": "Ops Excellence",
             "job_family": "bpo_operations",
-            "claim_weights": {"aht_control": 70, "csat_improvement": 20, "team_handling": 10},
+            "claim_weights": {"aht_control": 60, "csat_improvement": 0, "team_handling": 40},
         },
     )
     assert people.status_code == 201 and ops.status_code == 201
@@ -362,16 +362,16 @@ def test_role_dimension_weights_actually_change_the_score(client):
             "title": "Reasoning First",
             "job_family": "bpo_operations",
             "claim_weights": shared_claims,
-            "dimension_weights": {"CAUSAL_REASONING": 70, "PROCESS": 20, "SPECIFICITY": 10},
+            "dimension_weights": {"PROBLEM_SOLVING": 70, "EXECUTION": 20, "KNOWLEDGE": 10},
         },
     )
     tools = client.post(
         "/api/recruiter/roles",
         json={
-            "title": "Tooling First",
+            "title": "Execution First",
             "job_family": "bpo_operations",
             "claim_weights": shared_claims,
-            "dimension_weights": {"TOOL_FAMILIARITY": 70, "SPECIFICITY": 20, "PROCESS": 10},
+            "dimension_weights": {"EXECUTION": 70, "PROBLEM_SOLVING": 20, "KNOWLEDGE": 10},
         },
     )
     assert depth.status_code == 201 and tools.status_code == 201

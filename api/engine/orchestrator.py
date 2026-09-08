@@ -276,34 +276,14 @@ class ClaimState:
         drift out of step with what the candidate was really sent."""
         return ProbeLevel.TRANSFER in self.levels_used
 
-    @property
-    def transfer_available(self) -> bool:
-        """Exactly one transfer probe, and only to a claim that has stalled.
 
-        `stalled` already requires two answers, so an untouched claim can never
-        qualify: TRANSFER never opens a claim. Saturated claims are excluded
-        because there is nothing left to learn, not because they failed.
-        """
-        return (
-            settings.transfer_probe
-            and self.stalled
-            and not self.transfer_used
-            and not self.saturated
-            and bool(self.levels_used)
-        )
 
     @property
     def exhausted(self) -> bool:
         if self.saturated:
             return True
         if self.stalled:
-            # A stall used to end the claim outright. Now it earns one transfer
-            # probe first — the answers stopped adding evidence about what they
-            # did, which is precisely when asking about what they did NOT do
-            # separates a thin memory from a thin resume. With TRANSFER_PROBE
-            # off, `transfer_available` is always False and this reduces to the
-            # pre-phase behaviour exactly.
-            return not self.transfer_available
+            return True
         return not self.levels_left
 
     @property
@@ -384,11 +364,6 @@ class ClaimState:
             # (candidate_seniority is None) is blocked by
             # question_engine.level_appropriate() itself -- same as the old
             # unconditional exclusion.
-            # PERTURB is excluded from this list already -- it is offered only
-            # by plan_next_forensic's separate stall branch -- and disabled
-            # for the demo via settings.transfer_probe (or, for a senior
-            # candidate, the level gate) which already gates that whole
-            # branch; no new flag needed for PERTURB here.
             and not (
                 settings.demo_mode
                 and mv in (question_engine.Move.EXCLUSION, question_engine.Move.AUTHORITY)
@@ -921,29 +896,11 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
                     return Plan(state.claim, level, None, "fixed sweep")
         return None
 
-    # Phase 1 — stalled claims get their transfer probe first
-    for state in states:
-        if not state.exhausted and state.transfer_available:
-            covered = signal_rubrics.dimensions_for_level(ProbeLevel.TRANSFER)
-            gap = min(
-                covered,
-                key=lambda d: state.dimensions[d].score if d in state.dimensions else 0,
-            )
-            return Plan(
-                state.claim,
-                ProbeLevel.TRANSFER,
-                gap,
-                f"stalled after {state.answers} answers — one transfer probe",
-                transfer=select_transfer(
-                    state.claim,
-                    signal_rubrics.merge_signals(state.answer_signals),
-                    [s.claim for s in states],
-                ),
-            )
+
 
     # Check for active claim momentum: maintain focus on active claim for MIN_STREAK turns
     active_streak = next(
-        (s for s in states if 0 < s.answers < MIN_STREAK and not s.exhausted and not s.transfer_available),
+        (s for s in states if 0 < s.answers < MIN_STREAK and not s.exhausted),
         None,
     )
     if active_streak is not None:
@@ -976,15 +933,22 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
                     f"weakest dimension {gap.value if gap else 'n/a'} on active claim streak "
                     f"({active_streak.answers}/{MIN_STREAK})"
                 )
-            return Plan(active_streak.claim, chosen, gap, reason)
+            transfer_spec = None
+            if chosen == ProbeLevel.TRANSFER:
+                transfer_spec = select_transfer(
+                    active_streak.claim,
+                    signal_rubrics.merge_signals(active_streak.answer_signals),
+                    [s.claim for s in states],
+                )
+            return Plan(active_streak.claim, chosen, gap, reason, transfer=transfer_spec)
 
-    # Phase 1 — breadth. Every claim gets its VALIDATION probe first.
+    # Phase 1 — breadth. Every claim gets its OPERATIONAL probe first.
     untouched = [s for s in states if not s.levels_used]
     if untouched:
         state = untouched[0]                    # already sorted heaviest-first
         return Plan(
             state.claim,
-            ProbeLevel.VALIDATION,
+            ProbeLevel.OPERATIONAL,
             None,
             f"opening probe on {claim_type_label(state.claim_family, state.claim.claim_type)}",
         )
@@ -994,27 +958,7 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
         if state.exhausted:
             continue
 
-        if state.transfer_available:
-            # The claim stopped producing evidence. Spend one question on a
-            # problem they have not solved before giving up on it. Ahead of the
-            # gap logic on purpose: the reason to ask is the stall, not a
-            # dimension gap, and TRANSFER is not on the ladder to be walked to.
-            covered = signal_rubrics.dimensions_for_level(ProbeLevel.TRANSFER)
-            gap = min(
-                covered,
-                key=lambda d: state.dimensions[d].score if d in state.dimensions else 0,
-            )
-            return Plan(
-                state.claim,
-                ProbeLevel.TRANSFER,
-                gap,
-                f"stalled after {state.answers} answers — one transfer probe",
-                transfer=select_transfer(
-                    state.claim,
-                    signal_rubrics.merge_signals(state.answer_signals),
-                    [s.claim for s in states],
-                ),
-            )
+
 
         remaining = state.levels_left
         gap = state.weakest_dimension()
@@ -1053,7 +997,14 @@ def plan_next(states: list[ClaimState], index: int) -> Plan | None:
                 f"{state.weight:g}-weight claim"
             )
 
-        return Plan(state.claim, chosen, gap, reason)
+        transfer_spec = None
+        if chosen == ProbeLevel.TRANSFER:
+            transfer_spec = select_transfer(
+                state.claim,
+                signal_rubrics.merge_signals(state.answer_signals),
+                [s.claim for s in states],
+            )
+        return Plan(state.claim, chosen, gap, reason, transfer=transfer_spec)
 
     return None      # every claim saturated, transferred or fully probed
 
@@ -2278,10 +2229,9 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
             reason=reason,
             move=move,
             # Attempt two re-targets to one of these rather than re-wording the
-            # rejected draft. TRANSFER is excluded: it is earned by a stall, not
-            # reached by falling through a rejection. Session-fresh first, so
-            # the retarget does not repeat a move a sibling claim already spent.
-            alt_moves=tuple(m for m in rotated if m is not question_engine.Move.PERTURB),
+            # rejected draft. Session-fresh first, so the retarget does not repeat
+            # a move a sibling claim already spent.
+            alt_moves=tuple(rotated),
             anatomy=state.anatomy,
             ledger=state.ledger,
         )
@@ -2294,10 +2244,7 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
             and not state.forensic_closed
             and not (state.dear_stalled and state.answers >= 2)
         ):
-            moves = [
-                m for m in _rotate_session_fresh(state.forensic_moves_left(), session_used)
-                if m is not question_engine.Move.PERTURB
-            ]
+            moves = _rotate_session_fresh(state.forensic_moves_left(), session_used)
             if moves:
                 moves, pivot_reason = _apply_evidence_gap_pivot(state, moves)
                 reason = pivot_reason or f"claim momentum streak ({moves_count}/{MIN_STREAK}) on active claim"
@@ -2333,44 +2280,13 @@ def plan_next_forensic(states: list[ClaimState], index: int) -> Plan | None:
     for state in states:
         if state.forensic_closed:
             continue
-        moves = [m for m in _rotate_session_fresh(state.forensic_moves_left(), session_used)
-                 if m is not question_engine.Move.PERTURB]
+        moves = _rotate_session_fresh(state.forensic_moves_left(), session_used)
         if moves:
             moves, pivot_reason = _apply_evidence_gap_pivot(state, moves)
             reason = pivot_reason or f"next move on a {state.weight:g}-weight claim"
             return brief(
                 state, moves[0],
                 reason,
-            )
-
-    # 4 — one perturbation for a claim that has stopped paying. Off by default
-    # in demo mode (settings.transfer_probe=False); the level gate is a
-    # narrower override of that same default, not a second independent flag —
-    # a senior candidate earns PERTURB back, an unknown/junior/mid one sees
-    # exactly today's behaviour (settings.transfer_probe alone decides).
-    for state in states:
-        if not (
-            settings.transfer_probe
-            or (
-                settings.demo_mode
-                and question_engine.level_appropriate(
-                    question_engine.Move.PERTURB, state.candidate_seniority
-                )
-            )
-        ):
-            continue
-        if state.saturated or not state.moves_used:
-            continue
-        if question_engine.Move.PERTURB.value in state.moves_used:
-            continue
-        if not state.dear_stalled:
-            continue
-        if question_engine.move_available(
-            question_engine.Move.PERTURB, state.anatomy, state.ledger
-        ):
-            return brief(
-                state, question_engine.Move.PERTURB,
-                f"stalled after {state.answers} answers — one perturbation",
             )
 
     return None

@@ -389,12 +389,18 @@ class ClaimGraph(BaseModel):
     claim_type_label: str
     metric: str | None = None
     weight: float = 0.0                    # role importance, 0-100
-    claim_score: int | None = None         # weighted over the six dimensions
-    dimensions: list[DimensionScore] = Field(default_factory=list)
-    probed_dimensions: int = 0
-    qa: list[QATurn] = Field(default_factory=list)
-    summary: str | None = None
+
+    # Evidence
     facts: list[ExtractedFact] = Field(default_factory=list)
+    summary: str | None = None
+    qa: list[QATurn] = Field(default_factory=list)
+
+    # Dimension Impact
+    probed_dimensions: int = 0
+    dimensions: list[DimensionScore] = Field(default_factory=list)
+
+    # Final Score
+    claim_score: int | None = None         # weighted over the six dimensions
 
 
 class ConsistencyReport(BaseModel):

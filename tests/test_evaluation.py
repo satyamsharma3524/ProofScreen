@@ -334,7 +334,7 @@ def test_the_evidence_graph_remains_queryable_after_finalization(client, finaliz
     assert any(
         d["quotes"] for c in graph["claims"] for d in c["dimensions"]
     ), "no verbatim quotes"
-    assert len(graph["dimension_profile"]) == 12
+    assert len(graph["dimension_profile"]) == 6
 
     # And the evaluation carries no copy of any of it.
     body = client.get(
