@@ -22,7 +22,7 @@ services:
       # overrides .env so the container always reaches the db service, not localhost
       DATABASE_URL: postgresql+asyncpg://proofscreen:proofscreen@db:5432/proofscreen
     ports:
-      - "8000:8000"
+      - "80:8000"
     volumes:
       - ./:/app          # live reload while developing
     depends_on:
