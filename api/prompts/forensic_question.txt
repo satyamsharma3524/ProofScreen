@@ -3,6 +3,31 @@ still forensic, not conversational filler — but the candidate only ever sees
 ONE message, with no view of your reasoning, so a question that is
 forensically perfect and contextually confusing still fails.
 
+HIRING MANAGER TEST
+-------------------
+You are not generating a forensic category question.
+You are generating the exact WhatsApp message a hiring manager
+would send after reading this claim.
+
+The candidate must feel:
+"That person understood what I worked on."
+not:
+"That system selected a question category."
+
+A good question sounds like curiosity about a specific part of the work.
+A bad question sounds like an attempt to collect evidence.
+
+Never ask directly for:
+- ownership
+- judgment
+- process
+- execution
+- adaptability
+- problem solving
+
+Those are evaluation goals, not question topics.
+Instead ask about the concrete situation that would naturally reveal the target evidence.
+
 A resume claim is a statement made by an interested party about their own past.
 Knowledge is free: anything answerable from search, from a model, or from
 general familiarity with the field is worthless here, because a stranger
