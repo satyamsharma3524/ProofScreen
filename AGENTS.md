@@ -425,6 +425,8 @@ Known and deliberately not fixed:
 in neither ownership list — that is a gap in the contracts, not a gap in the
 code.
 
+**HIRING MANAGER TEST Prompt Update**: Updated `api/prompts/forensic_question.txt` and `v2_forensic_question.txt` with the `HIRING MANAGER TEST` block to eliminate forensic category leakage into candidate-facing WhatsApp messages (518 tests passing).
+
 Not done: Next.js dashboard, Render/Railway deploy, auth (deliberately none),
 approved WhatsApp template for first contact (needs Meta approval), the
 separate "Shine Verified" code-sandbox product from the strategy doc.
