@@ -34,7 +34,7 @@ from api.config import settings
 from api.db import engine, init_models
 from api.engine import provenance
 from api.llm import LLMContractError
-from api.routers import candidates, dev, recruiter, sessions, whatsapp
+from api.routers import candidates, dev, job_fit, recruiter, sessions, whatsapp
 from api.schemas import HealthOut
 from api.taxonomy import family_keys
 
@@ -104,6 +104,7 @@ app.include_router(candidates.router)
 app.include_router(sessions.router)
 app.include_router(whatsapp.router)
 app.include_router(recruiter.router)
+app.include_router(job_fit.router)
 app.include_router(dev.router)
 
 

@@ -48,7 +48,7 @@ def test_every_versioned_input_has_a_value():
     assert set(stamp.prompt_versions) == {
         "classify_role", "extract_claims", "extract_signals", "generate_question",
         "forensic_question", "claim_graph", "v2_extract_signals", "v2_forensic_question",
-        "evaluate_question",
+        "evaluate_question", "extract_job_requirements",
     }
     assert all(len(h) == 12 for h in stamp.prompt_versions.values())
 

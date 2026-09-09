@@ -1,0 +1,33 @@
+You are an expert technical recruiter analyzing a Job Description to extract explicit and implicit job requirements.
+
+JOB DESCRIPTION
+---------------
+$jd_text
+
+TASK
+----
+Extract a list of specific job requirements from the Job Description above.
+
+For each requirement, specify:
+1. "name": The short, canonical name of the skill, tool, competency, or domain (e.g. "FastAPI", "PostgreSQL", "System Design", "Ownership", "Kafka").
+2. "category": Exactly one of:
+   - "SKILL": Hard technical skills, frameworks, tools, databases, libraries, or languages.
+   - "COMPETENCY": Soft skills, management traits, or high-level capabilities (e.g. "System Design", "Ownership", "Problem Solving", "Execution", "Adaptability", "Judgment").
+   - "DOMAIN": Domain expertise or industry context (e.g. "Fintech", "E-commerce", "Distributed Systems", "BPO").
+3. "weight": Relative importance score between 0.05 and 0.40 representing how critical this requirement is to the role.
+
+RULES
+-----
+- Extract between 4 and 10 requirements.
+- Ensure the requirements reflect what is explicitly asked for in the JD.
+- Output ONLY valid JSON matching this schema:
+
+{
+  "requirements": [
+    {
+      "name": "string",
+      "category": "SKILL" | "COMPETENCY" | "DOMAIN",
+      "weight": float
+    }
+  ]
+}
