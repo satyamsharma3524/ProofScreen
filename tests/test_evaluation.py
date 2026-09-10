@@ -367,7 +367,7 @@ def test_a_finalized_evaluation_carries_its_full_provenance(client, finalized):
 
     assert stamp["taxonomy_version"] == current.taxonomy_version
     assert stamp["taxonomy_hash"] == current.taxonomy_hash
-    assert stamp["rubric_version"] == "rub_3"
+    assert stamp["rubric_version"] == "rub_2"
     assert stamp["scoring_version"] == "score_1"
     assert stamp["question_policy_version"] == "qpol_3"
     assert stamp["prompt_versions"] == current.prompt_versions

@@ -47,19 +47,7 @@ from api.taxonomy import family_vocabulary
 # `MOVE_DIMENSIONS` entry when one is on record, instead of always reading
 # `PROBE_LEVEL_DIMENSIONS` off the stored (many-to-one) probe_level. Same
 # stored signals, different `probed` flags for any forensic-path claim.
-#
-# rub_3 — TARGETS recalibrated for the 6-question demo budget (see the block
-# below). Same stored signals, higher dimension scores: an evaluation stamped
-# rub_2 and one stamped rub_3 are NOT comparable, and `replay` on a rub_2
-# evaluation will now report MISMATCH with `provenance_drift` naming this
-# constant. That is the audit trail working, not a fault — but only because
-# this line moved with the numbers.
-#
-# NOTE: the paragraph above claims `test_rubric_version_covers_targets_gates_
-# and_weights` pins this constant against the structure. That test does not
-# exist — nothing in tests/ references RUBRIC_VERSION, which is how the target
-# change below passed 518 tests with this version left stale.
-RUBRIC_VERSION = "rub_3"
+RUBRIC_VERSION = "rub_2"
 
 # ---------------------------------------------------------------------------
 # which dimensions each probe level is designed to elicit
@@ -95,44 +83,14 @@ PROBE_ORDER: tuple[ProbeLevel, ...] = (
 LADDER_ORDER: tuple[ProbeLevel, ...] = PROBE_ORDER
 
 # Published targets. Tune these and the whole product's strictness moves.
-#
-# RECALIBRATED for the 6-question demo budget. These are the weighted signal
-# count a dimension needs for full marks, and they were set when the interview
-# was 12 questions (5 probe levels x 3 claims). Demo mode stops each claim
-# after 2 answers, so the real budget is 6 — and requiring 3 concept
-# explanations out of 2 questions is not strictness, it is a bar the interview
-# never gives the candidate a chance to clear.
-#
-# HOW THESE NUMBERS WERE CHOSEN — by what the safety tests permit, not by what
-# looked good:
-#
-#   EXECUTION stays at 4.0. It is pinned there by
-#   `test_execution_tool_familiarity_is_usage_not_name_dropping`: three bare
-#   process steps must score <= 75, which needs a target of at least 4.0. Lower
-#   it and "I did A. I did B. I did C." earns a perfect execution score, which
-#   is the exact keyword-stuffing failure this product exists to defeat.
-#
-#   The rest were lowered as far as the suite allows. One notch further
-#   (KNOWLEDGE/PROBLEM_SOLVING/JUDGMENT at 1.5) breaks
-#   `test_evasive_candidate_gets_a_shorter_interview` — weak answers start
-#   clearing the gap thresholds, so the adaptive planner reads evasion as
-#   progress and gives the evasive candidate MORE questions than the strong
-#   one. That inversion is worse than a low score.
-#
-# Measured on the seeded set: ranking, per-lens re-ordering and the
-# resume-vs-evidence gap are all preserved. Maya > Arjun > Priya > Rohit before
-# and after; Rohit still lands 46 points below his own resume.
-#
-# IF THE QUESTION BUDGET GOES BACK TO 12, PUT THESE BACK TO 3/4/3/3/3/2. The
-# two are meant to move together — that they had drifted apart is the bug.
 TARGETS: dict[Dimension, float] = {
     # Universal Competence Framework
-    Dimension.KNOWLEDGE: 2.0,
+    Dimension.KNOWLEDGE: 3.0,
     Dimension.EXECUTION: 4.0,
-    Dimension.PROBLEM_SOLVING: 2.0,
-    Dimension.JUDGMENT: 2.0,
-    Dimension.OWNERSHIP: 1.5,
-    Dimension.ADAPTABILITY: 1.0,
+    Dimension.PROBLEM_SOLVING: 3.0,
+    Dimension.JUDGMENT: 3.0,
+    Dimension.OWNERSHIP: 3.0,
+    Dimension.ADAPTABILITY: 2.0,
 }
 
 # Score ceiling applied when the dimension's necessary ingredient is absent.

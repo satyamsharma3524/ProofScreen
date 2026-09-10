@@ -279,7 +279,7 @@ def test_health_reports_the_active_version_set(client):
     body = client.get("/api/health").json()
     assert body["taxonomy_version"].startswith("tax_")
     assert "@" in body["taxonomy_version"], "the content hash is missing"
-    assert body["rubric_version"] == "rub_3"
+    assert body["rubric_version"] == "rub_2"
     assert body["scoring_version"] == "score_1"
     assert body["question_policy_version"] == "qpol_3"
     assert body["code_version"]

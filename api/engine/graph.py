@@ -52,7 +52,6 @@ from api.schemas import (
     ClaimGraph,
     ConsistencyReport,
     Contradiction,
-    Dimension,
     DimensionScore,
     ExtractedFact,
     ProbeLevel,
@@ -259,77 +258,6 @@ async def build_consistency_report(
 
 
 # ---------------------------------------------------------------------------
-# how a question came to be asked — read off columns that already exist
-# ---------------------------------------------------------------------------
-
-
-def _move_family(move: str | None) -> str | None:
-    """ESTABLISH / PERIPHERY / SEAM / TRANSFER for a stored move string.
-
-    Imported lazily and tolerantly: `question.py` is a heavy module and an
-    older row may carry a move name this build no longer has. An unknown move
-    returns None rather than raising, because a graph that 500s over a
-    cosmetic label is worse than one missing a colour.
-    """
-    if not move:
-        return None
-    try:
-        from api.engine.question import MOVE_FAMILY, Move
-
-        return MOVE_FAMILY[Move(move)].value
-    except Exception:  # unknown/renamed move, or import trouble
-        return None
-
-
-def _move_targets(move: str | None) -> list[Dimension]:
-    """Dimensions this move hunts, from the engine's own MOVE_DIMENSIONS table.
-
-    Same lazy, tolerant import as `_move_family`: an unknown move yields an
-    empty list rather than a 500.
-    """
-    if not move:
-        return []
-    try:
-        from api.engine.question import MOVE_DIMENSIONS
-
-        return list(MOVE_DIMENSIONS.get(move, ()))
-    except Exception:
-        return []
-
-
-def _violations(payload: str | None) -> list[str]:
-    """`questions.violations_json` as a list. Never raises."""
-    if not payload:
-        return []
-    try:
-        import json
-
-        parsed = json.loads(payload)
-        return [str(v) for v in parsed] if isinstance(parsed, list) else []
-    except Exception:
-        return []
-
-
-def _latency_seconds(asked_at, received_at) -> float | None:
-    """received_at - asked_at, or None when it cannot be trusted.
-
-    Guarded on purpose. A mix of naive and aware datetimes raises on
-    subtraction, seeded rows are written microseconds apart, and a clock skew
-    can produce a negative. None in all three cases: an absent number reads as
-    "not measured", a wrong one reads as a finding.
-    """
-    if asked_at is None or received_at is None:
-        return None
-    try:
-        delta = (received_at - asked_at).total_seconds()
-    except TypeError:
-        return None
-    if delta < 0 or delta > 7 * 24 * 3600:
-        return None
-    return round(delta, 1)
-
-
-# ---------------------------------------------------------------------------
 # the graph
 # ---------------------------------------------------------------------------
 
@@ -412,24 +340,6 @@ async def build_candidate_graph(
                 question_id=question.id,
                 response_id=response.id,
                 answer_score=response.answer_score,
-                # Additive: columns that already existed on the two rows this
-                # loop already holds. No extra query.
-                target_dimension=(
-                    Dimension(question.target_dimension)
-                    if question.target_dimension
-                    in {d.value for d in Dimension}
-                    else None
-                ),
-                move=question.move,
-                move_family=_move_family(question.move),
-                move_targets=_move_targets(question.move),
-                attempts=question.attempts or 1,
-                violations=_violations(question.violations_json),
-                source=question.source or "model",
-                is_repair=bool(question.is_repair),
-                latency_seconds=_latency_seconds(
-                    question.asked_at, response.received_at
-                ),
             )
         )
         try:
@@ -550,25 +460,10 @@ async def build_candidate_graph(
     # text and the taxonomy file.
     confidence = family_margin(match_family(resume.raw_text), family) if resume else None
 
-    # Wall-clock span of the interview. Both columns already exist on
-    # `sessions`; `completed_at` is null while an interview is still running,
-    # which is why the duration is only computed when both are present.
-    started = getattr(session, "started_at", None) if session else None
-    completed = getattr(session, "completed_at", None) if session else None
-    span = _latency_seconds(started, completed)
-
     return CandidateGraph(
         candidate=CandidateRef(
-            id=candidate.id, name=candidate.name, role=candidate.role, phone=candidate.phone,
-            seniority=candidate.seniority,
+            id=candidate.id, name=candidate.name, role=candidate.role, phone=candidate.phone
         ),
-        resume_filename=resume.filename if resume else None,
-        # Capped at the same 20k the routing inspector accepts, so a pathological
-        # upload cannot bloat every graph response.
-        resume_text=(resume.raw_text or "")[:20_000] if resume else None,
-        interview_started_at=started,
-        interview_completed_at=completed,
-        interview_seconds=int(span) if span is not None else None,
         job_family=family,
         job_family_label=family_label(family),
         scored_for=role_ref,
@@ -959,7 +854,6 @@ async def rank_candidates(
                 claims_count=len(claims),
                 questions_asked=session.questions_asked if session else 0,
                 computed_at=profile.computed_at if profile else None,
-                seniority=candidate.seniority,
             )
         )
 

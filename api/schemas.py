@@ -381,54 +381,6 @@ class QATurn(BaseModel):
     response_id: str | None = None
     answer_score: int | None = None
 
-    # --- ADDITIVE. How this question came to be asked ---------------------
-    #
-    # Every field below reads a column that already exists on `questions` or
-    # `responses` and was never surfaced, so there is no schema change here and
-    # no new query: `build_candidate_graph` already selects both rows.
-    #
-    # Why it matters: the dashboard could show what the interview CONCLUDED and
-    # not how it was CONDUCTED. `probe_level` is many-to-one over moves
-    # (FAILURE and PEOPLE both record INCIDENT), so the level alone cannot say
-    # which of the ten moves ran — and "which moves did we never run against
-    # this claim" is a hiring-relevant fact the recruiter had no way to see.
-    #
-    # All optional with defaults, so a client generated from the old
-    # openapi.json still validates.
-
-    # Which dimension the question was TRYING to move. Nullable: pre-forensic
-    # rows have none.
-    target_dimension: Dimension | None = None
-    # The forensic move ("FAILURE", "METRIC_DEFINITION", ...). Kept as a plain
-    # string to match the column — a native enum here would reject an older row
-    # written before a move was renamed.
-    move: str | None = None
-    # ESTABLISH / PERIPHERY / SEAM / TRANSFER, derived from `move` server-side
-    # so the mapping has exactly one home.
-    move_family: str | None = None
-    # 1 or 2. Two means the first attempt tripped a policy rule and the
-    # generator RETARGETED rather than reworded.
-    attempts: int = 1
-    # Rules that tripped on attempt one. Empty is the normal case.
-    violations: list[str] = Field(default_factory=list)
-    # "model" | "fallback". "fallback" means both attempts failed policy and a
-    # template was used — a different and worse fact than a single retry.
-    source: str = "model"
-    is_repair: bool = False
-    # What this MOVE is designed to hunt, from `question.MOVE_DIMENSIONS` —
-    # the same table `signals.score_claim` credits dimensions from.
-    #
-    # Separate from `target_dimension` on purpose. That column is the planner's
-    # recorded intent for this specific question and is null on any question
-    # the fallback generator produced; this is a property of the move itself and
-    # is therefore always available. A UI should prefer the recorded intent and
-    # fall back to this, never present this as an observation.
-    move_targets: list[Dimension] = Field(default_factory=list)
-    # received_at - asked_at. Descriptive only, and deliberately NOT an input
-    # to any score: response speed is a proxy for network, device and shift
-    # timing, which this product does not judge people on.
-    latency_seconds: float | None = None
-
 
 class ClaimGraph(BaseModel):
     id: str
@@ -471,11 +423,6 @@ class CandidateRef(BaseModel):
     name: str
     role: str | None = None
     phone: str | None = None
-    # ADDITIVE. Already stored on `candidates`, never sent. Not decoration:
-    # `question.level_appropriate()` gates which moves are legal at each
-    # seniority, so this value CHANGED the interview and a recruiter reading
-    # the transcript needs it to explain why a junior was asked less.
-    seniority: str | None = None
 
 
 class RoleRef(BaseModel):
@@ -516,17 +463,6 @@ class CandidateGraph(BaseModel):
     claims: list[ClaimGraph] = Field(default_factory=list)
     computed_at: datetime | None = None
 
-    # --- ADDITIVE, all from rows already loaded by build_candidate_graph ---
-    # The source document. Every claim cites a quote from it and there was no
-    # way to see the text those quotes came from.
-    resume_filename: str | None = None
-    resume_text: str | None = None
-    # Wall-clock interview span. `computed_at` is when the SCORE was produced,
-    # which is a different fact and was the only time on the page.
-    interview_started_at: datetime | None = None
-    interview_completed_at: datetime | None = None
-    interview_seconds: int | None = None
-
 
 class CandidateSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -551,7 +487,6 @@ class CandidateSummary(BaseModel):
     claims_count: int = 0
     questions_asked: int = 0
     computed_at: datetime | None = None
-    seniority: str | None = None          # ADDITIVE, see CandidateRef
 
 
 # ---------------------------------------------------------------------------
