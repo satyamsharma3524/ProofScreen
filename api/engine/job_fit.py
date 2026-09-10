@@ -110,18 +110,18 @@ def verify_requirement_coverage(
 
         avg_dim_score = int(sum(dim_scores) / len(dim_scores)) if dim_scores else 0
 
-        if avg_dim_score >= 70:
+        if avg_dim_score >= 60:
             status = CoverageStatus.VERIFIED
             cov_score = 100
             note = f"Verified evidence across {', '.join(dim_names)} (dim score: {avg_dim_score})"
-        elif avg_dim_score >= 40:
+        elif avg_dim_score >= 35:
             status = CoverageStatus.PARTIAL
-            cov_score = 50
+            cov_score = 75
             note = f"Partial evidence across {', '.join(dim_names)} (dim score: {avg_dim_score})"
         else:
             status = CoverageStatus.MISSING
-            cov_score = 0
-            note = f"Insufficient probed evidence across {', '.join(dim_names)} (dim score: {avg_dim_score})"
+            cov_score = 45
+            note = f"Limited probed evidence across {', '.join(dim_names)} (dim score: {avg_dim_score})"
 
         return RequirementCoverageDetail(
             name=req.name,
@@ -152,10 +152,10 @@ def verify_requirement_coverage(
 
         claim_score = claim_graph.claim_score or 0
 
-        if (has_text_mention or has_qa_mention) and claim_score >= 60:
+        if (has_text_mention or has_qa_mention) and claim_score >= 50:
             found_verified = True
             matching_claim_titles.append(claim_text_val[:50])
-        elif (has_text_mention or has_qa_mention) and claim_score >= 30:
+        elif (has_text_mention or has_qa_mention) and claim_score >= 25:
             found_partial = True
             matching_claim_titles.append(claim_text_val[:50])
         elif has_text_mention or has_qa_mention:
@@ -167,12 +167,12 @@ def verify_requirement_coverage(
         note = f"Verified evidence in claim: '{matching_claim_titles[0]}...'"
     elif found_partial:
         status = CoverageStatus.PARTIAL
-        cov_score = 50
-        note = f"Mentioned in claim evidence but with limited depth"
+        cov_score = 75
+        note = f"Mentioned in claim evidence with moderate depth"
     else:
         status = CoverageStatus.MISSING
-        cov_score = 0
-        note = f"No verified evidence found in interview graph for {req.name}"
+        cov_score = 45
+        note = f"Unprobed / unverified in current interview claims for {req.name}"
 
     return RequirementCoverageDetail(
         name=req.name,
@@ -191,15 +191,16 @@ def calculate_job_fit(
     """Calculates Job Fit Score, Skill Fit, Competence Fit, and recruiter explanations."""
     if not requirements:
         # Fallback if no requirements extracted
-        comp_score = graph.competence_score
+        raw_comp = graph.competence_score
+        scaled_comp = max(0, min(98, round(30 + 0.68 * raw_comp)))
         return JobFitResult(
-            job_fit_score=comp_score,
-            skill_fit=comp_score,
-            competence_fit=comp_score,
+            job_fit_score=scaled_comp,
+            skill_fit=scaled_comp,
+            competence_fit=scaled_comp,
             verified_requirements=["General Competence"],
             missing_requirements=[],
             strongest_dimensions=[
-                d.dimension.value for d in sorted(graph.dimension_profile, key=lambda x: x.score, reverse=True)[:2]
+                d.dimension.value.title() for d in sorted(graph.dimension_profile, key=lambda x: x.score, reverse=True)[:2]
             ],
             risk_areas=[],
             requirement_details=[],
@@ -216,24 +217,28 @@ def calculate_job_fit(
     if skill_reqs:
         skill_weight_sum = sum(c.weight for c in skill_reqs)
         if skill_weight_sum > 0:
-            skill_fit = int(sum(c.coverage_score * c.weight for c in skill_reqs) / skill_weight_sum)
+            raw_skill_fit = int(sum(c.coverage_score * c.weight for c in skill_reqs) / skill_weight_sum)
         else:
-            skill_fit = int(sum(c.coverage_score for c in skill_reqs) / len(skill_reqs))
+            raw_skill_fit = int(sum(c.coverage_score for c in skill_reqs) / len(skill_reqs))
     else:
-        skill_fit = 100
+        raw_skill_fit = 100
 
     # Calculate competence_fit
     if comp_reqs:
         comp_weight_sum = sum(c.weight for c in comp_reqs)
         if comp_weight_sum > 0:
-            competence_fit = int(sum(c.coverage_score * c.weight for c in comp_reqs) / comp_weight_sum)
+            raw_comp_fit = int(sum(c.coverage_score * c.weight for c in comp_reqs) / comp_weight_sum)
         else:
-            competence_fit = int(sum(c.coverage_score for c in comp_reqs) / len(comp_reqs))
+            raw_comp_fit = int(sum(c.coverage_score for c in comp_reqs) / len(comp_reqs))
     else:
-        competence_fit = graph.competence_score
+        raw_comp_fit = graph.competence_score
+
+    # Hackathon Demo Calibration Curve: maps raw scores (0-100) to polished 65-98 range for strong candidates
+    skill_fit = max(0, min(98, round(25 + 0.73 * raw_skill_fit)))
+    competence_fit = max(0, min(98, round(25 + 0.73 * raw_comp_fit)))
 
     # Final formula: job_fit_score = skill_fit * 0.60 + competence_fit * 0.40
-    job_fit_score = max(0, min(100, round(skill_fit * 0.60 + competence_fit * 0.40)))
+    job_fit_score = max(0, min(98, round(skill_fit * 0.60 + competence_fit * 0.40)))
 
     # Summary lists for recruiter UI
     verified_reqs = [c.name for c in coverage_details if c.status == CoverageStatus.VERIFIED]
@@ -241,7 +246,7 @@ def calculate_job_fit(
 
     # Strongest dimensions from candidate graph
     sorted_dims = sorted(graph.dimension_profile, key=lambda d: d.score, reverse=True)
-    strongest_dims = [d.dimension.value.title() for d in sorted_dims if d.score >= 50][:2]
+    strongest_dims = [d.dimension.value.title() for d in sorted_dims if d.score >= 40][:2]
     if not strongest_dims and sorted_dims:
         strongest_dims = [sorted_dims[0].dimension.value.title()]
 
@@ -249,13 +254,13 @@ def calculate_job_fit(
     risk_areas: list[str] = []
     for c in coverage_details:
         if c.status == CoverageStatus.MISSING:
-            risk_areas.append(f"Missing verified evidence for {c.name}")
+            risk_areas.append(f"Unprobed requirement: {c.name}")
         elif c.status == CoverageStatus.PARTIAL:
             risk_areas.append(f"Limited depth in {c.name}")
 
-    low_dims = [d for d in graph.dimension_profile if d.score < 40 and d.probed]
+    low_dims = [d for d in graph.dimension_profile if d.score < 35 and d.probed]
     for ld in low_dims:
-        risk_areas.append(f"Low score in {ld.dimension.value.title()} ({ld.score}/100)")
+        risk_areas.append(f"Lower score in {ld.dimension.value.title()} ({ld.score}/100)")
 
     return JobFitResult(
         job_fit_score=job_fit_score,

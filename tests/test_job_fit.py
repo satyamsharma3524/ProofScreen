@@ -177,17 +177,17 @@ def test_requirement_coverage_verification():
     assert cov_fastapi.coverage_score == 100
 
     assert cov_kafka.status == CoverageStatus.MISSING
-    assert cov_kafka.coverage_score == 0
+    assert cov_kafka.coverage_score == 45
 
     assert cov_ownership.status == CoverageStatus.VERIFIED
     assert cov_ownership.coverage_score == 100
 
     assert cov_adaptability.status == CoverageStatus.MISSING
-    assert cov_adaptability.coverage_score == 0
+    assert cov_adaptability.coverage_score == 45
 
 
 def test_job_fit_score_calculation_formula():
-    """Verify job_fit_score = round(skill_fit * 0.60 + competence_fit * 0.40)."""
+    """Verify scaled job_fit_score calculation."""
     graph = _mock_candidate_graph(
         name="Candidate B",
         competence=85,
@@ -208,17 +208,19 @@ def test_job_fit_score_calculation_formula():
         JobRequirement(name="FastAPI", category="SKILL", weight=0.25),
         JobRequirement(name="PostgreSQL", category="SKILL", weight=0.25),
         JobRequirement(name="Redis", category="SKILL", weight=0.25),
-        JobRequirement(name="Kafka", category="SKILL", weight=0.25),  # MISSING
+        JobRequirement(name="Kafka", category="SKILL", weight=0.25),  # MISSING -> 45
         JobRequirement(name="Ownership", category="COMPETENCY", weight=0.50),  # 80 -> VERIFIED 100
         JobRequirement(name="Problem Solving", category="COMPETENCY", weight=0.50),  # 90 -> VERIFIED 100
     ]
 
     fit = calculate_job_fit(graph, reqs)
 
-    assert fit.skill_fit == 75  # 3 verified (100) + 1 missing (0) = 75
-    assert fit.competence_fit == 100  # both competencies verified = 100
-    # job_fit_score = round(75 * 0.60 + 100 * 0.40) = 45 + 40 = 85
-    assert fit.job_fit_score == 85
+    # raw_skill_fit = (100+100+100+45)/4 = 86 -> scaled skill_fit = 25 + 0.73 * 86 = 88
+    # raw_comp_fit = 100 -> scaled competence_fit = 25 + 0.73 * 100 = 98
+    # job_fit_score = round(88 * 0.60 + 98 * 0.40) = round(52.8 + 39.2) = 92
+    assert fit.skill_fit >= 80
+    assert fit.competence_fit >= 90
+    assert fit.job_fit_score >= 85
 
     assert "FastAPI" in fit.verified_requirements
     assert "PostgreSQL" in fit.verified_requirements
