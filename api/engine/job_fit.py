@@ -192,7 +192,7 @@ def calculate_job_fit(
     if not requirements:
         # Fallback if no requirements extracted
         raw_comp = graph.competence_score
-        scaled_comp = max(0, min(98, round(30 + 0.68 * raw_comp)))
+        scaled_comp = max(40, min(98, round(30 + 0.65 * raw_comp)))
         return JobFitResult(
             job_fit_score=scaled_comp,
             skill_fit=scaled_comp,
@@ -233,12 +233,12 @@ def calculate_job_fit(
     else:
         raw_comp_fit = graph.competence_score
 
-    # Hackathon Demo Calibration Curve: maps raw scores (0-100) to polished 65-98 range for strong candidates
-    skill_fit = max(0, min(98, round(25 + 0.73 * raw_skill_fit)))
-    competence_fit = max(0, min(98, round(25 + 0.73 * raw_comp_fit)))
+    # Hackathon Calibration: Score floor at 40 (no candidate gets 0), raw score 25 maps to ~46
+    skill_fit = max(40, min(98, round(30 + 0.65 * raw_skill_fit)))
+    competence_fit = max(40, min(98, round(30 + 0.65 * raw_comp_fit)))
 
     # Final formula: job_fit_score = skill_fit * 0.60 + competence_fit * 0.40
-    job_fit_score = max(0, min(98, round(skill_fit * 0.60 + competence_fit * 0.40)))
+    job_fit_score = max(40, min(98, round(skill_fit * 0.60 + competence_fit * 0.40)))
 
     # Summary lists for recruiter UI
     verified_reqs = [c.name for c in coverage_details if c.status == CoverageStatus.VERIFIED]
