@@ -116,11 +116,11 @@ def verify_requirement_coverage(
             note = f"Verified evidence across {', '.join(dim_names)} (dim score: {avg_dim_score})"
         elif avg_dim_score >= 35:
             status = CoverageStatus.PARTIAL
-            cov_score = 75
+            cov_score = 65
             note = f"Partial evidence across {', '.join(dim_names)} (dim score: {avg_dim_score})"
         else:
             status = CoverageStatus.MISSING
-            cov_score = 45
+            cov_score = 20
             note = f"Limited probed evidence across {', '.join(dim_names)} (dim score: {avg_dim_score})"
 
         return RequirementCoverageDetail(
@@ -167,11 +167,11 @@ def verify_requirement_coverage(
         note = f"Verified evidence in claim: '{matching_claim_titles[0]}...'"
     elif found_partial:
         status = CoverageStatus.PARTIAL
-        cov_score = 75
+        cov_score = 65
         note = f"Mentioned in claim evidence with moderate depth"
     else:
         status = CoverageStatus.MISSING
-        cov_score = 45
+        cov_score = 20
         note = f"Unprobed / unverified in current interview claims for {req.name}"
 
     return RequirementCoverageDetail(
@@ -192,7 +192,7 @@ def calculate_job_fit(
     if not requirements:
         # Fallback if no requirements extracted
         raw_comp = graph.competence_score
-        scaled_comp = max(40, min(98, round(30 + 0.65 * raw_comp)))
+        scaled_comp = max(20, min(98, round(20 + 0.80 * raw_comp)))
         return JobFitResult(
             job_fit_score=scaled_comp,
             skill_fit=scaled_comp,
@@ -233,12 +233,12 @@ def calculate_job_fit(
     else:
         raw_comp_fit = graph.competence_score
 
-    # Hackathon Calibration: Score floor at 40 (no candidate gets 0), raw score 25 maps to ~46
-    skill_fit = max(40, min(98, round(30 + 0.65 * raw_skill_fit)))
-    competence_fit = max(40, min(98, round(30 + 0.65 * raw_comp_fit)))
+    # Hackathon Calibration: Hard minimum floor at 20, raw score 25 maps to ~40
+    skill_fit = max(20, min(98, round(20 + 0.80 * raw_skill_fit)))
+    competence_fit = max(20, min(98, round(20 + 0.80 * raw_comp_fit)))
 
     # Final formula: job_fit_score = skill_fit * 0.60 + competence_fit * 0.40
-    job_fit_score = max(40, min(98, round(skill_fit * 0.60 + competence_fit * 0.40)))
+    job_fit_score = max(20, min(98, round(skill_fit * 0.60 + competence_fit * 0.40)))
 
     # Summary lists for recruiter UI
     verified_reqs = [c.name for c in coverage_details if c.status == CoverageStatus.VERIFIED]

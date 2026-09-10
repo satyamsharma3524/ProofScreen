@@ -177,13 +177,13 @@ def test_requirement_coverage_verification():
     assert cov_fastapi.coverage_score == 100
 
     assert cov_kafka.status == CoverageStatus.MISSING
-    assert cov_kafka.coverage_score == 45
+    assert cov_kafka.coverage_score == 20
 
     assert cov_ownership.status == CoverageStatus.VERIFIED
     assert cov_ownership.coverage_score == 100
 
     assert cov_adaptability.status == CoverageStatus.MISSING
-    assert cov_adaptability.coverage_score == 45
+    assert cov_adaptability.coverage_score == 20
 
 
 def test_job_fit_score_calculation_formula():
