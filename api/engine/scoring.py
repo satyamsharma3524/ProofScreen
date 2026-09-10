@@ -313,11 +313,22 @@ _STOPWORDS = frozenset(
     to was were will with you your our their they we able using use used work working
     role responsible including etc across within strong good excellent ability""".split()
 )
-_TOKEN = re.compile(r"[a-z][a-z+#.\-]{2,}")
+# `.` and `-` are allowed INSIDE a token ("node.js", "ci-cd", "c++") but not at
+# its edge. The previous class, `[a-z][a-z+#.\-]{2,}`, let a sentence-ending
+# period into the token, so a job description ending "...over time." produced
+# the term `time.` — which no resume can ever match. Every JD term at the end
+# of a sentence was silently unmatchable, biasing every resume score down.
+_TOKEN = re.compile(r"[a-z][a-z0-9+#]*(?:[.\-][a-z0-9+#]+)*")
 
 
 def _terms(text: str) -> set[str]:
-    return {t for t in _TOKEN.findall((text or "").lower()) if t not in _STOPWORDS}
+    # Two characters minimum: keeps the short terms that actually carry role
+    # signal ("qa", "ml", "ai", "hr", "sql") and drops bare initials.
+    return {
+        t
+        for t in _TOKEN.findall((text or "").lower())
+        if len(t) > 1 and t not in _STOPWORDS
+    }
 
 
 def resume_score(resume_text: str, job_description: str) -> int:
